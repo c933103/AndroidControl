@@ -1,0 +1,53 @@
+name: Draft test release
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - '.github/workflows/draft-test-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Accept Android SDK licenses
+        run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
+
+      - name: Build debug APK
+        run: ./gradlew :manager:assembleDebug
+
+      - name: Prepare release metadata
+        id: meta
+        shell: bash
+        run: |
+          short_sha="${GITHUB_SHA::7}"
+          echo "tag=androidcontrol-test-${short_sha}" >> "$GITHUB_OUTPUT"
+          echo "title=AndroidControl test ${short_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "${{ steps.meta.outputs.tag }}"             manager/build/outputs/apk/debug/*.apk             --repo "$GITHUB_REPOSITORY"             --target "$GITHUB_SHA"             --title "${{ steps.meta.outputs.title }}"             --notes "Private test build from merged master. Debug-signed APK. Not published."             --draft             --prerelease
