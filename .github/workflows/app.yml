@@ -26,12 +26,21 @@ jobs:
           java-version: '21'
       - name: Write key
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
+          KEYSTORE_ALIAS_PASSWORD: ${{ secrets.KEYSTORE_ALIAS_PASSWORD }}
         run: |
-          echo KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }} > signing.properties
-          echo KEYSTORE_ALIAS=${{ secrets.KEYSTORE_ALIAS }} >> signing.properties
-          echo KEYSTORE_ALIAS_PASSWORD='${{ secrets.KEYSTORE_ALIAS_PASSWORD }}' >> signing.properties
-          echo KEYSTORE_FILE=../key.jks >> signing.properties
-          echo ${{ secrets.KEYSTORE }} | base64 --decode > key.jks
+          if [ -n "$KEYSTORE_B64" ]; then
+            {
+              echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+              echo "KEYSTORE_ALIAS=$KEYSTORE_ALIAS"
+              echo "KEYSTORE_ALIAS_PASSWORD=$KEYSTORE_ALIAS_PASSWORD"
+              echo "KEYSTORE_FILE=../key.jks"
+            } > signing.properties
+            echo "$KEYSTORE_B64" | base64 --decode > key.jks
+          fi
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
