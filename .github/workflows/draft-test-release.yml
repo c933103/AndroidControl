@@ -27,6 +27,7 @@ jobs:
           java-version: '21'
 
       - name: Write signing key
+        if: ${{ secrets.KEYSTORE != '' }}
         run: |
           echo KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }} > signing.properties
           echo KEYSTORE_ALIAS=${{ secrets.KEYSTORE_ALIAS }} >> signing.properties
