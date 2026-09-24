@@ -65,7 +65,7 @@ object OrientationControlClient {
         override fun onServiceDisconnected(componentName: ComponentName) {
             remote = null
             binding = false
-            publish(State())
+            publish(State(error = "Privileged control service disconnected"))
         }
     }
 
