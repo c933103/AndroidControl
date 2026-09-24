@@ -5,8 +5,10 @@ import androidx.annotation.Keep
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
+@Keep
 class AndroidControlService : IAndroidControlService.Stub {
 
+    @Keep
     constructor()
 
     @Keep
@@ -18,13 +20,17 @@ class AndroidControlService : IAndroidControlService.Stub {
 
     override fun setForcePortrait(enabled: Boolean): Boolean {
         if (enabled) {
-            runWm("user-rotation", "lock", "0")
-            runWm("fixed-to-user-rotation", "enabled")
-            runWm("set-ignore-orientation-request", "true")
+            val portraitRotation = getPortraitRotation()
+            try {
+                runWm("user-rotation", "lock", portraitRotation.toString())
+                runWm("fixed-to-user-rotation", "enabled")
+                runWm("set-ignore-orientation-request", "true")
+            } catch (t: Throwable) {
+                restoreNormalRotationBestEffort()
+                throw t
+            }
         } else {
-            runWm("set-ignore-orientation-request", "false")
-            runWm("fixed-to-user-rotation", "default")
-            runWm("user-rotation", "free")
+            restoreNormalRotation()
         }
         return isForcePortraitEnabled()
     }
@@ -34,13 +40,46 @@ class AndroidControlService : IAndroidControlService.Stub {
         val fixedToUserRotation = runWm("fixed-to-user-rotation").trim()
         val ignoreOrientationRequest = runWm("get-ignore-orientation-request")
 
-        return userRotation == "lock 0" &&
+        val portraitRotation = getPortraitRotation()
+        return userRotation == "lock $portraitRotation" &&
             fixedToUserRotation == "enabled" &&
             Regex("""ignoreOrientationRequest\s+true\b""").containsMatchIn(ignoreOrientationRequest)
     }
 
     override fun toggleForcePortrait(): Boolean {
         return setForcePortrait(!isForcePortraitEnabled())
+    }
+
+    private fun getPortraitRotation(): Int {
+        val output = runWm("size")
+        val match = Regex("""Physical size:\s*(\d+)x(\d+)""").find(output)
+            ?: return 0
+        val width = match.groupValues[1].toIntOrNull() ?: return 0
+        val height = match.groupValues[2].toIntOrNull() ?: return 0
+        return if (height >= width) 0 else 1
+    }
+
+    private fun restoreNormalRotation() {
+        var failure: Throwable? = null
+        listOf(
+            arrayOf("set-ignore-orientation-request", "false"),
+            arrayOf("fixed-to-user-rotation", "default"),
+            arrayOf("user-rotation", "free")
+        ).forEach { command ->
+            try {
+                runWm(*command)
+            } catch (t: Throwable) {
+                if (failure == null) failure = t else failure!!.addSuppressed(t)
+            }
+        }
+        failure?.let { throw it }
+    }
+
+    private fun restoreNormalRotationBestEffort() {
+        try {
+            restoreNormalRotation()
+        } catch (_: Throwable) {
+        }
     }
 
     private fun runWm(vararg args: String): String {
