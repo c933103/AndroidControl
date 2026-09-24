@@ -18,7 +18,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     }
 
     private val wmHelp: String by lazy {
-        runWm("help")
+        runWmHelp()
     }
 
     private val wmApi: WmApi by lazy {
@@ -181,6 +181,25 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             restoreNormalRotation()
         } catch (_: Throwable) {
         }
+    }
+
+    private fun runWmHelp(): String {
+        val command = listOf("/system/bin/wm", "help")
+        val process = ProcessBuilder(command)
+            .redirectErrorStream(true)
+            .start()
+
+        val output = BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
+            reader.readText()
+        }
+
+        // Some Android builds print valid wm help text but return 255.
+        // For capability detection the help text itself is what matters.
+        process.waitFor()
+        if (output.isBlank()) {
+            throw IllegalStateException("wm help returned no output")
+        }
+        return output
     }
 
     private fun runWm(vararg args: String): String {
