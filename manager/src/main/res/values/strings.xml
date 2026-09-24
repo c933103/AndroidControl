@@ -67,6 +67,7 @@
     <string name="home_orientation_description_error_short">The previous orientation operation failed. Tap to try again.</string>
     <string name="home_orientation_force">Force portrait</string>
     <string name="home_orientation_restore">Restore normal rotation</string>
+    <string name="home_orientation_retry">Retry</string>
 
     <!-- Home - Root -->
     <string name="home_root_title"><![CDATA[Start (for rooted devices)]]></string>
