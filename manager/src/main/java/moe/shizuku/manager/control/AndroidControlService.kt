@@ -144,8 +144,8 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     }
 
     private fun restoreNormalRotation() {
-        val commands = when (wmApi) {
-            WmApi.MODERN -> buildList {
+        val commands: List<Array<String>> = when (wmApi) {
+            WmApi.MODERN -> buildList<Array<String>> {
                 if (supportsIgnoreOrientationRequest) {
                     add(arrayOf("set-ignore-orientation-request", "false"))
                 }
