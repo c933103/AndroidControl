@@ -6,13 +6,10 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 
 @Keep
-class AndroidControlService : IAndroidControlService.Stub() {
+class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() {
 
     @Keep
-    constructor()
-
-    @Keep
-    constructor(context: Context)
+    constructor(context: Context) : this()
 
     override fun destroy() {
         System.exit(0)
