@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - master
-    paths:
-      - '.github/workflows/draft-test-release.yml'
   workflow_dispatch:
 
 permissions:
