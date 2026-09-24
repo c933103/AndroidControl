@@ -15,6 +15,7 @@ import moe.shizuku.manager.ShizukuSettings
 import moe.shizuku.manager.app.AppBarActivity
 import moe.shizuku.manager.databinding.AboutDialogBinding
 import moe.shizuku.manager.databinding.HomeActivityBinding
+import moe.shizuku.manager.control.OrientationControlClient
 import moe.shizuku.manager.ktx.toHtml
 import moe.shizuku.manager.management.appsViewModel
 import moe.shizuku.manager.settings.SettingsActivity
@@ -32,9 +33,11 @@ abstract class HomeActivity : AppBarActivity() {
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
         checkServerStatus()
         appsModel.load()
+        OrientationControlClient.connect()
     }
 
     private val binderDeadListener = Shizuku.OnBinderDeadListener {
+        OrientationControlClient.onShizukuBinderDead()
         checkServerStatus()
     }
 
@@ -74,6 +77,9 @@ abstract class HomeActivity : AppBarActivity() {
     override fun onResume() {
         super.onResume()
         checkServerStatus()
+        if (Shizuku.pingBinder()) {
+            OrientationControlClient.connect()
+        }
     }
 
     private fun checkServerStatus() {
