@@ -26,6 +26,7 @@ class HomeAdapter(private val homeModel: HomeViewModel, private val appsModel: A
         private const val ID_START_ADB = 5L
         private const val ID_LEARN_MORE = 6L
         private const val ID_ADB_PERMISSION_LIMITED = 7L
+        private const val ID_ORIENTATION_CONTROL = 8L
     }
 
     override fun onCreateCreatorPool(): IndexCreatorPool {
@@ -41,6 +42,7 @@ class HomeAdapter(private val homeModel: HomeViewModel, private val appsModel: A
 
         clear()
         addItem(ServerStatusViewHolder.CREATOR, status, ID_STATUS)
+        addItem(OrientationControlViewHolder.CREATOR, status, ID_ORIENTATION_CONTROL)
 
         if (adbPermission) {
             addItem(ManageAppsViewHolder.CREATOR, status to grantedCount, ID_APPS)

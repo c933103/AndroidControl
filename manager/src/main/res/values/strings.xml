@@ -57,6 +57,18 @@
     <string name="adb_pairing_tutorial_content_network">Shizuku needs to access local network. It is controlled by the network permission.</string>
     <string name="adb_pairing_tutorial_content_network_limation_not_foreground">Some systems (such as MIUI) disallow apps to access the network when they are not visible, even if the app uses foreground service as standard. Please disable battery optimization features for Shizuku on such systems.</string>
 
+    <!-- Home - Global orientation control -->
+    <string name="home_orientation_title">Global portrait control</string>
+    <string name="home_orientation_description_normal">Apps can use their normal orientation. Tap to force the entire display to portrait and ignore app orientation requests.</string>
+    <string name="home_orientation_description_forced">Portrait is forced system-wide. App orientation requests are being ignored.</string>
+    <string name="home_orientation_description_connecting">Connecting to the privileged control service…</string>
+    <string name="home_orientation_description_working">Applying display orientation…</string>
+    <string name="home_orientation_description_error">Portrait control unavailable: %1$s</string>
+    <string name="home_orientation_description_error_short">The previous orientation operation failed. Tap to try again.</string>
+    <string name="home_orientation_force">Force portrait</string>
+    <string name="home_orientation_restore">Restore normal rotation</string>
+    <string name="home_orientation_retry">Retry</string>
+
     <!-- Home - Root -->
     <string name="home_root_title"><![CDATA[Start (for rooted devices)]]></string>
     <string name="home_root_description"><![CDATA[In addition, Shizuku can be started automatically on boot. If not, please check if your system or third-party tools have restricted Shizuku.<br>You can refer to %s.]]></string>
