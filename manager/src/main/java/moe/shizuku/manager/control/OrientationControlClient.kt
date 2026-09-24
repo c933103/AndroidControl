@@ -121,7 +121,7 @@ object OrientationControlClient {
 
         executor.execute {
             try {
-                val forced = service.isForcePortraitEnabled
+                val forced = service.isForcePortraitEnabled()
                 publish(State(available = true, forcedPortrait = forced))
             } catch (t: Throwable) {
                 remote = null
