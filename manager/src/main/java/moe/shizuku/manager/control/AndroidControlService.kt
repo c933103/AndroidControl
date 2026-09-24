@@ -6,7 +6,7 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 
 @Keep
-class AndroidControlService : IAndroidControlService.Stub {
+class AndroidControlService : IAndroidControlService.Stub() {
 
     @Keep
     constructor()
