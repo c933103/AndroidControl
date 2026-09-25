@@ -113,9 +113,9 @@ public final class AdbKeyMigrator {
         String xml;
         if (prefs.exists()) {
             xml = readUtf8(prefs);
-            Pattern p = Pattern.compile("<string\\s+name=\\"adbkey\\">[^<]*</string>");
+            Pattern p = Pattern.compile("<string\\s+name=\"adbkey\">[^<]*</string>");
             Matcher m = p.matcher(xml);
-            String replacement = "<string name=\\"adbkey\\">" + encrypted + "</string>";
+            String replacement = "<string name=\"adbkey\">" + encrypted + "</string>";
             if (m.find()) {
                 xml = m.replaceFirst(Matcher.quoteReplacement(replacement));
             } else if (xml.contains("</map>")) {
@@ -126,7 +126,7 @@ public final class AdbKeyMigrator {
         } else {
             xml = "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n"
                     + "<map>\n"
-                    + "    <string name=\\"adbkey\\">" + encrypted + "</string>\n"
+                    + "    <string name=\"adbkey\">" + encrypted + "</string>\n"
                     + "</map>\n";
         }
 
@@ -168,7 +168,7 @@ public final class AdbKeyMigrator {
     }
 
     private static String extractAdbKey(String xml) {
-        Matcher m = Pattern.compile("<string\\s+name=\\"adbkey\\">([^<]+)</string>").matcher(xml);
+        Matcher m = Pattern.compile("<string\\s+name=\"adbkey\">([^<]+)</string>").matcher(xml);
         if (!m.find()) {
             throw new IllegalStateException("adbkey not found in settings.xml");
         }
