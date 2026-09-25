@@ -42,7 +42,8 @@ dependencyResolutionManagement {
 
 include ':server', ':starter', ':shell'
 include ':manager'
-include ':common'\ninclude ':migration-helper'
+include ':common'
+include ':migration-helper'
 
 def root = "api"
 
