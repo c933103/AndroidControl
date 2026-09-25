@@ -44,6 +44,14 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     private val forceResizableStateFile =
         File("/data/local/tmp/androidcontrol-force-resizable-prev")
 
+    private val compatOverridePackagesFile =
+        File("/data/local/tmp/androidcontrol-portrait-compat-packages")
+
+    private companion object {
+        const val FORCE_RESIZE_APP = "174042936"
+        const val OVERRIDE_ANY_ORIENTATION_TO_USER = "310816437"
+    }
+
     override fun destroy() {
         System.exit(0)
     }
@@ -59,6 +67,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             val portraitRotation = getPortraitRotation()
             try {
                 enableForceResizableActivities()
+                enablePerAppPortraitCompatOverrides()
                 when (wmApi) {
                     WmApi.MODERN -> {
                         runWm("user-rotation", "lock", portraitRotation.toString())
@@ -181,6 +190,16 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             }
         }
         try {
+            restorePerAppPortraitCompatOverrides()
+        } catch (t: Throwable) {
+            if (failure == null) {
+                failure = t
+            } else {
+                failure!!.addSuppressed(t)
+            }
+        }
+
+        try {
             restoreForceResizableActivities()
         } catch (t: Throwable) {
             if (failure == null) {
@@ -190,6 +209,89 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             }
         }
 
+        failure?.let { throw it }
+    }
+
+    private fun enablePerAppPortraitCompatOverrides() {
+        val sdk = runCommand("/system/bin/getprop", "ro.build.version.sdk")
+            .trim()
+            .toIntOrNull() ?: 0
+
+        val packages = runCommand("/system/bin/pm", "list", "packages", "-3")
+            .lineSequence()
+            .map { it.trim() }
+            .filter { it.startsWith("package:") }
+            .map { it.removePrefix("package:") }
+            .filter { it.isNotBlank() && it != "moe.shizuku.privileged.api" }
+            .distinct()
+            .toList()
+
+        val changed = mutableListOf<String>()
+
+        packages.forEach { packageName ->
+            var forceResizeApplied = false
+            try {
+                runAm(
+                    "compat", "enable", "--no-kill",
+                    FORCE_RESIZE_APP, packageName
+                )
+                forceResizeApplied = true
+            } catch (_: Throwable) {
+                // Some packages/ROMs may reject the override. Continue with others.
+            }
+
+            if (sdk >= 34) {
+                try {
+                    runAm(
+                        "compat", "enable", "--no-kill",
+                        OVERRIDE_ANY_ORIENTATION_TO_USER, packageName
+                    )
+                } catch (_: Throwable) {
+                    // Not all Android 14+ builds expose this override.
+                }
+            }
+
+            if (forceResizeApplied) {
+                changed.add(packageName)
+            }
+        }
+
+        compatOverridePackagesFile.writeText(changed.joinToString("\n"))
+    }
+
+    private fun restorePerAppPortraitCompatOverrides() {
+        if (!compatOverridePackagesFile.exists()) return
+
+        val sdk = runCommand("/system/bin/getprop", "ro.build.version.sdk")
+            .trim()
+            .toIntOrNull() ?: 0
+
+        val packages = compatOverridePackagesFile.readLines()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+
+        var failure: Throwable? = null
+
+        packages.forEach { packageName ->
+            try {
+                runAm("compat", "reset", FORCE_RESIZE_APP, packageName)
+            } catch (t: Throwable) {
+                if (failure == null) failure = t else failure!!.addSuppressed(t)
+            }
+
+            if (sdk >= 34) {
+                try {
+                    runAm(
+                        "compat", "reset",
+                        OVERRIDE_ANY_ORIENTATION_TO_USER, packageName
+                    )
+                } catch (t: Throwable) {
+                    if (failure == null) failure = t else failure!!.addSuppressed(t)
+                }
+            }
+        }
+
+        compatOverridePackagesFile.delete()
         failure?.let { throw it }
     }
 
@@ -250,6 +352,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
     private fun runSettings(vararg args: String): String {
         return runCommand("/system/bin/settings", *args)
+    }
+
+    private fun runAm(vararg args: String): String {
+        return runCommand("/system/bin/am", *args)
     }
 
     private fun runCommand(executable: String, vararg args: String): String {
