@@ -27,13 +27,13 @@ jobs:
       - name: Write stable signing key on master
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
         env:
-          KEYSTORE_B64: ${{ secrets.KEYSTORE }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
-          KEYSTORE_ALIAS_PASSWORD: ${{ secrets.KEYSTORE_ALIAS_PASSWORD }}
+          KEYSTORE_B64: ${{ secrets.ANDROID_TEST_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: androidcontrol-test-v1
+          KEYSTORE_ALIAS: androidcontrol-test
+          KEYSTORE_ALIAS_PASSWORD: androidcontrol-test-v1
         run: |
-          if [ -z "$KEYSTORE_B64" ] || [ -z "$KEYSTORE_PASSWORD" ] || [ -z "$KEYSTORE_ALIAS" ] || [ -z "$KEYSTORE_ALIAS_PASSWORD" ]; then
-            echo "::error::Persistent Android signing secrets are not configured. Refusing to build master with an ephemeral runner debug key."
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::ANDROID_TEST_KEYSTORE_B64 is not configured. Refusing to build master with an ephemeral runner debug key."
             exit 1
           fi
           {
