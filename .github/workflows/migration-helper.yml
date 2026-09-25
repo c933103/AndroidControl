@@ -1,0 +1,45 @@
+name: Build ADB pairing migrator
+
+on:
+  push:
+    branches:
+      - feature/adb-pairing-migrator
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Accept Android SDK licenses
+        run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
+
+      - name: Build migrator APK
+        run: ./gradlew :migration-helper:assembleDebug
+
+      - name: Create draft helper release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          short_sha="${GITHUB_SHA::7}"
+          apk="$(ls migration-helper/build/outputs/apk/debug/*.apk | head -n1)"
+          cp "$apk" "AndroidControl-AdbKeyMigrator.apk"
+          gh release create "androidcontrol-migrator-${short_sha}"             "AndroidControl-AdbKeyMigrator.apk"             --repo "$GITHUB_REPOSITORY"             --target "$GITHUB_SHA"             --title "AndroidControl ADB pairing migrator ${short_sha}"             --notes "One-time helper for exporting/importing AndroidControl's built-in Wireless Debugging ADB identity. Draft only."             --draft             --prerelease
