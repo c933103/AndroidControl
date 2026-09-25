@@ -3,6 +3,7 @@ package moe.shizuku.manager.control
 import android.content.Context
 import androidx.annotation.Keep
 import java.io.BufferedReader
+import java.io.File
 import java.io.InputStreamReader
 
 @Keep
@@ -40,6 +41,9 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             wmHelp.contains("get-ignore-orientation-request")
     }
 
+    private val forceResizableStateFile =
+        File("/data/local/tmp/androidcontrol-force-resizable-prev")
+
     override fun destroy() {
         System.exit(0)
     }
@@ -54,6 +58,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         if (enabled) {
             val portraitRotation = getPortraitRotation()
             try {
+                enableForceResizableActivities()
                 when (wmApi) {
                     WmApi.MODERN -> {
                         runWm("user-rotation", "lock", portraitRotation.toString())
@@ -103,7 +108,8 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
                 userRotation == "lock $portraitRotation" &&
                     fixedToUserRotation == "enabled" &&
-                    ignoreOrientationOk
+                    ignoreOrientationOk &&
+                    isForceResizableActivitiesEnabled()
             }
 
             WmApi.LEGACY -> {
@@ -121,7 +127,8 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                     Regex("""mUserRotation=$rotationName\b""")
                         .containsMatchIn(dump) &&
                     Regex("""mFixedToUserRotation=(?:true|enabled)\b""")
-                        .containsMatchIn(dump)
+                        .containsMatchIn(dump) &&
+                    isForceResizableActivitiesEnabled()
             }
 
             WmApi.UNSUPPORTED -> false
@@ -173,7 +180,42 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 }
             }
         }
+        try {
+            restoreForceResizableActivities()
+        } catch (t: Throwable) {
+            if (failure == null) {
+                failure = t
+            } else {
+                failure!!.addSuppressed(t)
+            }
+        }
+
         failure?.let { throw it }
+    }
+
+    private fun enableForceResizableActivities() {
+        if (!forceResizableStateFile.exists()) {
+            val previous = runSettings("get", "global", "force_resizable_activities").trim()
+            forceResizableStateFile.writeText(previous.ifEmpty { "null" })
+        }
+        runSettings("put", "global", "force_resizable_activities", "1")
+    }
+
+    private fun restoreForceResizableActivities() {
+        if (!forceResizableStateFile.exists()) return
+
+        val previous = forceResizableStateFile.readText().trim()
+        if (previous.isEmpty() || previous == "null") {
+            runSettings("delete", "global", "force_resizable_activities")
+        } else {
+            runSettings("put", "global", "force_resizable_activities", previous)
+        }
+
+        forceResizableStateFile.delete()
+    }
+
+    private fun isForceResizableActivitiesEnabled(): Boolean {
+        return runSettings("get", "global", "force_resizable_activities").trim() == "1"
     }
 
     private fun restoreNormalRotationBestEffort() {
@@ -204,6 +246,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
     private fun runWm(vararg args: String): String {
         return runCommand("/system/bin/wm", *args)
+    }
+
+    private fun runSettings(vararg args: String): String {
+        return runCommand("/system/bin/settings", *args)
     }
 
     private fun runCommand(executable: String, vararg args: String): String {
