@@ -1,0 +1,19 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'tools.androidcontrol.migrator'
+
+    defaultConfig {
+        applicationId 'tools.androidcontrol.migrator'
+        versionCode 1
+        versionName '1.0'
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+        }
+    }
+}
