@@ -168,6 +168,17 @@
         </receiver>
 
         <provider
+            android:name=".files.AdbDocumentsProvider"
+            android:authorities="${applicationId}.adbfiles"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
+
+        <provider
             android:name=".ShizukuManagerProvider"
             android:authorities="${applicationId}.shizuku"
             android:directBootAware="true"
