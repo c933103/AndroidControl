@@ -125,13 +125,8 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 throw t
             }
 
-            // These are enhancement layers, not prerequisites for the rotation lock.
-            // A vendor-specific failure here must not roll the display back to normal.
-            try {
-                enableForceResizableActivities()
-            } catch (_: Throwable) {
-            }
-
+            // Per-app enhancement layers are intentionally limited to the target game.
+            // Do not touch the global force_resizable_activities developer setting here.
             try {
                 enableTargetPortraitCompat()
             } catch (_: Throwable) {
@@ -372,16 +367,6 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         }
         try {
             restoreTargetPortraitCompat()
-        } catch (t: Throwable) {
-            if (failure == null) {
-                failure = t
-            } else {
-                failure!!.addSuppressed(t)
-            }
-        }
-
-        try {
-            restoreForceResizableActivities()
         } catch (t: Throwable) {
             if (failure == null) {
                 failure = t
