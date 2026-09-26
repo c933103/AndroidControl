@@ -15,10 +15,8 @@ object OrientationControlClient {
     data class State(
         val available: Boolean = false,
         val forcedPortrait: Boolean? = null,
-        val error: String? = null,
-        val recoveryRunning: Boolean = false,
-        val recoveredPackages: Int? = null,
-        val recoveryError: String? = null
+        val targetStatus: String? = null,
+        val error: String? = null
     )
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -33,9 +31,6 @@ object OrientationControlClient {
 
     @Volatile
     private var pendingToggle = false
-
-    @Volatile
-    private var pendingRecovery = false
 
     @Volatile
     var state = State()
@@ -60,18 +55,11 @@ object OrientationControlClient {
             }
 
             remote = IAndroidControlService.Stub.asInterface(binder)
-            when {
-                pendingRecovery -> {
-                    pendingRecovery = false
-                    recoverLegacyState()
-                }
-
-                pendingToggle -> {
-                    pendingToggle = false
-                    toggle()
-                }
-
-                else -> refresh()
+            if (pendingToggle) {
+                pendingToggle = false
+                toggle()
+            } else {
+                refresh()
             }
         }
 
@@ -123,7 +111,6 @@ object OrientationControlClient {
         remote = null
         binding = false
         pendingToggle = false
-        pendingRecovery = false
         publish(State())
     }
 
@@ -136,13 +123,13 @@ object OrientationControlClient {
         executor.execute {
             try {
                 val forced = service.isForcePortraitEnabled()
-                val recoveryRunning = service.isLegacyRecoveryRunning()
+                val targetStatus = service.targetPortraitStatus
                 publish(
                     state.copy(
                         available = true,
                         forcedPortrait = forced,
-                        error = null,
-                        recoveryRunning = recoveryRunning
+                        targetStatus = targetStatus,
+                        error = null
                     )
                 )
             } catch (t: Throwable) {
@@ -153,8 +140,6 @@ object OrientationControlClient {
     }
 
     fun toggle() {
-        if (state.recoveryRunning) return
-
         val service = remote
         if (service == null || !service.asBinder().pingBinder()) {
             pendingToggle = true
@@ -165,10 +150,12 @@ object OrientationControlClient {
         executor.execute {
             try {
                 val forced = service.toggleForcePortrait()
+                val targetStatus = service.targetPortraitStatus
                 publish(
                     state.copy(
                         available = true,
                         forcedPortrait = forced,
+                        targetStatus = targetStatus,
                         error = null
                     )
                 )
@@ -184,61 +171,6 @@ object OrientationControlClient {
         }
     }
 
-    fun recoverLegacyState() {
-        if (state.recoveryRunning) return
-
-        val service = remote
-        if (service == null || !service.asBinder().pingBinder()) {
-            pendingRecovery = true
-            connect()
-            return
-        }
-
-        publish(
-            state.copy(
-                available = true,
-                recoveryRunning = true,
-                recoveredPackages = null,
-                recoveryError = null,
-                error = null
-            )
-        )
-
-        executor.execute {
-            try {
-                val count = service.recoverLegacyPortraitState()
-                val forced = try {
-                    service.isForcePortraitEnabled()
-                } catch (_: Throwable) {
-                    false
-                }
-                val recoveryRunning = try {
-                    service.isLegacyRecoveryRunning()
-                } catch (_: Throwable) {
-                    false
-                }
-
-                publish(
-                    state.copy(
-                        available = true,
-                        forcedPortrait = forced,
-                        recoveryRunning = recoveryRunning,
-                        recoveredPackages = count,
-                        recoveryError = null,
-                        error = null
-                    )
-                )
-            } catch (t: Throwable) {
-                publish(
-                    state.copy(
-                        available = true,
-                        recoveryRunning = false,
-                        recoveryError = t.message ?: t.javaClass.simpleName
-                    )
-                )
-            }
-        }
-    }
 
     private fun publish(newState: State) {
         state = newState
