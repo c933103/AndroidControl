@@ -126,7 +126,13 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             }
 
             // Per-app enhancement layers are intentionally limited to the target game.
-            // Do not touch the global force_resizable_activities developer setting here.
+            // Clean any stale target-only ledger from an interrupted newer run before
+            // applying a fresh set. Do not touch the global force_resizable_activities
+            // developer setting here.
+            try {
+                restoreTargetPortraitCompat()
+            } catch (_: Throwable) {
+            }
             try {
                 enableTargetPortraitCompat()
             } catch (_: Throwable) {
@@ -284,6 +290,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             }
 
             legacyCompatOverridePackagesFile.delete()
+            targetCompatStateFile.delete()
 
             try {
                 restoreForceResizableActivities()
