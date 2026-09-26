@@ -51,6 +51,9 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     private val compatOverridePackagesFile =
         File("/data/local/tmp/androidcontrol-portrait-compat-packages")
 
+    private val sandboxDisplayApisStateFile =
+        File("/data/local/tmp/androidcontrol-sandbox-display-apis-prev")
+
     private companion object {
         const val FORCE_RESIZE_APP = "174042936"
         const val NEVER_SANDBOX_DISPLAY_APIS = "184838306"
@@ -77,7 +80,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             try {
                 enableForceResizableActivities()
                 if (supportsSandboxDisplayApis) {
-                    runWm("set-sandbox-display-apis", "true")
+                    enableSandboxDisplayApis()
                 }
                 enablePerAppPortraitCompatOverrides()
                 when (wmApi) {
@@ -212,6 +215,16 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         }
 
         try {
+            restoreSandboxDisplayApis()
+        } catch (t: Throwable) {
+            if (failure == null) {
+                failure = t
+            } else {
+                failure!!.addSuppressed(t)
+            }
+        }
+
+        try {
             restoreForceResizableActivities()
         } catch (t: Throwable) {
             if (failure == null) {
@@ -241,14 +254,14 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         val changed = mutableListOf<String>()
 
         packages.forEach { packageName ->
-            var anyOverrideApplied = false
+            val appliedChanges = mutableListOf<String>()
 
             try {
                 runAm(
                     "compat", "disable", "--no-kill",
                     NEVER_SANDBOX_DISPLAY_APIS, packageName
                 )
-                anyOverrideApplied = true
+                appliedChanges.add(NEVER_SANDBOX_DISPLAY_APIS)
             } catch (_: Throwable) {
                 // Older builds may not expose this compat change.
             }
@@ -258,7 +271,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                     "compat", "enable", "--no-kill",
                     ALWAYS_SANDBOX_DISPLAY_APIS, packageName
                 )
-                anyOverrideApplied = true
+                appliedChanges.add(ALWAYS_SANDBOX_DISPLAY_APIS)
             } catch (_: Throwable) {
                 // Older builds may not expose this compat change.
             }
@@ -268,7 +281,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                     "compat", "enable", "--no-kill",
                     OVERRIDE_SANDBOX_VIEW_BOUNDS_APIS, packageName
                 )
-                anyOverrideApplied = true
+                appliedChanges.add(OVERRIDE_SANDBOX_VIEW_BOUNDS_APIS)
             } catch (_: Throwable) {
                 // Older builds may not expose this compat change.
             }
@@ -278,7 +291,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                     "compat", "enable", "--no-kill",
                     FORCE_RESIZE_APP, packageName
                 )
-                anyOverrideApplied = true
+                appliedChanges.add(FORCE_RESIZE_APP)
             } catch (_: Throwable) {
                 // Some packages/ROMs may reject the override. Continue with others.
             }
@@ -293,7 +306,8 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                         "compat", "enable", "--no-kill",
                         OVERRIDE_UNDEFINED_ORIENTATION_TO_PORTRAIT, packageName
                     )
-                    anyOverrideApplied = true
+                    appliedChanges.add(OVERRIDE_ANY_ORIENTATION)
+                    appliedChanges.add(OVERRIDE_UNDEFINED_ORIENTATION_TO_PORTRAIT)
                 } catch (_: Throwable) {
                     // Not all vendor Android 14 builds expose both orientation overrides.
                 }
@@ -305,14 +319,14 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                         "compat", "enable", "--no-kill",
                         OVERRIDE_ANY_ORIENTATION_TO_USER, packageName
                     )
-                    anyOverrideApplied = true
+                    appliedChanges.add(OVERRIDE_ANY_ORIENTATION_TO_USER)
                 } catch (_: Throwable) {
                     // Android 15+ fullscreen/user-orientation override is optional on vendor builds.
                 }
             }
 
-            if (anyOverrideApplied) {
-                changed.add(packageName)
+            if (appliedChanges.isNotEmpty()) {
+                changed.add(packageName + "\t" + appliedChanges.joinToString(","))
             }
         }
 
@@ -322,64 +336,26 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     private fun restorePerAppPortraitCompatOverrides() {
         if (!compatOverridePackagesFile.exists()) return
 
-        val sdk = runCommand("/system/bin/getprop", "ro.build.version.sdk")
-            .trim()
-            .toIntOrNull() ?: 0
+        val entries = compatOverridePackagesFile.readLines()
+            .mapNotNull { line ->
+                val parts = line.split('\t', limit = 2)
+                val packageName = parts.getOrNull(0)?.trim().orEmpty()
+                val changeIds = parts.getOrNull(1)
+                    ?.split(',')
+                    ?.map { it.trim() }
+                    ?.filter { it.isNotEmpty() }
+                    .orEmpty()
 
-        val packages = compatOverridePackagesFile.readLines()
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
+                if (packageName.isEmpty() || changeIds.isEmpty()) null
+                else packageName to changeIds
+            }
 
         var failure: Throwable? = null
 
-        packages.forEach { packageName ->
-            try {
-                runAm("compat", "reset", NEVER_SANDBOX_DISPLAY_APIS, packageName)
-            } catch (t: Throwable) {
-                if (failure == null) failure = t else failure!!.addSuppressed(t)
-            }
-
-            try {
-                runAm("compat", "reset", ALWAYS_SANDBOX_DISPLAY_APIS, packageName)
-            } catch (t: Throwable) {
-                if (failure == null) failure = t else failure!!.addSuppressed(t)
-            }
-
-            try {
-                runAm("compat", "reset", OVERRIDE_SANDBOX_VIEW_BOUNDS_APIS, packageName)
-            } catch (t: Throwable) {
-                if (failure == null) failure = t else failure!!.addSuppressed(t)
-            }
-
-            try {
-                runAm("compat", "reset", FORCE_RESIZE_APP, packageName)
-            } catch (t: Throwable) {
-                if (failure == null) failure = t else failure!!.addSuppressed(t)
-            }
-
-            if (sdk >= 34) {
+        entries.forEach { (packageName, changeIds) ->
+            changeIds.forEach { changeId ->
                 try {
-                    runAm("compat", "reset", OVERRIDE_ANY_ORIENTATION, packageName)
-                } catch (t: Throwable) {
-                    if (failure == null) failure = t else failure!!.addSuppressed(t)
-                }
-
-                try {
-                    runAm(
-                        "compat", "reset",
-                        OVERRIDE_UNDEFINED_ORIENTATION_TO_PORTRAIT, packageName
-                    )
-                } catch (t: Throwable) {
-                    if (failure == null) failure = t else failure!!.addSuppressed(t)
-                }
-            }
-
-            if (sdk >= 35) {
-                try {
-                    runAm(
-                        "compat", "reset",
-                        OVERRIDE_ANY_ORIENTATION_TO_USER, packageName
-                    )
+                    runAm("compat", "reset", changeId, packageName)
                 } catch (t: Throwable) {
                     if (failure == null) failure = t else failure!!.addSuppressed(t)
                 }
@@ -388,6 +364,34 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
         compatOverridePackagesFile.delete()
         failure?.let { throw it }
+    }
+
+    private fun enableSandboxDisplayApis() {
+        if (!sandboxDisplayApisStateFile.exists()) {
+            val dump = runCommand("/system/bin/dumpsys", "window")
+            val previous = Regex("""mSandboxDisplayApis=(true|false)""")
+                .find(dump)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?: "default"
+            sandboxDisplayApisStateFile.writeText(previous)
+        }
+
+        runWm("set-sandbox-display-apis", "true")
+    }
+
+    private fun restoreSandboxDisplayApis() {
+        if (!supportsSandboxDisplayApis || !sandboxDisplayApisStateFile.exists()) return
+
+        val previous = sandboxDisplayApisStateFile.readText().trim()
+        try {
+            when (previous) {
+                "true", "false" -> runWm("set-sandbox-display-apis", previous)
+                else -> runWm("reset-sandbox-display-apis")
+            }
+        } finally {
+            sandboxDisplayApisStateFile.delete()
+        }
     }
 
     private fun enableForceResizableActivities() {
