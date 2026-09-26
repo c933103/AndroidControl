@@ -43,10 +43,6 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             wmHelp.contains("get-ignore-orientation-request")
     }
 
-    private val supportsSandboxDisplayApis: Boolean by lazy {
-        wmHelp.contains("set-sandbox-display-apis")
-    }
-
     private val forceResizableStateFile =
         File("/data/local/tmp/androidcontrol-force-resizable-prev")
 
@@ -356,64 +352,42 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     private fun restorePerAppPortraitCompatOverrides() {
         if (!compatOverridePackagesFile.exists()) return
 
-        val entries = compatOverridePackagesFile.readLines()
-            .mapNotNull { line ->
-                val parts = line.split('\t', limit = 2)
-                val packageName = parts.getOrNull(0)?.trim().orEmpty()
-                val changeIds = parts.getOrNull(1)
-                    ?.split(',')
-                    ?.map { it.trim() }
-                    ?.filter { it.isNotEmpty() }
-                    .orEmpty()
+        val sdk = getSdkInt()
+        val packages = compatOverridePackagesFile.readLines()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
 
-                if (packageName.isEmpty() || changeIds.isEmpty()) null
-                else packageName to changeIds
-            }
-
-        var failure: Throwable? = null
-
-        entries.forEach { (packageName, changeIds) ->
-            changeIds.forEach { changeId ->
+        packages.forEach { packageName ->
+            fun resetCompat(changeId: String) {
                 try {
                     runAm("compat", "reset", changeId, packageName)
-                } catch (t: Throwable) {
-                    if (failure == null) failure = t else failure!!.addSuppressed(t)
+                } catch (_: Throwable) {
+                    // The change may not exist on this Android/vendor build, or the
+                    // package may have disappeared. Restoration must continue.
                 }
+            }
+
+            if (sdk >= 33) {
+                resetCompat(FORCE_NON_RESIZE_APP)
+            }
+
+            resetCompat(NEVER_SANDBOX_DISPLAY_APIS)
+            resetCompat(ALWAYS_SANDBOX_DISPLAY_APIS)
+            resetCompat(OVERRIDE_SANDBOX_VIEW_BOUNDS_APIS)
+            resetCompat(FORCE_RESIZE_APP)
+
+            if (sdk >= 34) {
+                resetCompat(OVERRIDE_ANY_ORIENTATION)
+                resetCompat(OVERRIDE_UNDEFINED_ORIENTATION_TO_PORTRAIT)
+            }
+
+            if (sdk >= 35) {
+                resetCompat(OVERRIDE_ANY_ORIENTATION_TO_USER)
             }
         }
 
         compatOverridePackagesFile.delete()
-        failure?.let { throw it }
     }
-
-    private fun enableSandboxDisplayApis() {
-        if (!sandboxDisplayApisStateFile.exists()) {
-            val dump = runCommand("/system/bin/dumpsys", "window")
-            val previous = Regex("""mSandboxDisplayApis=(true|false)""")
-                .find(dump)
-                ?.groupValues
-                ?.getOrNull(1)
-                ?: "default"
-            sandboxDisplayApisStateFile.writeText(previous)
-        }
-
-        runWm("set-sandbox-display-apis", "true")
-    }
-
-    private fun restoreSandboxDisplayApis() {
-        if (!supportsSandboxDisplayApis || !sandboxDisplayApisStateFile.exists()) return
-
-        val previous = sandboxDisplayApisStateFile.readText().trim()
-        try {
-            when (previous) {
-                "true", "false" -> runWm("set-sandbox-display-apis", previous)
-                else -> runWm("reset-sandbox-display-apis")
-            }
-        } finally {
-            sandboxDisplayApisStateFile.delete()
-        }
-    }
-
 
     private data class ResumedTask(
         val taskId: Int,
