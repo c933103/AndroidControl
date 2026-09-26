@@ -56,6 +56,8 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         const val NEVER_SANDBOX_DISPLAY_APIS = "184838306"
         const val ALWAYS_SANDBOX_DISPLAY_APIS = "185004937"
         const val OVERRIDE_SANDBOX_VIEW_BOUNDS_APIS = "237531167"
+        const val OVERRIDE_UNDEFINED_ORIENTATION_TO_PORTRAIT = "265452344"
+        const val OVERRIDE_ANY_ORIENTATION = "265464455"
         const val OVERRIDE_ANY_ORIENTATION_TO_USER = "310816437"
     }
 
@@ -282,10 +284,25 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 try {
                     runAm(
                         "compat", "enable", "--no-kill",
+                        OVERRIDE_ANY_ORIENTATION, packageName
+                    )
+                    runAm(
+                        "compat", "enable", "--no-kill",
+                        OVERRIDE_UNDEFINED_ORIENTATION_TO_PORTRAIT, packageName
+                    )
+                } catch (_: Throwable) {
+                    // Not all vendor Android 14 builds expose both orientation overrides.
+                }
+            }
+
+            if (sdk >= 35) {
+                try {
+                    runAm(
+                        "compat", "enable", "--no-kill",
                         OVERRIDE_ANY_ORIENTATION_TO_USER, packageName
                     )
                 } catch (_: Throwable) {
-                    // Not all Android 14+ builds expose this override.
+                    // Android 15+ fullscreen/user-orientation override is optional on vendor builds.
                 }
             }
 
@@ -336,6 +353,23 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             }
 
             if (sdk >= 34) {
+                try {
+                    runAm("compat", "reset", OVERRIDE_ANY_ORIENTATION, packageName)
+                } catch (t: Throwable) {
+                    if (failure == null) failure = t else failure!!.addSuppressed(t)
+                }
+
+                try {
+                    runAm(
+                        "compat", "reset",
+                        OVERRIDE_UNDEFINED_ORIENTATION_TO_PORTRAIT, packageName
+                    )
+                } catch (t: Throwable) {
+                    if (failure == null) failure = t else failure!!.addSuppressed(t)
+                }
+            }
+
+            if (sdk >= 35) {
                 try {
                     runAm(
                         "compat", "reset",
