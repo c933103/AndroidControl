@@ -52,12 +52,8 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="20dp"
         android:layout_marginBottom="12dp"
-        tools:text="@string/home_orientation_recovery_description" />
+        tools:text="@string/home_orientation_target_waiting" />
 
-    <com.google.android.material.button.MaterialButton
-        android:id="@android:id/button2"
-        style="@style/CardButton"
-        android:text="@string/home_orientation_recovery_button"
-        app:icon="@drawable/ic_server_restart" />
+
 
 </LinearLayout>
