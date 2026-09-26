@@ -41,6 +41,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             wmHelp.contains("get-ignore-orientation-request")
     }
 
+    private val supportsSandboxDisplayApis: Boolean by lazy {
+        wmHelp.contains("set-sandbox-display-apis")
+    }
+
     private val forceResizableStateFile =
         File("/data/local/tmp/androidcontrol-force-resizable-prev")
 
@@ -49,6 +53,9 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
     private companion object {
         const val FORCE_RESIZE_APP = "174042936"
+        const val NEVER_SANDBOX_DISPLAY_APIS = "184838306"
+        const val ALWAYS_SANDBOX_DISPLAY_APIS = "185004937"
+        const val OVERRIDE_SANDBOX_VIEW_BOUNDS_APIS = "237531167"
         const val OVERRIDE_ANY_ORIENTATION_TO_USER = "310816437"
     }
 
@@ -67,6 +74,9 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             val portraitRotation = getPortraitRotation()
             try {
                 enableForceResizableActivities()
+                if (supportsSandboxDisplayApis) {
+                    runWm("set-sandbox-display-apis", "true")
+                }
                 enablePerAppPortraitCompatOverrides()
                 when (wmApi) {
                     WmApi.MODERN -> {
@@ -230,6 +240,34 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
         packages.forEach { packageName ->
             var forceResizeApplied = false
+
+            try {
+                runAm(
+                    "compat", "disable", "--no-kill",
+                    NEVER_SANDBOX_DISPLAY_APIS, packageName
+                )
+            } catch (_: Throwable) {
+                // Older builds may not expose this compat change.
+            }
+
+            try {
+                runAm(
+                    "compat", "enable", "--no-kill",
+                    ALWAYS_SANDBOX_DISPLAY_APIS, packageName
+                )
+            } catch (_: Throwable) {
+                // Older builds may not expose this compat change.
+            }
+
+            try {
+                runAm(
+                    "compat", "enable", "--no-kill",
+                    OVERRIDE_SANDBOX_VIEW_BOUNDS_APIS, packageName
+                )
+            } catch (_: Throwable) {
+                // Older builds may not expose this compat change.
+            }
+
             try {
                 runAm(
                     "compat", "enable", "--no-kill",
@@ -273,6 +311,24 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         var failure: Throwable? = null
 
         packages.forEach { packageName ->
+            try {
+                runAm("compat", "reset", NEVER_SANDBOX_DISPLAY_APIS, packageName)
+            } catch (t: Throwable) {
+                if (failure == null) failure = t else failure!!.addSuppressed(t)
+            }
+
+            try {
+                runAm("compat", "reset", ALWAYS_SANDBOX_DISPLAY_APIS, packageName)
+            } catch (t: Throwable) {
+                if (failure == null) failure = t else failure!!.addSuppressed(t)
+            }
+
+            try {
+                runAm("compat", "reset", OVERRIDE_SANDBOX_VIEW_BOUNDS_APIS, packageName)
+            } catch (t: Throwable) {
+                if (failure == null) failure = t else failure!!.addSuppressed(t)
+            }
+
             try {
                 runAm("compat", "reset", FORCE_RESIZE_APP, packageName)
             } catch (t: Throwable) {
