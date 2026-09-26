@@ -1,6 +1,9 @@
 package moe.shizuku.manager.control
 
+import android.app.ActivityTaskManager
+import android.app.WindowConfiguration
 import android.content.Context
+import android.graphics.Rect
 import androidx.annotation.Keep
 import java.io.BufferedReader
 import java.io.File
@@ -51,6 +54,15 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     private val compatOverridePackagesFile =
         File("/data/local/tmp/androidcontrol-portrait-compat-packages")
 
+    private val fallbackTaskStateFile =
+        File("/data/local/tmp/androidcontrol-portrait-fallback-tasks")
+
+    @Volatile
+    private var fallbackWatcherRunning = false
+
+    @Volatile
+    private var fallbackWatcherThread: Thread? = null
+
     private val sandboxDisplayApisStateFile =
         File("/data/local/tmp/androidcontrol-sandbox-display-apis-prev")
 
@@ -99,6 +111,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                     }
 
                     WmApi.UNSUPPORTED -> error("unreachable")
+                }
+
+                if (getSdkInt() == 33) {
+                    startAndroid13TaskFallbackWatcher()
                 }
             } catch (t: Throwable) {
                 restoreNormalRotationBestEffort()
@@ -176,6 +192,8 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     }
 
     private fun restoreNormalRotation() {
+        stopAndroid13TaskFallbackWatcher()
+        restoreAndroid13FallbackTasksBestEffort()
         val commands: List<Array<String>> = when (wmApi) {
             WmApi.MODERN -> buildList<Array<String>> {
                 if (supportsIgnoreOrientationRequest) {
@@ -239,9 +257,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     }
 
     private fun enablePerAppPortraitCompatOverrides() {
-        val sdk = runCommand("/system/bin/getprop", "ro.build.version.sdk")
-            .trim()
-            .toIntOrNull() ?: 0
+        val sdk = getSdkInt()
 
         val packages = runCommand("/system/bin/pm", "list", "packages", "-3")
             .lineSequence()
@@ -393,6 +409,177 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         } finally {
             sandboxDisplayApisStateFile.delete()
         }
+    }
+
+
+    private data class ResumedTask(
+        val taskId: Int,
+        val packageName: String,
+        val fullscreen: Boolean
+    )
+
+    private fun startAndroid13TaskFallbackWatcher() {
+        if (fallbackWatcherRunning) return
+
+        fallbackWatcherRunning = true
+        val thread = Thread({
+            val thirdPartyPackages = try {
+                runCommand("/system/bin/pm", "list", "packages", "-3")
+                    .lineSequence()
+                    .map { it.trim() }
+                    .filter { it.startsWith("package:") }
+                    .map { it.removePrefix("package:") }
+                    .filter { it.isNotBlank() && it != "moe.shizuku.privileged.api" }
+                    .toSet()
+            } catch (_: Throwable) {
+                emptySet()
+            }
+
+            while (fallbackWatcherRunning) {
+                try {
+                    val task = findResumedTask()
+                    if (
+                        task != null &&
+                        task.fullscreen &&
+                        thirdPartyPackages.contains(task.packageName) &&
+                        !wasFallbackTaskChanged(task.taskId)
+                    ) {
+                        applyAndroid13TaskFallback(task.taskId)
+                    }
+                } catch (_: Throwable) {
+                    // The compat-based path remains active if a vendor ROM rejects task fallback.
+                }
+
+                try {
+                    Thread.sleep(750)
+                } catch (_: InterruptedException) {
+                    break
+                }
+            }
+        }, "androidcontrol-portrait-task-fallback")
+
+        fallbackWatcherThread = thread
+        thread.isDaemon = true
+        thread.start()
+    }
+
+    private fun stopAndroid13TaskFallbackWatcher() {
+        fallbackWatcherRunning = false
+        fallbackWatcherThread?.interrupt()
+        fallbackWatcherThread = null
+    }
+
+    private fun findResumedTask(): ResumedTask? {
+        val dump = runCommand("/system/bin/dumpsys", "activity", "activities")
+
+        val resumed = Regex(
+            """(?:topResumedActivity|mResumedActivity)[^\n]*?\s([A-Za-z0-9_.$]+)/(?:[^\s}]+)[^\n]*?\bt(\d+)\b"""
+        ).find(dump) ?: return null
+
+        val packageName = resumed.groupValues[1]
+        val taskId = resumed.groupValues[2].toIntOrNull() ?: return null
+
+        val fullscreen =
+            Regex(
+                """(?m)^\s*\*?\s*Task\{[^\n]*?#$taskId\b[^\n]*?\bmode=fullscreen\b"""
+            ).containsMatchIn(dump) ||
+                Regex(
+                    """(?m)^\s*Task\{[^\n]*?\btaskId=$taskId\b[^\n]*?\bwindowingMode=1\b"""
+                ).containsMatchIn(dump)
+
+        return ResumedTask(taskId, packageName, fullscreen)
+    }
+
+    private fun applyAndroid13TaskFallback(taskId: Int) {
+        val size = getPortraitDisplayBounds()
+
+        // Android 13 still letterboxes fixed-landscape fullscreen activities.
+        // Moving the task into a portrait-sized freeform container makes it a
+        // multi-window activity, where fixed-orientation handling is bypassed.
+        val atm = ActivityTaskManager.getService()
+        atm.setTaskResizeable(taskId, 2)
+        val moved = atm.setTaskWindowingMode(
+            taskId,
+            WindowConfiguration.WINDOWING_MODE_FREEFORM,
+            true
+        )
+        if (!moved) {
+            throw IllegalStateException("Unable to move task $taskId into freeform mode")
+        }
+
+        atm.resizeTask(
+            taskId,
+            Rect(0, 0, size.first, size.second),
+            ActivityTaskManager.RESIZE_MODE_SYSTEM
+        )
+        rememberFallbackTask(taskId)
+    }
+
+    private fun restoreAndroid13FallbackTasksBestEffort() {
+        if (!fallbackTaskStateFile.exists()) return
+
+        val atm = try {
+            ActivityTaskManager.getService()
+        } catch (_: Throwable) {
+            return
+        }
+
+        fallbackTaskStateFile.readLines()
+            .mapNotNull { it.trim().toIntOrNull() }
+            .distinct()
+            .forEach { taskId ->
+                try {
+                    atm.setTaskWindowingMode(
+                        taskId,
+                        WindowConfiguration.WINDOWING_MODE_FULLSCREEN,
+                        false
+                    )
+                } catch (_: Throwable) {
+                }
+            }
+
+        fallbackTaskStateFile.delete()
+    }
+
+    @Synchronized
+    private fun rememberFallbackTask(taskId: Int) {
+        val ids =
+            if (fallbackTaskStateFile.exists()) {
+                fallbackTaskStateFile.readLines()
+                    .mapNotNull { it.trim().toIntOrNull() }
+                    .toMutableSet()
+            } else {
+                mutableSetOf()
+            }
+
+        if (ids.add(taskId)) {
+            fallbackTaskStateFile.writeText(ids.sorted().joinToString("\n"))
+        }
+    }
+
+    @Synchronized
+    private fun wasFallbackTaskChanged(taskId: Int): Boolean {
+        if (!fallbackTaskStateFile.exists()) return false
+        return fallbackTaskStateFile.readLines()
+            .any { it.trim().toIntOrNull() == taskId }
+    }
+
+    private fun getPortraitDisplayBounds(): Pair<Int, Int> {
+        val output = runWm("size")
+        val override = Regex("""Override size:\s*(\d+)x(\d+)""").find(output)
+        val physical = Regex("""Physical size:\s*(\d+)x(\d+)""").find(output)
+        val match = override ?: physical
+            ?: throw IllegalStateException("Unable to determine display size")
+
+        val first = match.groupValues[1].toInt()
+        val second = match.groupValues[2].toInt()
+        return minOf(first, second) to maxOf(first, second)
+    }
+
+    private fun getSdkInt(): Int {
+        return runCommand("/system/bin/getprop", "ro.build.version.sdk")
+            .trim()
+            .toIntOrNull() ?: 0
     }
 
     private fun enableForceResizableActivities() {
