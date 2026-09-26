@@ -58,9 +58,6 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     @Volatile
     private var fallbackWatcherThread: Thread? = null
 
-    private val sandboxDisplayApisStateFile =
-        File("/data/local/tmp/androidcontrol-sandbox-display-apis-prev")
-
     private companion object {
         const val FORCE_RESIZE_APP = "174042936"
         const val FORCE_NON_RESIZE_APP = "181136395"
@@ -91,9 +88,6 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             val portraitRotation = getPortraitRotation()
             try {
                 enableForceResizableActivities()
-                if (supportsSandboxDisplayApis) {
-                    enableSandboxDisplayApis()
-                }
                 enablePerAppPortraitCompatOverrides()
                 when (wmApi) {
                     WmApi.MODERN -> {
@@ -233,16 +227,6 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         }
 
         try {
-            restoreSandboxDisplayApis()
-        } catch (t: Throwable) {
-            if (failure == null) {
-                failure = t
-            } else {
-                failure!!.addSuppressed(t)
-            }
-        }
-
-        try {
             restoreForceResizableActivities()
         } catch (t: Throwable) {
             if (failure == null) {
@@ -271,6 +255,18 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
         packages.forEach { packageName ->
             val appliedChanges = mutableListOf<String>()
+
+            if (sdk >= 33) {
+                try {
+                    runAm(
+                        "compat", "disable", "--no-kill",
+                        FORCE_NON_RESIZE_APP, packageName
+                    )
+                    appliedChanges.add(FORCE_NON_RESIZE_APP)
+                } catch (_: Throwable) {
+                    // Android 13+ only; some vendor builds may omit the override.
+                }
+            }
 
             try {
                 runAm(
@@ -352,39 +348,32 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     private fun restorePerAppPortraitCompatOverrides() {
         if (!compatOverridePackagesFile.exists()) return
 
-        val sdk = getSdkInt()
-        val packages = compatOverridePackagesFile.readLines()
+        compatOverridePackagesFile.readLines()
             .map { it.trim() }
             .filter { it.isNotBlank() }
+            .forEach { line ->
+                val separator = line.indexOf('\t')
+                val packageName =
+                    if (separator >= 0) line.substring(0, separator) else line
+                val changeIds =
+                    if (separator >= 0 && separator + 1 < line.length) {
+                        line.substring(separator + 1)
+                            .split(',')
+                            .map { it.trim() }
+                            .filter { it.isNotBlank() }
+                    } else {
+                        emptyList()
+                    }
 
-        packages.forEach { packageName ->
-            fun resetCompat(changeId: String) {
-                try {
-                    runAm("compat", "reset", changeId, packageName)
-                } catch (_: Throwable) {
-                    // The change may not exist on this Android/vendor build, or the
-                    // package may have disappeared. Restoration must continue.
+                changeIds.forEach { changeId ->
+                    try {
+                        runAm("compat", "reset", changeId, packageName)
+                    } catch (_: Throwable) {
+                        // The package may have been removed or the vendor build may
+                        // reject resetting an optional compat change. Keep restoring.
+                    }
                 }
             }
-
-            if (sdk >= 33) {
-                resetCompat(FORCE_NON_RESIZE_APP)
-            }
-
-            resetCompat(NEVER_SANDBOX_DISPLAY_APIS)
-            resetCompat(ALWAYS_SANDBOX_DISPLAY_APIS)
-            resetCompat(OVERRIDE_SANDBOX_VIEW_BOUNDS_APIS)
-            resetCompat(FORCE_RESIZE_APP)
-
-            if (sdk >= 34) {
-                resetCompat(OVERRIDE_ANY_ORIENTATION)
-                resetCompat(OVERRIDE_UNDEFINED_ORIENTATION_TO_PORTRAIT)
-            }
-
-            if (sdk >= 35) {
-                resetCompat(OVERRIDE_ANY_ORIENTATION_TO_USER)
-            }
-        }
 
         compatOverridePackagesFile.delete()
     }
