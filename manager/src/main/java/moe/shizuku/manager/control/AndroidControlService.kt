@@ -46,8 +46,13 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     private val forceResizableStateFile =
         File("/data/local/tmp/androidcontrol-force-resizable-prev")
 
-    private val compatOverridePackagesFile =
+    // Written by older AndroidControl builds that modified many third-party apps.
+    private val legacyCompatOverridePackagesFile =
         File("/data/local/tmp/androidcontrol-portrait-compat-packages")
+
+    // New builds only record compat changes for the one target game here.
+    private val targetCompatStateFile =
+        File("/data/local/tmp/androidcontrol-hololive-dreams-compat")
 
     private val fallbackTaskStateFile =
         File("/data/local/tmp/androidcontrol-portrait-fallback-tasks")
@@ -58,15 +63,14 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     @Volatile
     private var portraitWatcherThread: Thread? = null
 
-    @Volatile
-    private var staleCompatCleanupRunning = false
-
-    @Volatile
-    private var staleCompatCleanupThread: Thread? = null
-
     private val portraitOperationLock = Any()
 
+    @Volatile
+    private var legacyRecoveryRunning = false
+
     private companion object {
+        const val TARGET_PACKAGE = "game.qualiarts.hololive.dreams.jp"
+
         const val FORCE_RESIZE_APP = "174042936"
         const val FORCE_NON_RESIZE_APP = "181136395"
         const val NEVER_SANDBOX_DISPLAY_APIS = "184838306"
@@ -93,11 +97,6 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         }
 
         if (enabled) {
-            // A previous build could leave recorded compat/resize state behind when
-            // portrait verification failed after applying the enhancement layer.
-            // Clean that exact recorded state before starting a fresh attempt.
-            cleanupRecordedPartialPortraitState()
-
             val portraitRotation = getPortraitRotation()
 
             // Apply the actual display-orientation policy first. The old implementation
@@ -133,7 +132,14 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             } catch (_: Throwable) {
             }
 
-            startPortraitAppWatcher()
+            try {
+                enableTargetPortraitCompat()
+            } catch (_: Throwable) {
+            }
+
+            if (getSdkInt() == 33) {
+                startPortraitAppWatcher()
+            }
 
             val forced = isForcePortraitEnabled()
             if (!forced) {
@@ -195,13 +201,6 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             WmApi.UNSUPPORTED -> false
         }
 
-        if (!forced && hasRecordedPortraitState()) {
-            // Previous versions could return to the unforced UI state while
-            // leaving compat/task settings behind. Opening AndroidControl is
-            // enough to reconcile that recorded stale state.
-            cleanupRecordedPartialPortraitState()
-        }
-
         return forced
     }
 
@@ -220,104 +219,122 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         return if (height >= width) 0 else 1
     }
 
-    private fun cleanupRecordedPartialPortraitState() {
-        stopPortraitAppWatcher()
-        restoreAndroid13FallbackTasksBestEffort()
-
-        val legacyOrphanedCompat =
-            getSdkInt() == 33 &&
-                forceResizableStateFile.exists() &&
-                !compatOverridePackagesFile.exists()
-
-        if (compatOverridePackagesFile.exists() || legacyOrphanedCompat) {
-            startStaleCompatCleanup(legacyOrphanedCompat)
+    override fun recoverLegacyPortraitState(): Int {
+        synchronized(this) {
+            if (legacyRecoveryRunning) {
+                throw IllegalStateException("Legacy portrait recovery is already running")
+            }
+            legacyRecoveryRunning = true
         }
 
-        // One global setting is cheap to restore immediately. Potentially large
-        // per-package compat cleanup is deliberately background work.
         try {
-            restoreForceResizableActivities()
-        } catch (_: Throwable) {
-        }
-    }
+            // Recovery is intentionally exhaustive and separate from normal portrait
+            // operation. Older builds applied compat overrides to every third-party
+            // package before reaching the WindowManager rotation lock.
+            stopPortraitAppWatcher()
+            restoreAndroid13FallbackTasksBestEffort()
+            restoreCoreRotationBestEffort()
 
-    private fun startStaleCompatCleanup(legacyOrphanedCompat: Boolean) {
-        if (staleCompatCleanupRunning) return
-
-        staleCompatCleanupRunning = true
-        val thread = Thread({
-            try {
-                if (compatOverridePackagesFile.exists()) {
-                    restorePerAppPortraitCompatOverrides()
-                } else if (legacyOrphanedCompat) {
-                    resetKnownAndroid13PortraitOverridesBestEffort()
-                }
-            } finally {
-                staleCompatCleanupRunning = false
-                staleCompatCleanupThread = null
-            }
-        }, "androidcontrol-stale-compat-cleanup")
-
-        staleCompatCleanupThread = thread
-        thread.isDaemon = true
-        thread.start()
-    }
-
-    private fun hasRecordedPortraitState(): Boolean {
-        return forceResizableStateFile.exists() ||
-            compatOverridePackagesFile.exists() ||
-            fallbackTaskStateFile.exists() ||
-            portraitWatcherRunning ||
-            staleCompatCleanupRunning
-    }
-
-    private fun resetKnownAndroid13PortraitOverridesBestEffort() {
-        // Do not scan every installed package. On heavily populated devices that
-        // turns recovery into thousands of separate am-compat subprocesses.
-        //
-        // platform_compat already exposes the packages that actually have an
-        // override for each change ID, so one dumpsys call lets us target only
-        // potentially orphaned AndroidControl overrides.
-        val dump = try {
-            runCommand("/system/bin/dumpsys", "platform_compat")
-        } catch (_: Throwable) {
-            return
-        }
-
-        val changeIds = arrayOf(
-            FORCE_NON_RESIZE_APP,
-            NEVER_SANDBOX_DISPLAY_APIS,
-            ALWAYS_SANDBOX_DISPLAY_APIS,
-            OVERRIDE_SANDBOX_VIEW_BOUNDS_APIS,
-            FORCE_RESIZE_APP
-        )
-
-        changeIds.forEach { changeId ->
-            val line = dump.lineSequence().firstOrNull { candidate ->
-                candidate.contains("ChangeId($changeId") &&
-                    candidate.contains("packageOverrides=")
-            } ?: return@forEach
-
-            val overrides = line.substringAfter("packageOverrides=", "")
-            if (overrides.isBlank()) return@forEach
-
-            // Compat dump formats have changed over Android releases. Package
-            // names are stable Java-style identifiers followed by '=' in both
-            // the Boolean-map and PackageOverride-map representations.
-            val packages = Regex(
-                """([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_$]+)+)\s*="""
-            ).findAll(overrides)
-                .map { it.groupValues[1] }
-                .filter { it != "moe.shizuku.privileged.api" }
+            val packages = runCommand("/system/bin/pm", "list", "packages", "-3")
+                .lineSequence()
+                .map { it.trim() }
+                .filter { it.startsWith("package:") }
+                .map { it.removePrefix("package:") }
+                .filter { it.isNotBlank() && it != "moe.shizuku.privileged.api" }
                 .distinct()
-                .toList()
+                .toMutableSet()
 
-            packages.forEach { packageName ->
-                try {
-                    runAm("compat", "reset", changeId, packageName)
-                } catch (_: Throwable) {
+            // Include names recorded by previous versions even if package listing
+            // formatting or package state changed since the failed operation.
+            if (legacyCompatOverridePackagesFile.exists()) {
+                legacyCompatOverridePackagesFile.readLines().forEach { line ->
+                    val packageName = line.substringBefore('\t').trim()
+                    if (packageName.isNotBlank()) {
+                        packages.add(packageName)
+                    }
                 }
             }
+
+            val sdk = getSdkInt()
+            val changeIds = buildList {
+                add(FORCE_RESIZE_APP)
+                add(NEVER_SANDBOX_DISPLAY_APIS)
+                add(ALWAYS_SANDBOX_DISPLAY_APIS)
+                add(OVERRIDE_SANDBOX_VIEW_BOUNDS_APIS)
+
+                if (sdk >= 33) {
+                    add(FORCE_NON_RESIZE_APP)
+                }
+                if (sdk >= 34) {
+                    add(OVERRIDE_ANY_ORIENTATION)
+                    add(OVERRIDE_UNDEFINED_ORIENTATION_TO_PORTRAIT)
+                }
+                if (sdk >= 35) {
+                    add(OVERRIDE_ANY_ORIENTATION_TO_USER)
+                }
+            }
+
+            // No short timeout: on a device with hundreds of third-party packages,
+            // this is expected to take time. Each known AndroidControl change ID is
+            // reset for every package the old implementation could have touched.
+            packages.sorted().forEach { packageName ->
+                changeIds.forEach { changeId ->
+                    try {
+                        runAm("compat", "reset", changeId, packageName)
+                    } catch (_: Throwable) {
+                        // Continue through unsupported IDs, removed packages, and
+                        // vendor-specific compat-service failures.
+                    }
+                }
+            }
+
+            legacyCompatOverridePackagesFile.delete()
+
+            try {
+                restoreForceResizableActivities()
+            } catch (_: Throwable) {
+            }
+
+            return packages.size
+        } finally {
+            legacyRecoveryRunning = false
+        }
+    }
+
+    private fun restoreCoreRotationBestEffort() {
+        try {
+            when (wmApi) {
+                WmApi.MODERN -> {
+                    if (supportsIgnoreOrientationRequest) {
+                        try {
+                            runWm("set-ignore-orientation-request", "false")
+                        } catch (_: Throwable) {
+                        }
+                    }
+                    try {
+                        runWm("fixed-to-user-rotation", "default")
+                    } catch (_: Throwable) {
+                    }
+                    try {
+                        runWm("user-rotation", "free")
+                    } catch (_: Throwable) {
+                    }
+                }
+
+                WmApi.LEGACY -> {
+                    try {
+                        runWm("set-fix-to-user-rotation", "default")
+                    } catch (_: Throwable) {
+                    }
+                    try {
+                        runWm("set-user-rotation", "free")
+                    } catch (_: Throwable) {
+                    }
+                }
+
+                WmApi.UNSUPPORTED -> Unit
+            }
+        } catch (_: Throwable) {
         }
     }
 
@@ -353,15 +370,13 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 }
             }
         }
-        if (!staleCompatCleanupRunning) {
-            try {
-                restorePerAppPortraitCompatOverrides()
-            } catch (t: Throwable) {
-                if (failure == null) {
-                    failure = t
-                } else {
-                    failure!!.addSuppressed(t)
-                }
+        try {
+            restoreTargetPortraitCompat()
+        } catch (t: Throwable) {
+            if (failure == null) {
+                failure = t
+            } else {
+                failure!!.addSuppressed(t)
             }
         }
 
@@ -378,18 +393,19 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         failure?.let { throw it }
     }
 
-    private fun enablePortraitCompatForPackage(packageName: String) {
-        if (packageName.isBlank() || packageName == "moe.shizuku.privileged.api") return
-
+    private fun enableTargetPortraitCompat() {
         val sdk = getSdkInt()
-        val appliedChanges = mutableListOf<String>()
+        targetCompatStateFile.delete()
 
         fun applyCompat(mode: String, changeId: String) {
+            // Record intent before applying. If the process dies after the compat
+            // command succeeds, Restore can still reset this ID on the next run.
+            appendTargetCompatChange(changeId)
             try {
-                runAm("compat", mode, "--no-kill", changeId, packageName)
-                appliedChanges.add(changeId)
+                runAm("compat", mode, "--no-kill", changeId, TARGET_PACKAGE)
             } catch (_: Throwable) {
-                // Optional compat changes vary across Android/vendor builds.
+                // Keeping an unsupported ID in the ledger is harmless; reset is
+                // best-effort and guarantees interrupted successful changes are covered.
             }
         }
 
@@ -410,87 +426,44 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         if (sdk >= 35) {
             applyCompat("enable", OVERRIDE_ANY_ORIENTATION_TO_USER)
         }
-
-        if (appliedChanges.isNotEmpty()) {
-            rememberPackageCompatChanges(packageName, appliedChanges)
-        }
     }
 
     @Synchronized
-    private fun rememberPackageCompatChanges(
-        packageName: String,
-        changeIds: Collection<String>
-    ) {
-        val entries = linkedMapOf<String, MutableSet<String>>()
-
-        if (compatOverridePackagesFile.exists()) {
-            compatOverridePackagesFile.readLines().forEach { line ->
-                val separator = line.indexOf('\t')
-                if (separator <= 0) return@forEach
-
-                val pkg = line.substring(0, separator)
-                val ids = line.substring(separator + 1)
-                    .split(',')
+    private fun appendTargetCompatChange(changeId: String) {
+        val ids =
+            if (targetCompatStateFile.exists()) {
+                targetCompatStateFile.readLines()
                     .map { it.trim() }
                     .filter { it.isNotBlank() }
+                    .toMutableSet()
+            } else {
+                linkedSetOf()
+            }
 
-                entries.getOrPut(pkg) { linkedSetOf() }.addAll(ids)
+        if (ids.add(changeId)) {
+            targetCompatStateFile.writeText(ids.joinToString("\n"))
+        }
+    }
+
+    private fun restoreTargetPortraitCompat() {
+        val ids =
+            if (targetCompatStateFile.exists()) {
+                targetCompatStateFile.readLines()
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() }
+                    .distinct()
+            } else {
+                emptyList()
+            }
+
+        ids.forEach { changeId ->
+            try {
+                runAm("compat", "reset", changeId, TARGET_PACKAGE)
+            } catch (_: Throwable) {
             }
         }
 
-        entries.getOrPut(packageName) { linkedSetOf() }.addAll(changeIds)
-
-        compatOverridePackagesFile.writeText(
-            entries.entries.joinToString("\n") { (pkg, ids) ->
-                pkg + "\t" + ids.joinToString(",")
-            }
-        )
-    }
-
-
-    private fun restorePerAppPortraitCompatOverrides() {
-        if (!compatOverridePackagesFile.exists()) return
-
-        val sdk = getSdkInt()
-
-        compatOverridePackagesFile.readLines()
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-            .forEach { line ->
-                val separator = line.indexOf('\t')
-                val packageName =
-                    if (separator >= 0) line.substring(0, separator) else line
-
-                val changeIds =
-                    if (separator >= 0 && separator + 1 < line.length) {
-                        line.substring(separator + 1)
-                            .split(',')
-                            .map { it.trim() }
-                            .filter { it.isNotBlank() }
-                    } else {
-                        // PR #4-era ledgers stored only package names. On Android 13
-                        // that version could have applied FORCE_RESIZE_APP.
-                        if (sdk == 33) {
-                            listOf(FORCE_RESIZE_APP)
-                        } else {
-                            listOf(
-                                FORCE_RESIZE_APP,
-                                OVERRIDE_ANY_ORIENTATION_TO_USER
-                            )
-                        }
-                    }
-
-                changeIds.forEach { changeId ->
-                    try {
-                        runAm("compat", "reset", changeId, packageName)
-                    } catch (_: Throwable) {
-                        // The package may have been removed or the vendor build may
-                        // reject resetting an optional compat change. Keep restoring.
-                    }
-                }
-            }
-
-        compatOverridePackagesFile.delete()
+        targetCompatStateFile.delete()
     }
 
     private data class ResumedTask(
@@ -504,50 +477,24 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
         portraitWatcherRunning = true
         val thread = Thread({
-            val thirdPartyPackages = try {
-                runCommand("/system/bin/pm", "list", "packages", "-3")
-                    .lineSequence()
-                    .map { it.trim() }
-                    .filter { it.startsWith("package:") }
-                    .map { it.removePrefix("package:") }
-                    .filter { it.isNotBlank() && it != "moe.shizuku.privileged.api" }
-                    .toSet()
-            } catch (_: Throwable) {
-                emptySet()
-            }
-
-            val processedPackages = mutableSetOf<String>()
-            val sdk = getSdkInt()
-
             while (portraitWatcherRunning) {
                 try {
                     val task = findResumedTask()
-                    if (task != null && thirdPartyPackages.contains(task.packageName)) {
+                    if (
+                        task != null &&
+                        task.packageName == TARGET_PACKAGE &&
+                        task.fullscreen &&
+                        !wasFallbackTaskChanged(task.taskId)
+                    ) {
                         synchronized(portraitOperationLock) {
-                            if (!portraitWatcherRunning) {
-                                return@synchronized
-                            }
-
-                            if (
-                                !staleCompatCleanupRunning &&
-                                processedPackages.add(task.packageName)
-                            ) {
-                                enablePortraitCompatForPackage(task.packageName)
-                            }
-
-                            if (
-                                portraitWatcherRunning &&
-                                sdk == 33 &&
-                                task.fullscreen &&
-                                !wasFallbackTaskChanged(task.taskId)
-                            ) {
+                            if (portraitWatcherRunning) {
                                 applyAndroid13TaskFallback(task.taskId)
                             }
                         }
                     }
                 } catch (_: Throwable) {
-                    // Keep the core portrait lock active even if a vendor ROM rejects
-                    // one of the per-app enhancement/fallback operations.
+                    // Keep the core portrait lock active if the Android 13
+                    // freeform fallback is unavailable on this ROM.
                 }
 
                 try {
@@ -556,7 +503,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                     break
                 }
             }
-        }, "androidcontrol-portrait-app-watcher")
+        }, "androidcontrol-portrait-target-watcher")
 
         portraitWatcherThread = thread
         thread.isDaemon = true
