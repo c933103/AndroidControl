@@ -148,7 +148,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
         val portraitRotation = getPortraitRotation()
 
-        return when (wmApi) {
+        val forced = when (wmApi) {
             WmApi.MODERN -> {
                 val userRotation = runWm("user-rotation").trim()
                 val fixedToUserRotation = runWm("fixed-to-user-rotation").trim()
@@ -186,6 +186,15 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
             WmApi.UNSUPPORTED -> false
         }
+
+        if (!forced && hasRecordedPortraitState()) {
+            // Previous versions could return to the unforced UI state while
+            // leaving compat/task settings behind. Opening AndroidControl is
+            // enough to reconcile that recorded stale state.
+            restoreNormalRotationBestEffort()
+        }
+
+        return forced
     }
 
     override fun toggleForcePortrait(): Boolean {
@@ -207,6 +216,17 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         stopPortraitAppWatcher()
         restoreAndroid13FallbackTasksBestEffort()
 
+        // If an old build died after setting force_resizable_activities but before
+        // it finished writing the per-package ledger, some compat overrides may
+        // be orphaned. This marker combination identifies that legacy failure mode.
+        if (
+            getSdkInt() == 33 &&
+            forceResizableStateFile.exists() &&
+            !compatOverridePackagesFile.exists()
+        ) {
+            resetKnownAndroid13PortraitOverridesBestEffort()
+        }
+
         try {
             restorePerAppPortraitCompatOverrides()
         } catch (_: Throwable) {
@@ -215,6 +235,45 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         try {
             restoreForceResizableActivities()
         } catch (_: Throwable) {
+        }
+    }
+
+    private fun hasRecordedPortraitState(): Boolean {
+        return forceResizableStateFile.exists() ||
+            compatOverridePackagesFile.exists() ||
+            fallbackTaskStateFile.exists() ||
+            portraitWatcherRunning
+    }
+
+    private fun resetKnownAndroid13PortraitOverridesBestEffort() {
+        val packages = try {
+            runCommand("/system/bin/pm", "list", "packages", "-3")
+                .lineSequence()
+                .map { it.trim() }
+                .filter { it.startsWith("package:") }
+                .map { it.removePrefix("package:") }
+                .filter { it.isNotBlank() && it != "moe.shizuku.privileged.api" }
+                .distinct()
+                .toList()
+        } catch (_: Throwable) {
+            return
+        }
+
+        val changeIds = arrayOf(
+            FORCE_NON_RESIZE_APP,
+            NEVER_SANDBOX_DISPLAY_APIS,
+            ALWAYS_SANDBOX_DISPLAY_APIS,
+            OVERRIDE_SANDBOX_VIEW_BOUNDS_APIS,
+            FORCE_RESIZE_APP
+        )
+
+        packages.forEach { packageName ->
+            changeIds.forEach { changeId ->
+                try {
+                    runAm("compat", "reset", changeId, packageName)
+                } catch (_: Throwable) {
+                }
+            }
         }
     }
 
@@ -346,6 +405,8 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     private fun restorePerAppPortraitCompatOverrides() {
         if (!compatOverridePackagesFile.exists()) return
 
+        val sdk = getSdkInt()
+
         compatOverridePackagesFile.readLines()
             .map { it.trim() }
             .filter { it.isNotBlank() }
@@ -353,6 +414,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 val separator = line.indexOf('\t')
                 val packageName =
                     if (separator >= 0) line.substring(0, separator) else line
+
                 val changeIds =
                     if (separator >= 0 && separator + 1 < line.length) {
                         line.substring(separator + 1)
@@ -360,7 +422,16 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                             .map { it.trim() }
                             .filter { it.isNotBlank() }
                     } else {
-                        emptyList()
+                        // PR #4-era ledgers stored only package names. On Android 13
+                        // that version could have applied FORCE_RESIZE_APP.
+                        if (sdk == 33) {
+                            listOf(FORCE_RESIZE_APP)
+                        } else {
+                            listOf(
+                                FORCE_RESIZE_APP,
+                                OVERRIDE_ANY_ORIENTATION_TO_USER
+                            )
+                        }
                     }
 
                 changeIds.forEach { changeId ->
