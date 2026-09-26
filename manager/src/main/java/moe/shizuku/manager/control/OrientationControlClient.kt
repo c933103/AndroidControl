@@ -39,7 +39,7 @@ object OrientationControlClient {
         Shizuku.UserServiceArgs(
             ComponentName(BuildConfig.APPLICATION_ID, AndroidControlService::class.java.name)
         )
-            .daemon(false)
+            .daemon(true)
             .processNameSuffix("android_control")
             .debuggable(BuildConfig.DEBUG)
             .version(BuildConfig.VERSION_CODE)
