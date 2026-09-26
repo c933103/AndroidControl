@@ -57,6 +57,14 @@
     <string name="adb_pairing_tutorial_content_network">Shizuku needs to access local network. It is controlled by the network permission.</string>
     <string name="adb_pairing_tutorial_content_network_limation_not_foreground">Some systems (such as MIUI) disallow apps to access the network when they are not visible, even if the app uses foreground service as standard. Please disable battery optimization features for Shizuku on such systems.</string>
 
+    <!-- Home - ADB files -->
+    <string name="home_adb_files_title">ADB files</string>
+    <string name="home_adb_files_description">Browse files visible to the current Shizuku shell/root service using the native Android Files interface.</string>
+    <string name="home_adb_files_unavailable">Start Shizuku before opening ADB files.</string>
+    <string name="home_adb_files_open_failed">No compatible system Files activity is available.</string>
+    <string name="adb_files_root_title">ADB filesystem</string>
+    <string name="adb_files_root_summary">Files accessible to the current Shizuku service identity</string>
+
     <!-- Home - Global orientation control -->
     <string name="home_orientation_title">Global portrait control</string>
     <string name="home_orientation_description_normal">Apps can use their normal orientation. Tap to force the entire display to portrait and ignore app orientation requests.</string>
