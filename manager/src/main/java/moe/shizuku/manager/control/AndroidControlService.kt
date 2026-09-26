@@ -64,6 +64,8 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     @Volatile
     private var staleCompatCleanupThread: Thread? = null
 
+    private val portraitOperationLock = Any()
+
     private companion object {
         const val FORCE_RESIZE_APP = "174042936"
         const val FORCE_NON_RESIZE_APP = "181136395"
@@ -521,19 +523,26 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 try {
                     val task = findResumedTask()
                     if (task != null && thirdPartyPackages.contains(task.packageName)) {
-                        if (
-                            !staleCompatCleanupRunning &&
-                            processedPackages.add(task.packageName)
-                        ) {
-                            enablePortraitCompatForPackage(task.packageName)
-                        }
+                        synchronized(portraitOperationLock) {
+                            if (!portraitWatcherRunning) {
+                                return@synchronized
+                            }
 
-                        if (
-                            sdk == 33 &&
-                            task.fullscreen &&
-                            !wasFallbackTaskChanged(task.taskId)
-                        ) {
-                            applyAndroid13TaskFallback(task.taskId)
+                            if (
+                                !staleCompatCleanupRunning &&
+                                processedPackages.add(task.packageName)
+                            ) {
+                                enablePortraitCompatForPackage(task.packageName)
+                            }
+
+                            if (
+                                portraitWatcherRunning &&
+                                sdk == 33 &&
+                                task.fullscreen &&
+                                !wasFallbackTaskChanged(task.taskId)
+                            ) {
+                                applyAndroid13TaskFallback(task.taskId)
+                            }
                         }
                     }
                 } catch (_: Throwable) {
@@ -557,6 +566,13 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     private fun stopPortraitAppWatcher() {
         portraitWatcherRunning = false
         portraitWatcherThread?.interrupt()
+
+        // Wait for an in-flight compat/task mutation to leave its critical section
+        // before restoration reads/deletes the ledger. This prevents a stopped
+        // watcher from writing a fresh override after Restore normal rotation.
+        synchronized(portraitOperationLock) {
+        }
+
         portraitWatcherThread = null
     }
 
