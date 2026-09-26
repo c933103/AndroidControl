@@ -1,10 +1,9 @@
 package moe.shizuku.manager.control
 
-import android.app.ActivityTaskManager
-import android.app.WindowConfiguration
 import android.content.Context
 import android.graphics.Rect
 import androidx.annotation.Keep
+import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
@@ -75,6 +74,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         const val OVERRIDE_UNDEFINED_ORIENTATION_TO_PORTRAIT = "265452344"
         const val OVERRIDE_ANY_ORIENTATION = "265464455"
         const val OVERRIDE_ANY_ORIENTATION_TO_USER = "310816437"
+
+        const val WINDOWING_MODE_FULLSCREEN = 1
+        const val WINDOWING_MODE_FREEFORM = 5
+        const val RESIZE_MODE_SYSTEM = 0
     }
 
     override fun destroy() {
@@ -496,21 +499,25 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         // Android 13 still letterboxes fixed-landscape fullscreen activities.
         // Moving the task into a portrait-sized freeform container makes it a
         // multi-window activity, where fixed-orientation handling is bypassed.
-        val atm = ActivityTaskManager.getService()
-        atm.setTaskResizeable(taskId, 2)
-        val moved = atm.setTaskWindowingMode(
+        val atm = getActivityTaskManagerService()
+        invokeActivityTaskManager(atm, "setTaskResizeable", taskId, 2)
+        val moved = invokeActivityTaskManager(
+            atm,
+            "setTaskWindowingMode",
             taskId,
-            WindowConfiguration.WINDOWING_MODE_FREEFORM,
+            WINDOWING_MODE_FREEFORM,
             true
         )
-        if (!moved) {
+        if (moved is Boolean && !moved) {
             throw IllegalStateException("Unable to move task $taskId into freeform mode")
         }
 
-        atm.resizeTask(
+        invokeActivityTaskManager(
+            atm,
+            "resizeTask",
             taskId,
             Rect(0, 0, size.first, size.second),
-            ActivityTaskManager.RESIZE_MODE_SYSTEM
+            RESIZE_MODE_SYSTEM
         )
         rememberFallbackTask(taskId)
     }
@@ -519,7 +526,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         if (!fallbackTaskStateFile.exists()) return
 
         val atm = try {
-            ActivityTaskManager.getService()
+            getActivityTaskManagerService()
         } catch (_: Throwable) {
             return
         }
@@ -529,9 +536,11 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             .distinct()
             .forEach { taskId ->
                 try {
-                    atm.setTaskWindowingMode(
+                    invokeActivityTaskManager(
+                        atm,
+                        "setTaskWindowingMode",
                         taskId,
-                        WindowConfiguration.WINDOWING_MODE_FULLSCREEN,
+                        WINDOWING_MODE_FULLSCREEN,
                         false
                     )
                 } catch (_: Throwable) {
@@ -562,6 +571,38 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         if (!fallbackTaskStateFile.exists()) return false
         return fallbackTaskStateFile.readLines()
             .any { it.trim().toIntOrNull() == taskId }
+    }
+
+
+    private fun getActivityTaskManagerService(): Any {
+        try {
+            HiddenApiBypass.addHiddenApiExemptions(
+                "Landroid/app/ActivityTaskManager;",
+                "Landroid/app/IActivityTaskManager;"
+            )
+        } catch (_: Throwable) {
+        }
+
+        val clazz = Class.forName("android.app.ActivityTaskManager")
+        val method = clazz.getDeclaredMethod("getService")
+        method.isAccessible = true
+        return method.invoke(null)
+            ?: throw IllegalStateException("ActivityTaskManager service is unavailable")
+    }
+
+    private fun invokeActivityTaskManager(
+        service: Any,
+        methodName: String,
+        vararg args: Any?
+    ): Any? {
+        val method = service.javaClass.methods.firstOrNull {
+            it.name == methodName && it.parameterTypes.size == args.size
+        } ?: throw NoSuchMethodException(
+            "${service.javaClass.name}.$methodName/${args.size}"
+        )
+
+        method.isAccessible = true
+        return method.invoke(service, *args)
     }
 
     private fun getPortraitDisplayBounds(): Pair<Int, Int> {
