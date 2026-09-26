@@ -56,6 +56,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
     private companion object {
         const val FORCE_RESIZE_APP = "174042936"
+        const val FORCE_NON_RESIZE_APP = "181136395"
         const val NEVER_SANDBOX_DISPLAY_APIS = "184838306"
         const val ALWAYS_SANDBOX_DISPLAY_APIS = "185004937"
         const val OVERRIDE_SANDBOX_VIEW_BOUNDS_APIS = "237531167"
