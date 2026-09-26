@@ -1,6 +1,5 @@
 package moe.shizuku.manager.files
 
-import android.content.Intent
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.os.CancellationSignal
@@ -193,9 +192,10 @@ class AdbDocumentsProvider : DocumentsProvider() {
     }
 
     private fun documentIdFromPath(path: String): String {
-        if (path == "/") return ROOT_DOCUMENT_ID
+        val canonicalPath = File(path).canonicalPath
+        if (canonicalPath == "/") return ROOT_DOCUMENT_ID
         val encoded = Base64.encodeToString(
-            path.toByteArray(StandardCharsets.UTF_8),
+            canonicalPath.toByteArray(StandardCharsets.UTF_8),
             Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
         )
         return "p:$encoded"
@@ -212,8 +212,9 @@ class AdbDocumentsProvider : DocumentsProvider() {
                     Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
                 ),
                 StandardCharsets.UTF_8
-            ).also {
-                if (!it.startsWith('/')) throw FileNotFoundException(documentId)
+            ).let { decoded ->
+                if (!decoded.startsWith('/')) throw FileNotFoundException(documentId)
+                File(decoded).canonicalPath
             }
         } catch (t: Throwable) {
             throw FileNotFoundException(t.message ?: documentId)
