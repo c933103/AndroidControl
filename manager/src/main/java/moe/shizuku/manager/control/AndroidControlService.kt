@@ -204,7 +204,26 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             WmApi.UNSUPPORTED -> false
         }
 
+        if (!forced && hasTargetPortraitState()) {
+            stopPortraitAppWatcher()
+            restoreAndroid13FallbackTasksBestEffort()
+            restoreAndroid13SupportSettingsBestEffort()
+            try {
+                restoreTargetPortraitCompat()
+            } catch (_: Throwable) {
+            }
+            targetPortraitStatus = "Target game: overrides inactive"
+        }
+
         return forced
+    }
+
+    private fun hasTargetPortraitState(): Boolean {
+        return targetCompatStateFile.exists() ||
+            fallbackTaskStateFile.exists() ||
+            freeformSupportStateFile.exists() ||
+            multiWindowConfigStateFile.exists() ||
+            portraitWatcherRunning
     }
 
     override fun toggleForcePortrait(): Boolean {
