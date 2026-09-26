@@ -59,7 +59,7 @@
 
     <!-- Home - ADB files -->
     <string name="home_adb_files_title">ADB files</string>
-    <string name="home_adb_files_description">Browse files visible to the current Shizuku shell/root service using Android's native Files interface.</string>
+    <string name="home_adb_files_description">Browse files visible to the current Shizuku shell/root service using the native Android Files interface.</string>
     <string name="home_adb_files_unavailable">Start Shizuku before opening ADB files.</string>
     <string name="home_adb_files_open_failed">No compatible system Files activity is available.</string>
     <string name="adb_files_root_title">ADB filesystem</string>
