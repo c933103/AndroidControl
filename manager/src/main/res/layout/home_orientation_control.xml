@@ -45,4 +45,19 @@
         android:text="@string/home_orientation_force"
         app:icon="@drawable/ic_screen_rotation_24dp" />
 
+    <TextView
+        android:id="@android:id/text2"
+        style="@style/CardSummary"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="20dp"
+        android:layout_marginBottom="12dp"
+        tools:text="@string/home_orientation_recovery_description" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@android:id/button2"
+        style="@style/CardButton"
+        android:text="@string/home_orientation_recovery_button"
+        app:icon="@drawable/ic_server_restart" />
+
 </LinearLayout>
