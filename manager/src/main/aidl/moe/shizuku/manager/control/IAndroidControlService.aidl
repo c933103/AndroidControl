@@ -6,6 +6,5 @@ interface IAndroidControlService {
     boolean setForcePortrait(boolean enabled) = 1;
     boolean isForcePortraitEnabled() = 2;
     boolean toggleForcePortrait() = 3;
-    int recoverLegacyPortraitState() = 4;
-    boolean isLegacyRecoveryRunning() = 5;
+    String getTargetPortraitStatus() = 4;
 }
