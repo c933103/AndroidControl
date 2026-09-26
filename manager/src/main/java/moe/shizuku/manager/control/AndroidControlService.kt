@@ -246,15 +246,14 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     }
 
     private fun resetKnownAndroid13PortraitOverridesBestEffort() {
-        val packages = try {
-            runCommand("/system/bin/pm", "list", "packages", "-3")
-                .lineSequence()
-                .map { it.trim() }
-                .filter { it.startsWith("package:") }
-                .map { it.removePrefix("package:") }
-                .filter { it.isNotBlank() && it != "moe.shizuku.privileged.api" }
-                .distinct()
-                .toList()
+        // Do not scan every installed package. On heavily populated devices that
+        // turns recovery into thousands of separate am-compat subprocesses.
+        //
+        // platform_compat already exposes the packages that actually have an
+        // override for each change ID, so one dumpsys call lets us target only
+        // potentially orphaned AndroidControl overrides.
+        val dump = try {
+            runCommand("/system/bin/dumpsys", "platform_compat")
         } catch (_: Throwable) {
             return
         }
@@ -267,8 +266,27 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             FORCE_RESIZE_APP
         )
 
-        packages.forEach { packageName ->
-            changeIds.forEach { changeId ->
+        changeIds.forEach { changeId ->
+            val line = dump.lineSequence().firstOrNull { candidate ->
+                candidate.contains("ChangeId($changeId") &&
+                    candidate.contains("packageOverrides=")
+            } ?: return@forEach
+
+            val overrides = line.substringAfter("packageOverrides=", "")
+            if (overrides.isBlank()) return@forEach
+
+            // Compat dump formats have changed over Android releases. Package
+            // names are stable Java-style identifiers followed by '=' in both
+            // the Boolean-map and PackageOverride-map representations.
+            val packages = Regex(
+                """([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_$]+)+)\s*="""
+            ).findAll(overrides)
+                .map { it.groupValues[1] }
+                .filter { it != "moe.shizuku.privileged.api" }
+                .distinct()
+                .toList()
+
+            packages.forEach { packageName ->
                 try {
                     runAm("compat", "reset", changeId, packageName)
                 } catch (_: Throwable) {
