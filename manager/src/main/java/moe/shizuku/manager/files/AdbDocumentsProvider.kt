@@ -7,13 +7,13 @@ import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.provider.DocumentsProvider
+import android.util.Base64
 import android.webkit.MimeTypeMap
 import moe.shizuku.manager.BuildConfig
 import moe.shizuku.manager.R
 import java.io.File
 import java.io.FileNotFoundException
 import java.nio.charset.StandardCharsets
-import java.util.Base64
 
 class AdbDocumentsProvider : DocumentsProvider() {
 
@@ -194,9 +194,10 @@ class AdbDocumentsProvider : DocumentsProvider() {
 
     private fun documentIdFromPath(path: String): String {
         if (path == "/") return ROOT_DOCUMENT_ID
-        val encoded = Base64.getUrlEncoder()
-            .withoutPadding()
-            .encodeToString(path.toByteArray(StandardCharsets.UTF_8))
+        val encoded = Base64.encodeToString(
+            path.toByteArray(StandardCharsets.UTF_8),
+            Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
+        )
         return "p:$encoded"
     }
 
@@ -206,7 +207,10 @@ class AdbDocumentsProvider : DocumentsProvider() {
 
         return try {
             String(
-                Base64.getUrlDecoder().decode(documentId.removePrefix("p:")),
+                Base64.decode(
+                    documentId.removePrefix("p:"),
+                    Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
+                ),
                 StandardCharsets.UTF_8
             ).also {
                 if (!it.startsWith('/')) throw FileNotFoundException(documentId)
