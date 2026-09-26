@@ -85,6 +85,11 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         }
 
         if (enabled) {
+            // A previous build could leave recorded compat/resize state behind when
+            // portrait verification failed after applying the enhancement layer.
+            // Clean that exact recorded state before starting a fresh attempt.
+            cleanupRecordedPartialPortraitState()
+
             val portraitRotation = getPortraitRotation()
 
             // Apply the actual display-orientation policy first. The old implementation
@@ -121,6 +126,14 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             }
 
             startPortraitAppWatcher()
+
+            val forced = isForcePortraitEnabled()
+            if (!forced) {
+                // Never leave compatibility or task changes behind when the core
+                // WindowManager portrait policy did not actually stick.
+                restoreNormalRotationBestEffort()
+                return false
+            }
         } else {
             restoreNormalRotation()
         }
@@ -188,6 +201,21 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
         // Rotation values are relative to the panel's natural orientation.
         return if (height >= width) 0 else 1
+    }
+
+    private fun cleanupRecordedPartialPortraitState() {
+        stopPortraitAppWatcher()
+        restoreAndroid13FallbackTasksBestEffort()
+
+        try {
+            restorePerAppPortraitCompatOverrides()
+        } catch (_: Throwable) {
+        }
+
+        try {
+            restoreForceResizableActivities()
+        } catch (_: Throwable) {
+        }
     }
 
     private fun restoreNormalRotation() {
