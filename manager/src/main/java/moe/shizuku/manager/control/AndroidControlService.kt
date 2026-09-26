@@ -54,6 +54,9 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     private val targetCompatStateFile =
         File("/data/local/tmp/androidcontrol-hololive-dreams-compat")
 
+    private val legacyRecoveryFailuresFile =
+        File("/data/local/tmp/androidcontrol-legacy-recovery-failures")
+
     private val fallbackTaskStateFile =
         File("/data/local/tmp/androidcontrol-portrait-fallback-tasks")
 
@@ -90,6 +93,12 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     }
 
     override fun setForcePortrait(enabled: Boolean): Boolean {
+        if (legacyRecoveryRunning) {
+            throw IllegalStateException(
+                "Legacy portrait recovery is still running; wait for it to finish."
+            )
+        }
+
         if (wmApi == WmApi.UNSUPPORTED) {
             throw UnsupportedOperationException(
                 "This Android build does not expose the required WindowManager rotation controls."
@@ -220,6 +229,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         return if (height >= width) 0 else 1
     }
 
+    override fun isLegacyRecoveryRunning(): Boolean {
+        return legacyRecoveryRunning
+    }
+
     override fun recoverLegacyPortraitState(): Int {
         synchronized(this) {
             if (legacyRecoveryRunning) {
@@ -278,26 +291,41 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             // No short timeout: on a device with hundreds of third-party packages,
             // this is expected to take time. Each known AndroidControl change ID is
             // reset for every package the old implementation could have touched.
+            val failures = mutableListOf<String>()
+
             packages.sorted().forEach { packageName ->
                 changeIds.forEach { changeId ->
                     try {
                         runAm("compat", "reset", changeId, packageName)
-                    } catch (_: Throwable) {
-                        // Continue through unsupported IDs, removed packages, and
-                        // vendor-specific compat-service failures.
+                    } catch (t: Throwable) {
+                        if (!isIgnorableCompatResetFailure(t)) {
+                            failures.add(packageName + "\t" + changeId)
+                        }
                     }
                 }
             }
 
-            legacyCompatOverridePackagesFile.delete()
-            targetCompatStateFile.delete()
-
             try {
                 restoreForceResizableActivities()
-            } catch (_: Throwable) {
+            } catch (t: Throwable) {
+                failures.add("<global>\tforce_resizable_activities")
             }
 
-            return packages.size
+            if (failures.isEmpty()) {
+                legacyCompatOverridePackagesFile.delete()
+                legacyRecoveryFailuresFile.delete()
+                targetCompatStateFile.delete()
+                return packages.size
+            }
+
+            // Preserve exact failed package/change pairs so a failed exhaustive
+            // recovery is never reported as complete and remains diagnosable/retriable.
+            legacyRecoveryFailuresFile.writeText(failures.joinToString("\n"))
+            throw IllegalStateException(
+                "Scanned ${packages.size} third-party packages, but " +
+                    "${failures.size} compatibility reset operations failed. " +
+                    "Run legacy recovery again; failed entries were preserved."
+            )
         } finally {
             legacyRecoveryRunning = false
         }
@@ -396,8 +424,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             try {
                 runAm("compat", mode, "--no-kill", changeId, TARGET_PACKAGE)
             } catch (_: Throwable) {
-                // Keeping an unsupported ID in the ledger is harmless; reset is
-                // best-effort and guarantees interrupted successful changes are covered.
+                // This call definitely did not complete successfully, so remove the
+                // provisional ledger entry. A process death after a successful call
+                // still leaves the pre-written entry available for later restoration.
+                removeTargetCompatChange(changeId)
             }
         }
 
@@ -437,6 +467,22 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         }
     }
 
+    @Synchronized
+    private fun removeTargetCompatChange(changeId: String) {
+        if (!targetCompatStateFile.exists()) return
+
+        val ids = targetCompatStateFile.readLines()
+            .map { it.trim() }
+            .filter { it.isNotBlank() && it != changeId }
+            .distinct()
+
+        if (ids.isEmpty()) {
+            targetCompatStateFile.delete()
+        } else {
+            targetCompatStateFile.writeText(ids.joinToString("\n"))
+        }
+    }
+
     private fun restoreTargetPortraitCompat() {
         val ids =
             if (targetCompatStateFile.exists()) {
@@ -448,14 +494,38 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 emptyList()
             }
 
+        val failedIds = mutableListOf<String>()
+
         ids.forEach { changeId ->
             try {
                 runAm("compat", "reset", changeId, TARGET_PACKAGE)
-            } catch (_: Throwable) {
+            } catch (t: Throwable) {
+                if (!isIgnorableCompatResetFailure(t)) {
+                    failedIds.add(changeId)
+                }
             }
         }
 
-        targetCompatStateFile.delete()
+        if (failedIds.isEmpty()) {
+            targetCompatStateFile.delete()
+            return
+        }
+
+        targetCompatStateFile.writeText(failedIds.joinToString("\n"))
+        throw IllegalStateException(
+            "Could not restore ${failedIds.size} compatibility override(s) for " +
+                TARGET_PACKAGE + "; they were retained for retry."
+        )
+    }
+
+    private fun isIgnorableCompatResetFailure(t: Throwable): Boolean {
+        val message = (t.message ?: "").lowercase()
+        return message.contains("unknown change") ||
+            message.contains("unknown id") ||
+            message.contains("no such change") ||
+            message.contains("not a known change") ||
+            message.contains("unknown package") ||
+            message.contains("package not found")
     }
 
     private data class ResumedTask(
