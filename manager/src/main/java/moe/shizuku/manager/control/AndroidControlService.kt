@@ -43,22 +43,17 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             wmHelp.contains("get-ignore-orientation-request")
     }
 
-    private val forceResizableStateFile =
-        File("/data/local/tmp/androidcontrol-force-resizable-prev")
-
-    // Written by older AndroidControl builds that modified many third-party apps.
-    private val legacyCompatOverridePackagesFile =
-        File("/data/local/tmp/androidcontrol-portrait-compat-packages")
-
-    // New builds only record compat changes for the one target game here.
     private val targetCompatStateFile =
         File("/data/local/tmp/androidcontrol-hololive-dreams-compat")
 
-    private val legacyRecoveryFailuresFile =
-        File("/data/local/tmp/androidcontrol-legacy-recovery-failures")
-
     private val fallbackTaskStateFile =
-        File("/data/local/tmp/androidcontrol-portrait-fallback-tasks")
+        File("/data/local/tmp/androidcontrol-hololive-dreams-tasks")
+
+    private val freeformSupportStateFile =
+        File("/data/local/tmp/androidcontrol-freeform-support-prev")
+
+    private val multiWindowConfigStateFile =
+        File("/data/local/tmp/androidcontrol-multiwindow-config-prev")
 
     @Volatile
     private var portraitWatcherRunning = false
@@ -69,7 +64,8 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     private val portraitOperationLock = Any()
 
     @Volatile
-    private var legacyRecoveryRunning = false
+    private var targetPortraitStatus =
+        "Target game: overrides inactive"
 
     private companion object {
         const val TARGET_PACKAGE = "game.qualiarts.hololive.dreams.jp"
@@ -93,12 +89,6 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     }
 
     override fun setForcePortrait(enabled: Boolean): Boolean {
-        if (legacyRecoveryRunning) {
-            throw IllegalStateException(
-                "Legacy portrait recovery is still running; wait for it to finish."
-            )
-        }
-
         if (wmApi == WmApi.UNSUPPORTED) {
             throw UnsupportedOperationException(
                 "This Android build does not expose the required WindowManager rotation controls."
@@ -106,6 +96,8 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         }
 
         if (enabled) {
+            targetPortraitStatus =
+                "Target game: waiting for $TARGET_PACKAGE to become foreground"
             val portraitRotation = getPortraitRotation()
 
             // Apply the actual display-orientation policy first. The old implementation
@@ -160,6 +152,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             }
         } else {
             restoreNormalRotation()
+            targetPortraitStatus = "Target game: overrides inactive"
         }
 
         return isForcePortraitEnabled()
@@ -218,6 +211,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         return setForcePortrait(!isForcePortraitEnabled())
     }
 
+    override fun getTargetPortraitStatus(): String {
+        return targetPortraitStatus
+    }
+
     private fun getPortraitRotation(): Int {
         val output = runWm("size")
         val match = Regex("""Physical size:\s*(\d+)x(\d+)""").find(output)
@@ -229,148 +226,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         return if (height >= width) 0 else 1
     }
 
-    override fun isLegacyRecoveryRunning(): Boolean {
-        return legacyRecoveryRunning
-    }
-
-    override fun recoverLegacyPortraitState(): Int {
-        synchronized(this) {
-            if (legacyRecoveryRunning) {
-                throw IllegalStateException("Legacy portrait recovery is already running")
-            }
-            legacyRecoveryRunning = true
-        }
-
-        try {
-            // Recovery is intentionally exhaustive and separate from normal portrait
-            // operation. Older builds applied compat overrides to every third-party
-            // package before reaching the WindowManager rotation lock.
-            stopPortraitAppWatcher()
-            restoreAndroid13FallbackTasksBestEffort()
-            restoreCoreRotationBestEffort()
-
-            val packages = runCommand("/system/bin/pm", "list", "packages", "-3")
-                .lineSequence()
-                .map { it.trim() }
-                .filter { it.startsWith("package:") }
-                .map { it.removePrefix("package:") }
-                .filter { it.isNotBlank() && it != "moe.shizuku.privileged.api" }
-                .distinct()
-                .toMutableSet()
-
-            // Include names recorded by previous versions even if package listing
-            // formatting or package state changed since the failed operation.
-            if (legacyCompatOverridePackagesFile.exists()) {
-                legacyCompatOverridePackagesFile.readLines().forEach { line ->
-                    val packageName = line.substringBefore('\t').trim()
-                    if (packageName.isNotBlank()) {
-                        packages.add(packageName)
-                    }
-                }
-            }
-
-            val sdk = getSdkInt()
-            val changeIds = buildList {
-                add(FORCE_RESIZE_APP)
-                add(NEVER_SANDBOX_DISPLAY_APIS)
-                add(ALWAYS_SANDBOX_DISPLAY_APIS)
-                add(OVERRIDE_SANDBOX_VIEW_BOUNDS_APIS)
-
-                if (sdk >= 33) {
-                    add(FORCE_NON_RESIZE_APP)
-                }
-                if (sdk >= 34) {
-                    add(OVERRIDE_ANY_ORIENTATION)
-                    add(OVERRIDE_UNDEFINED_ORIENTATION_TO_PORTRAIT)
-                }
-                if (sdk >= 35) {
-                    add(OVERRIDE_ANY_ORIENTATION_TO_USER)
-                }
-            }
-
-            // No short timeout: on a device with hundreds of third-party packages,
-            // this is expected to take time. Each known AndroidControl change ID is
-            // reset for every package the old implementation could have touched.
-            val failures = mutableListOf<String>()
-
-            packages.sorted().forEach { packageName ->
-                changeIds.forEach { changeId ->
-                    try {
-                        runAm("compat", "reset", changeId, packageName)
-                    } catch (t: Throwable) {
-                        if (!isIgnorableCompatResetFailure(t)) {
-                            failures.add(packageName + "\t" + changeId)
-                        }
-                    }
-                }
-            }
-
-            try {
-                restoreForceResizableActivities()
-            } catch (t: Throwable) {
-                failures.add("<global>\tforce_resizable_activities")
-            }
-
-            if (failures.isEmpty()) {
-                legacyCompatOverridePackagesFile.delete()
-                legacyRecoveryFailuresFile.delete()
-                targetCompatStateFile.delete()
-                return packages.size
-            }
-
-            // Preserve exact failed package/change pairs so a failed exhaustive
-            // recovery is never reported as complete and remains diagnosable/retriable.
-            legacyRecoveryFailuresFile.writeText(failures.joinToString("\n"))
-            throw IllegalStateException(
-                "Scanned ${packages.size} third-party packages, but " +
-                    "${failures.size} compatibility reset operations failed. " +
-                    "Run legacy recovery again; failed entries were preserved."
-            )
-        } finally {
-            legacyRecoveryRunning = false
-        }
-    }
-
-    private fun restoreCoreRotationBestEffort() {
-        try {
-            when (wmApi) {
-                WmApi.MODERN -> {
-                    if (supportsIgnoreOrientationRequest) {
-                        try {
-                            runWm("set-ignore-orientation-request", "false")
-                        } catch (_: Throwable) {
-                        }
-                    }
-                    try {
-                        runWm("fixed-to-user-rotation", "default")
-                    } catch (_: Throwable) {
-                    }
-                    try {
-                        runWm("user-rotation", "free")
-                    } catch (_: Throwable) {
-                    }
-                }
-
-                WmApi.LEGACY -> {
-                    try {
-                        runWm("set-fix-to-user-rotation", "default")
-                    } catch (_: Throwable) {
-                    }
-                    try {
-                        runWm("set-user-rotation", "free")
-                    } catch (_: Throwable) {
-                    }
-                }
-
-                WmApi.UNSUPPORTED -> Unit
-            }
-        } catch (_: Throwable) {
-        }
-    }
-
     private fun restoreNormalRotation() {
         stopPortraitAppWatcher()
         restoreAndroid13FallbackTasksBestEffort()
+        restoreAndroid13SupportSettingsBestEffort()
         val commands: List<Array<String>> = when (wmApi) {
             WmApi.MODERN -> buildList<Array<String>> {
                 if (supportsIgnoreOrientationRequest) {
@@ -528,35 +387,40 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             message.contains("package not found")
     }
 
-    private data class ResumedTask(
-        val taskId: Int,
-        val packageName: String,
-        val fullscreen: Boolean
-    )
-
     private fun startPortraitAppWatcher() {
         if (portraitWatcherRunning) return
 
         portraitWatcherRunning = true
         val thread = Thread({
+            var activeTaskId: Int? = null
+            var configured = false
+
             while (portraitWatcherRunning) {
                 try {
-                    val task = findResumedTask()
-                    if (
-                        task != null &&
-                        task.packageName == TARGET_PACKAGE &&
-                        task.fullscreen &&
-                        !wasFallbackTaskChanged(task.taskId)
-                    ) {
-                        synchronized(portraitOperationLock) {
-                            if (portraitWatcherRunning) {
-                                applyAndroid13TaskFallback(task.taskId)
+                    val taskId = findTargetTaskId()
+                    if (taskId == null) {
+                        activeTaskId = null
+                        configured = false
+                        targetPortraitStatus =
+                            "Target game: waiting for $TARGET_PACKAGE to become foreground"
+                    } else {
+                        if (activeTaskId != taskId) {
+                            activeTaskId = taskId
+                            configured = false
+                        }
+
+                        if (!configured) {
+                            synchronized(portraitOperationLock) {
+                                if (portraitWatcherRunning) {
+                                    configured = enforceAndroid13PortraitTask(taskId)
+                                }
                             }
                         }
                     }
-                } catch (_: Throwable) {
-                    // Keep the core portrait lock active if the Android 13
-                    // freeform fallback is unavailable on this ROM.
+                } catch (t: Throwable) {
+                    targetPortraitStatus =
+                        "Target game fallback error: " +
+                            (t.message ?: t.javaClass.simpleName)
                 }
 
                 try {
@@ -565,7 +429,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                     break
                 }
             }
-        }, "androidcontrol-portrait-target-watcher")
+        }, "androidcontrol-hololive-dreams-portrait")
 
         portraitWatcherThread = thread
         thread.isDaemon = true
@@ -576,63 +440,281 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         portraitWatcherRunning = false
         portraitWatcherThread?.interrupt()
 
-        // Wait for an in-flight compat/task mutation to leave its critical section
-        // before restoration reads/deletes the ledger. This prevents a stopped
-        // watcher from writing a fresh override after Restore normal rotation.
         synchronized(portraitOperationLock) {
         }
 
         portraitWatcherThread = null
     }
 
-    private fun findResumedTask(): ResumedTask? {
+    private fun findTargetTaskId(): Int? {
         val dump = runCommand("/system/bin/dumpsys", "activity", "activities")
+        val lines = dump.lineSequence().toList()
 
-        val resumed = Regex(
-            """(?:topResumedActivity|mResumedActivity)[^\n]*?\s([A-Za-z0-9_.$]+)/(?:[^\s}]+)[^\n]*?\bt(\d+)\b"""
-        ).find(dump) ?: return null
-
-        val packageName = resumed.groupValues[1]
-        val taskId = resumed.groupValues[2].toIntOrNull() ?: return null
-
-        val fullscreen =
-            Regex(
-                """(?m)^\s*\*?\s*Task\{[^\n]*?#$taskId\b[^\n]*?\bmode=fullscreen\b"""
-            ).containsMatchIn(dump) ||
-                Regex(
-                    """(?m)^\s*Task\{[^\n]*?\btaskId=$taskId\b[^\n]*?\bwindowingMode=1\b"""
-                ).containsMatchIn(dump)
-
-        return ResumedTask(taskId, packageName, fullscreen)
-    }
-
-    private fun applyAndroid13TaskFallback(taskId: Int) {
-        val size = getPortraitDisplayBounds()
-
-        // Android 13 still letterboxes fixed-landscape fullscreen activities.
-        // Moving the task into a portrait-sized freeform container makes it a
-        // multi-window activity, where fixed-orientation handling is bypassed.
-        val atm = getActivityTaskManagerService()
-        invokeActivityTaskManager(atm, "setTaskResizeable", taskId, 2)
-        val moved = invokeActivityTaskManager(
-            atm,
-            "setTaskWindowingMode",
-            taskId,
-            WINDOWING_MODE_FREEFORM,
-            true
-        )
-        if (moved is Boolean && !moved) {
-            throw IllegalStateException("Unable to move task $taskId into freeform mode")
+        val prioritized = lines.firstOrNull { line ->
+            line.contains(TARGET_PACKAGE) &&
+                (
+                    line.contains("topResumedActivity") ||
+                    line.contains("mResumedActivity") ||
+                    line.contains("mFocusedApp")
+                )
         }
 
-        invokeActivityTaskManager(
-            atm,
-            "resizeTask",
-            taskId,
-            Rect(0, 0, size.first, size.second),
-            RESIZE_MODE_SYSTEM
-        )
-        rememberFallbackTask(taskId)
+        val candidate = prioritized ?: lines.firstOrNull { line ->
+            line.contains(TARGET_PACKAGE) && Regex("""\bt\d+\b""").containsMatchIn(line)
+        } ?: return null
+
+        return Regex("""\bt(\d+)\b""")
+            .find(candidate)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.toIntOrNull()
+    }
+
+    private fun enforceAndroid13PortraitTask(taskId: Int): Boolean {
+        val size = getPortraitDisplayBounds()
+        targetPortraitStatus =
+            "Target game: applying portrait task bounds to task $taskId"
+
+        val firstError = tryResizeTargetTaskWithShell(taskId, size)
+        if (isTaskPortrait(taskId)) {
+            rememberFallbackTask(taskId)
+            targetPortraitStatus =
+                "Target game: portrait task active (${size.first}×${size.second})"
+            return true
+        }
+
+        prepareAndroid13FreeformSupportBestEffort()
+
+        try {
+            Thread.sleep(300)
+        } catch (_: InterruptedException) {
+        }
+
+        val secondError = tryResizeTargetTaskWithShell(taskId, size)
+        if (isTaskPortrait(taskId)) {
+            rememberFallbackTask(taskId)
+            targetPortraitStatus =
+                "Target game: portrait task active (${size.first}×${size.second}); " +
+                    "temporary freeform support enabled"
+            return true
+        }
+
+        val binderError = try {
+            val atm = getActivityTaskManagerService()
+            invokeActivityTaskManager(atm, "setTaskResizeable", taskId, 2)
+            invokeActivityTaskManager(
+                atm,
+                "setTaskWindowingMode",
+                taskId,
+                WINDOWING_MODE_FREEFORM,
+                true
+            )
+            invokeActivityTaskManager(
+                atm,
+                "resizeTask",
+                taskId,
+                Rect(0, 0, size.first, size.second),
+                RESIZE_MODE_SYSTEM
+            )
+            null
+        } catch (t: Throwable) {
+            t.message ?: t.javaClass.simpleName
+        }
+
+        if (isTaskPortrait(taskId)) {
+            rememberFallbackTask(taskId)
+            targetPortraitStatus =
+                "Target game: portrait task active (${size.first}×${size.second})"
+            return true
+        }
+
+        val details = listOfNotNull(firstError, secondError, binderError)
+            .distinct()
+            .joinToString(" | ")
+
+        targetPortraitStatus =
+            if (details.isBlank()) {
+                "Target game: system kept the task non-portrait after all resize attempts"
+            } else {
+                "Target game: portrait task failed: $details"
+            }
+
+        return false
+    }
+
+    private fun tryResizeTargetTaskWithShell(
+        taskId: Int,
+        size: Pair<Int, Int>
+    ): String? {
+        return try {
+            runAm("task", "resizeable", taskId.toString(), "2")
+            runAm(
+                "task",
+                "resize",
+                taskId.toString(),
+                "0",
+                "0",
+                size.first.toString(),
+                size.second.toString()
+            )
+            null
+        } catch (t: Throwable) {
+            t.message ?: t.javaClass.simpleName
+        }
+    }
+
+    private fun isTaskPortrait(taskId: Int): Boolean {
+        try {
+            val atm = getActivityTaskManagerService()
+            val bounds = invokeActivityTaskManager(
+                atm,
+                "getTaskBounds",
+                taskId
+            ) as? Rect
+
+            if (bounds != null && !bounds.isEmpty) {
+                return bounds.width() < bounds.height()
+            }
+        } catch (_: Throwable) {
+        }
+
+        val dump = try {
+            runCommand("/system/bin/dumpsys", "activity", "activities")
+        } catch (_: Throwable) {
+            return false
+        }
+
+        val taskLine = dump.lineSequence().firstOrNull { line ->
+            (
+                line.contains("#$taskId") ||
+                    line.contains("taskId=$taskId")
+                ) &&
+                line.contains("bounds=")
+        } ?: return false
+
+        val bracketBounds = Regex(
+            """bounds=\[(\d+),(\d+)\]\[(\d+),(\d+)\]"""
+        ).find(taskLine)
+
+        if (bracketBounds != null) {
+            val left = bracketBounds.groupValues[1].toInt()
+            val top = bracketBounds.groupValues[2].toInt()
+            val right = bracketBounds.groupValues[3].toInt()
+            val bottom = bracketBounds.groupValues[4].toInt()
+            return right - left < bottom - top
+        }
+
+        val rectBounds = Regex(
+            """bounds=Rect\((\d+),\s*(\d+)\s*-\s*(\d+),\s*(\d+)\)"""
+        ).find(taskLine)
+
+        if (rectBounds != null) {
+            val left = rectBounds.groupValues[1].toInt()
+            val top = rectBounds.groupValues[2].toInt()
+            val right = rectBounds.groupValues[3].toInt()
+            val bottom = rectBounds.groupValues[4].toInt()
+            return right - left < bottom - top
+        }
+
+        return false
+    }
+
+    private fun prepareAndroid13FreeformSupportBestEffort() {
+        if (!freeformSupportStateFile.exists()) {
+            try {
+                val previous = runSettings(
+                    "get",
+                    "global",
+                    "enable_freeform_support"
+                ).trim()
+                freeformSupportStateFile.writeText(
+                    previous.ifEmpty { "null" }
+                )
+                if (previous != "1") {
+                    runSettings(
+                        "put",
+                        "global",
+                        "enable_freeform_support",
+                        "1"
+                    )
+                }
+            } catch (_: Throwable) {
+            }
+        }
+
+        if (!multiWindowConfigStateFile.exists()) {
+            try {
+                val output = runWm("get-multi-window-config")
+                val supports = Regex(
+                    """Supports non-resizable in multi window:\s*(-?\d+)"""
+                ).find(output)?.groupValues?.getOrNull(1)
+                val respects = Regex(
+                    """Respects activity min width/height in multi window:\s*(-?\d+)"""
+                ).find(output)?.groupValues?.getOrNull(1)
+
+                if (supports != null && respects != null) {
+                    multiWindowConfigStateFile.writeText(
+                        supports + "\t" + respects
+                    )
+                }
+            } catch (_: Throwable) {
+            }
+        }
+
+        try {
+            runWm(
+                "set-multi-window-config",
+                "--supportsNonResizable",
+                "1",
+                "--respectsActivityMinWidthHeight",
+                "0"
+            )
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun restoreAndroid13SupportSettingsBestEffort() {
+        if (multiWindowConfigStateFile.exists()) {
+            try {
+                val parts = multiWindowConfigStateFile.readText()
+                    .trim()
+                    .split('\t')
+
+                if (parts.size >= 2) {
+                    runWm(
+                        "set-multi-window-config",
+                        "--supportsNonResizable",
+                        parts[0],
+                        "--respectsActivityMinWidthHeight",
+                        parts[1]
+                    )
+                }
+                multiWindowConfigStateFile.delete()
+            } catch (_: Throwable) {
+            }
+        }
+
+        if (freeformSupportStateFile.exists()) {
+            try {
+                val previous = freeformSupportStateFile.readText().trim()
+                if (previous.isEmpty() || previous == "null") {
+                    runSettings(
+                        "delete",
+                        "global",
+                        "enable_freeform_support"
+                    )
+                } else {
+                    runSettings(
+                        "put",
+                        "global",
+                        "enable_freeform_support",
+                        previous
+                    )
+                }
+                freeformSupportStateFile.delete()
+            } catch (_: Throwable) {
+            }
+        }
     }
 
     private fun restoreAndroid13FallbackTasksBestEffort() {
@@ -656,6 +738,12 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                         WINDOWING_MODE_FULLSCREEN,
                         false
                     )
+                    invokeActivityTaskManager(
+                        atm,
+                        "setTaskResizeable",
+                        taskId,
+                        0
+                    )
                 } catch (_: Throwable) {
                 }
             }
@@ -677,13 +765,6 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         if (ids.add(taskId)) {
             fallbackTaskStateFile.writeText(ids.sorted().joinToString("\n"))
         }
-    }
-
-    @Synchronized
-    private fun wasFallbackTaskChanged(taskId: Int): Boolean {
-        if (!fallbackTaskStateFile.exists()) return false
-        return fallbackTaskStateFile.readLines()
-            .any { it.trim().toIntOrNull() == taskId }
     }
 
 
@@ -734,31 +815,6 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         return runCommand("/system/bin/getprop", "ro.build.version.sdk")
             .trim()
             .toIntOrNull() ?: 0
-    }
-
-    private fun enableForceResizableActivities() {
-        if (!forceResizableStateFile.exists()) {
-            val previous = runSettings("get", "global", "force_resizable_activities").trim()
-            forceResizableStateFile.writeText(previous.ifEmpty { "null" })
-        }
-        runSettings("put", "global", "force_resizable_activities", "1")
-    }
-
-    private fun restoreForceResizableActivities() {
-        if (!forceResizableStateFile.exists()) return
-
-        val previous = forceResizableStateFile.readText().trim()
-        if (previous.isEmpty() || previous == "null") {
-            runSettings("delete", "global", "force_resizable_activities")
-        } else {
-            runSettings("put", "global", "force_resizable_activities", previous)
-        }
-
-        forceResizableStateFile.delete()
-    }
-
-    private fun isForceResizableActivitiesEnabled(): Boolean {
-        return runSettings("get", "global", "force_resizable_activities").trim() == "1"
     }
 
     private fun restoreNormalRotationBestEffort() {
