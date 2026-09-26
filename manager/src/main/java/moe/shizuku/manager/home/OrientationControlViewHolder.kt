@@ -68,15 +68,17 @@ class OrientationControlViewHolder(
             if (state.error != null) {
                 binding.button1.isEnabled = true
                 binding.button1.setText(R.string.home_orientation_retry)
-                    binding.text1.text = context.getString(
+                binding.text1.text = context.getString(
                     R.string.home_orientation_description_error,
                     state.error
                 )
             } else {
                 binding.button1.isEnabled = false
                 binding.button1.setText(R.string.home_orientation_force)
-                    binding.text1.setText(R.string.home_orientation_description_connecting)
+                binding.text1.setText(R.string.home_orientation_description_connecting)
             }
+            binding.text2.text =
+                state.targetStatus ?: context.getString(R.string.home_orientation_target_waiting)
             return
         }
 
@@ -95,6 +97,5 @@ class OrientationControlViewHolder(
 
         binding.text2.text =
             state.targetStatus ?: context.getString(R.string.home_orientation_target_waiting)
-
     }
 }
