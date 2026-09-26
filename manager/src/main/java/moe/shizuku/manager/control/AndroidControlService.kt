@@ -58,6 +58,12 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     @Volatile
     private var portraitWatcherThread: Thread? = null
 
+    @Volatile
+    private var staleCompatCleanupRunning = false
+
+    @Volatile
+    private var staleCompatCleanupThread: Thread? = null
+
     private companion object {
         const val FORCE_RESIZE_APP = "174042936"
         const val FORCE_NON_RESIZE_APP = "181136395"
@@ -191,7 +197,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             // Previous versions could return to the unforced UI state while
             // leaving compat/task settings behind. Opening AndroidControl is
             // enough to reconcile that recorded stale state.
-            restoreNormalRotationBestEffort()
+            cleanupRecordedPartialPortraitState()
         }
 
         return forced
@@ -216,33 +222,51 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         stopPortraitAppWatcher()
         restoreAndroid13FallbackTasksBestEffort()
 
-        // If an old build died after setting force_resizable_activities but before
-        // it finished writing the per-package ledger, some compat overrides may
-        // be orphaned. This marker combination identifies that legacy failure mode.
-        if (
+        val legacyOrphanedCompat =
             getSdkInt() == 33 &&
-            forceResizableStateFile.exists() &&
-            !compatOverridePackagesFile.exists()
-        ) {
-            resetKnownAndroid13PortraitOverridesBestEffort()
+                forceResizableStateFile.exists() &&
+                !compatOverridePackagesFile.exists()
+
+        if (compatOverridePackagesFile.exists() || legacyOrphanedCompat) {
+            startStaleCompatCleanup(legacyOrphanedCompat)
         }
 
-        try {
-            restorePerAppPortraitCompatOverrides()
-        } catch (_: Throwable) {
-        }
-
+        // One global setting is cheap to restore immediately. Potentially large
+        // per-package compat cleanup is deliberately background work.
         try {
             restoreForceResizableActivities()
         } catch (_: Throwable) {
         }
     }
 
+    private fun startStaleCompatCleanup(legacyOrphanedCompat: Boolean) {
+        if (staleCompatCleanupRunning) return
+
+        staleCompatCleanupRunning = true
+        val thread = Thread({
+            try {
+                if (compatOverridePackagesFile.exists()) {
+                    restorePerAppPortraitCompatOverrides()
+                } else if (legacyOrphanedCompat) {
+                    resetKnownAndroid13PortraitOverridesBestEffort()
+                }
+            } finally {
+                staleCompatCleanupRunning = false
+                staleCompatCleanupThread = null
+            }
+        }, "androidcontrol-stale-compat-cleanup")
+
+        staleCompatCleanupThread = thread
+        thread.isDaemon = true
+        thread.start()
+    }
+
     private fun hasRecordedPortraitState(): Boolean {
         return forceResizableStateFile.exists() ||
             compatOverridePackagesFile.exists() ||
             fallbackTaskStateFile.exists() ||
-            portraitWatcherRunning
+            portraitWatcherRunning ||
+            staleCompatCleanupRunning
     }
 
     private fun resetKnownAndroid13PortraitOverridesBestEffort() {
@@ -327,13 +351,15 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 }
             }
         }
-        try {
-            restorePerAppPortraitCompatOverrides()
-        } catch (t: Throwable) {
-            if (failure == null) {
-                failure = t
-            } else {
-                failure!!.addSuppressed(t)
+        if (!staleCompatCleanupRunning) {
+            try {
+                restorePerAppPortraitCompatOverrides()
+            } catch (t: Throwable) {
+                if (failure == null) {
+                    failure = t
+                } else {
+                    failure!!.addSuppressed(t)
+                }
             }
         }
 
@@ -495,7 +521,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 try {
                     val task = findResumedTask()
                     if (task != null && thirdPartyPackages.contains(task.packageName)) {
-                        if (processedPackages.add(task.packageName)) {
+                        if (
+                            !staleCompatCleanupRunning &&
+                            processedPackages.add(task.packageName)
+                        ) {
                             enablePortraitCompatForPackage(task.packageName)
                         }
 
