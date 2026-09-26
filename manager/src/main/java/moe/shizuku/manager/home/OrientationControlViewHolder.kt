@@ -34,6 +34,12 @@ class OrientationControlViewHolder(
             binding.text1.setText(R.string.home_orientation_description_working)
             OrientationControlClient.toggle()
         }
+
+        binding.button2.setOnClickListener {
+            binding.button2.isEnabled = false
+            binding.text2.setText(R.string.home_orientation_recovery_running)
+            OrientationControlClient.recoverLegacyState()
+        }
     }
 
     override fun onBind() {
@@ -56,10 +62,12 @@ class OrientationControlViewHolder(
         if (!data.isRunning) {
             binding.button1.isEnabled = false
             binding.button1.setText(R.string.home_orientation_force)
+            binding.button2.isEnabled = false
             binding.text1.text = context.getString(
                 R.string.home_status_service_not_running,
                 context.getString(R.string.app_name)
             )
+            binding.text2.setText(R.string.home_orientation_recovery_description)
             return
         }
 
@@ -67,6 +75,7 @@ class OrientationControlViewHolder(
             if (state.error != null) {
                 binding.button1.isEnabled = true
                 binding.button1.setText(R.string.home_orientation_retry)
+                binding.button2.isEnabled = false
                 binding.text1.text = context.getString(
                     R.string.home_orientation_description_error,
                     state.error
@@ -74,13 +83,14 @@ class OrientationControlViewHolder(
             } else {
                 binding.button1.isEnabled = false
                 binding.button1.setText(R.string.home_orientation_force)
+                binding.button2.isEnabled = false
                 binding.text1.setText(R.string.home_orientation_description_connecting)
             }
             return
         }
 
         val forced = state.forcedPortrait == true
-        binding.button1.isEnabled = true
+        binding.button1.isEnabled = !state.recoveryRunning
         binding.button1.setText(
             if (forced) R.string.home_orientation_restore else R.string.home_orientation_force
         )
@@ -91,5 +101,27 @@ class OrientationControlViewHolder(
                 else -> R.string.home_orientation_description_normal
             }
         )
+
+        binding.button2.isEnabled = !state.recoveryRunning && !forced
+        binding.text2.text =
+            when {
+                state.recoveryRunning ->
+                    context.getString(R.string.home_orientation_recovery_running)
+
+                state.recoveryError != null ->
+                    context.getString(
+                        R.string.home_orientation_recovery_error,
+                        state.recoveryError
+                    )
+
+                state.recoveredPackages != null ->
+                    context.getString(
+                        R.string.home_orientation_recovery_done,
+                        state.recoveredPackages
+                    )
+
+                else ->
+                    context.getString(R.string.home_orientation_recovery_description)
+            }
     }
 }

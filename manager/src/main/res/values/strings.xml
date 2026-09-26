@@ -67,7 +67,7 @@
 
     <!-- Home - Global orientation control -->
     <string name="home_orientation_title">Global portrait control</string>
-    <string name="home_orientation_description_normal">Apps can use their normal orientation. Tap to force the entire display to portrait and ignore app orientation requests.</string>
+    <string name="home_orientation_description_normal">Tap to force the display to portrait. Per-app resize and display overrides are applied only to game.qualiarts.hololive.dreams.jp.</string>
     <string name="home_orientation_description_forced">Portrait is forced system-wide. App orientation requests are being ignored.</string>
     <string name="home_orientation_description_connecting">Connecting to the privileged control service…</string>
     <string name="home_orientation_description_working">Applying display orientation…</string>
@@ -76,6 +76,11 @@
     <string name="home_orientation_force">Force portrait</string>
     <string name="home_orientation_restore">Restore normal rotation</string>
     <string name="home_orientation_retry">Retry</string>
+    <string name="home_orientation_recovery_button">Recover previous failed changes</string>
+    <string name="home_orientation_recovery_description">One-time recovery for older failed builds. It resets AndroidControl portrait compatibility flags across every third-party app the old implementation could have changed. On devices with many apps this can take several minutes.</string>
+    <string name="home_orientation_recovery_running">Recovering previous failed changes across all third-party apps… Do not stop AndroidControl. This operation is intentionally allowed to take several minutes.</string>
+    <string name="home_orientation_recovery_done">Recovery completed. Checked and reset AndroidControl compatibility flags for %1$d third-party packages.</string>
+    <string name="home_orientation_recovery_error">Previous-change recovery failed: %1$s</string>
 
     <!-- Home - Root -->
     <string name="home_root_title"><![CDATA[Start (for rooted devices)]]></string>
