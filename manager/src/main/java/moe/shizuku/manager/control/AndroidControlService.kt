@@ -241,13 +241,14 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         val changed = mutableListOf<String>()
 
         packages.forEach { packageName ->
-            var forceResizeApplied = false
+            var anyOverrideApplied = false
 
             try {
                 runAm(
                     "compat", "disable", "--no-kill",
                     NEVER_SANDBOX_DISPLAY_APIS, packageName
                 )
+                anyOverrideApplied = true
             } catch (_: Throwable) {
                 // Older builds may not expose this compat change.
             }
@@ -257,6 +258,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                     "compat", "enable", "--no-kill",
                     ALWAYS_SANDBOX_DISPLAY_APIS, packageName
                 )
+                anyOverrideApplied = true
             } catch (_: Throwable) {
                 // Older builds may not expose this compat change.
             }
@@ -266,6 +268,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                     "compat", "enable", "--no-kill",
                     OVERRIDE_SANDBOX_VIEW_BOUNDS_APIS, packageName
                 )
+                anyOverrideApplied = true
             } catch (_: Throwable) {
                 // Older builds may not expose this compat change.
             }
@@ -275,7 +278,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                     "compat", "enable", "--no-kill",
                     FORCE_RESIZE_APP, packageName
                 )
-                forceResizeApplied = true
+                anyOverrideApplied = true
             } catch (_: Throwable) {
                 // Some packages/ROMs may reject the override. Continue with others.
             }
@@ -290,6 +293,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                         "compat", "enable", "--no-kill",
                         OVERRIDE_UNDEFINED_ORIENTATION_TO_PORTRAIT, packageName
                     )
+                    anyOverrideApplied = true
                 } catch (_: Throwable) {
                     // Not all vendor Android 14 builds expose both orientation overrides.
                 }
@@ -301,12 +305,13 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                         "compat", "enable", "--no-kill",
                         OVERRIDE_ANY_ORIENTATION_TO_USER, packageName
                     )
+                    anyOverrideApplied = true
                 } catch (_: Throwable) {
                     // Android 15+ fullscreen/user-orientation override is optional on vendor builds.
                 }
             }
 
-            if (forceResizeApplied) {
+            if (anyOverrideApplied) {
                 changed.add(packageName)
             }
         }
