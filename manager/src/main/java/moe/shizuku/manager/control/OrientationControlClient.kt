@@ -136,11 +136,13 @@ object OrientationControlClient {
         executor.execute {
             try {
                 val forced = service.isForcePortraitEnabled()
+                val recoveryRunning = service.isLegacyRecoveryRunning()
                 publish(
                     state.copy(
                         available = true,
                         forcedPortrait = forced,
-                        error = null
+                        error = null,
+                        recoveryRunning = recoveryRunning
                     )
                 )
             } catch (t: Throwable) {
@@ -183,6 +185,8 @@ object OrientationControlClient {
     }
 
     fun recoverLegacyState() {
+        if (state.recoveryRunning) return
+
         val service = remote
         if (service == null || !service.asBinder().pingBinder()) {
             pendingRecovery = true
@@ -208,12 +212,17 @@ object OrientationControlClient {
                 } catch (_: Throwable) {
                     false
                 }
+                val recoveryRunning = try {
+                    service.isLegacyRecoveryRunning()
+                } catch (_: Throwable) {
+                    false
+                }
 
                 publish(
                     state.copy(
                         available = true,
                         forcedPortrait = forced,
-                        recoveryRunning = false,
+                        recoveryRunning = recoveryRunning,
                         recoveredPackages = count,
                         recoveryError = null,
                         error = null
