@@ -26,20 +26,15 @@ class OrientationControlViewHolder(
         }
     }
 
-    private var openContainerWhenForced = false
-
     private val stateListener: (OrientationControlClient.State) -> Unit = { state ->
         render(state)
     }
 
     init {
         binding.button1.setOnClickListener {
-            openContainerWhenForced =
-                OrientationControlClient.state.forcedPortrait != true
-
-            binding.button1.isEnabled = false
-            binding.text1.setText(R.string.home_orientation_description_working)
-            OrientationControlClient.toggle()
+            itemView.context.startActivity(
+                Intent(itemView.context, PortraitGameActivity::class.java)
+            )
         }
     }
 
@@ -89,35 +84,17 @@ class OrientationControlViewHolder(
             return
         }
 
-        val forced = state.forcedPortrait == true
-        binding.button1.isEnabled = true
-        binding.button1.setText(
-            if (forced) R.string.home_orientation_restore else R.string.home_orientation_force
-        )
+        binding.button1.isEnabled = state.error == null
+        binding.button1.setText(R.string.home_orientation_force)
         binding.text1.setText(
-            when {
-                state.error != null -> R.string.home_orientation_description_error_short
-                forced -> R.string.home_orientation_description_forced
-                else -> R.string.home_orientation_description_normal
+            if (state.error != null) {
+                R.string.home_orientation_description_error_short
+            } else {
+                R.string.home_orientation_description_normal
             }
         )
 
         binding.text2.text =
             state.targetStatus ?: context.getString(R.string.home_orientation_target_waiting)
-
-        if (
-            openContainerWhenForced &&
-            forced &&
-            state.error == null
-        ) {
-            openContainerWhenForced = false
-            itemView.post {
-                itemView.context.startActivity(
-                    Intent(itemView.context, PortraitGameActivity::class.java)
-                )
-            }
-        } else if (state.error != null) {
-            openContainerWhenForced = false
-        }
     }
 }
