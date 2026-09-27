@@ -17,6 +17,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.TextView
+import android.widget.Toast
 import moe.shizuku.manager.R
 
 class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener {
@@ -30,6 +31,7 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
     private var virtualHeight: Int = 0
     private var stopping = false
     private var launched = false
+    private var startAttempted = false
     private val hostToken = Binder()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -86,15 +88,19 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
             return
         }
 
-        val width = surfaceView.width
-        val height = surfaceView.height
-        if (width <= 0 || height <= 0) {
+        startWhenSized(holder, surfaceView.width, surfaceView.height)
+    }
+
+    private fun startWhenSized(holder: SurfaceHolder, width: Int, height: Int) {
+        if (stopping || isDestroyed || startAttempted) return
+        if (width <= 0 || height <= width) {
             statusView.text = getString(R.string.target_portrait_display_bad_size)
             return
         }
 
-        virtualWidth = minOf(width, height)
-        virtualHeight = maxOf(width, height)
+        startAttempted = true
+        virtualWidth = width
+        virtualHeight = height
 
         val displayManager =
             getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
@@ -104,14 +110,17 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY or
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION
 
-        virtualDisplay = displayManager.createVirtualDisplay(
+        virtualDisplay = try { displayManager.createVirtualDisplay(
             "AndroidControl-TargetApp-Portrait",
             virtualWidth,
             virtualHeight,
             resources.displayMetrics.densityDpi,
             holder.surface,
             flags
-        )
+        ) } catch (t: Throwable) {
+            statusView.text = "Could not create portrait display: ${t.message}"
+            return
+        }
 
         val display = virtualDisplay?.display
         if (display == null) {
@@ -134,6 +143,7 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
             virtualHeight,
             hostToken
         ) { ok, status ->
+            if (stopping || isDestroyed) return@start
             launched = ok
             statusView.text =
                 status ?: if (ok) {
@@ -142,6 +152,11 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
                     getString(R.string.target_portrait_display_launch_failed)
                 }
 
+            if (!ok) {
+                virtualDisplay?.release()
+                virtualDisplay = null
+                displayId = -1
+            }
             if (ok) {
                 statusView.postDelayed(
                     { statusView.visibility = View.GONE },
@@ -157,6 +172,7 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
         width: Int,
         height: Int
     ) {
+        if (virtualDisplay == null) startWhenSized(holder, width, height)
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
@@ -200,6 +216,7 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
     private fun stopAndFinish() {
         if (stopping) return
         stopping = true
+        launched = false
         statusView.visibility = View.VISIBLE
         statusView.text = getString(R.string.target_portrait_display_restoring)
 
@@ -208,7 +225,8 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
             TargetPortraitDisplayClient.stop(
                 id,
                 relaunchOnDefaultDisplay = true
-            ) {
+            ) { failure ->
+                if (failure != null) Toast.makeText(this, failure, Toast.LENGTH_LONG).show()
                 virtualDisplay?.release()
                 virtualDisplay = null
                 finish()
@@ -221,14 +239,19 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
     }
 
     override fun onDestroy() {
-        if (!stopping && displayId >= 0) {
-            TargetPortraitDisplayClient.stop(
-                displayId,
-                relaunchOnDefaultDisplay = false
-            )
-        }
-        virtualDisplay?.release()
+        launched = false
+        val retiringDisplay = virtualDisplay
         virtualDisplay = null
+        if (!stopping && displayId >= 0) {
+            // Keep the display alive until the service has found and removed its task.
+            // Releasing it first can migrate the task to display 0 during launch.
+            retiringDisplay?.surface = null
+            TargetPortraitDisplayClient.stop(displayId, relaunchOnDefaultDisplay = false) {
+                retiringDisplay?.release()
+            }
+        } else {
+            retiringDisplay?.release()
+        }
         super.onDestroy()
     }
 }
