@@ -760,40 +760,37 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     private fun describeTargetTask(taskId: Int): String {
         try {
             val atm = getActivityTaskManagerService()
-            val methods = atm.javaClass.methods
-                .filter { it.name == "getTasks" }
-                .sortedBy { it.parameterTypes.size }
+            val bounds = invokeActivityTaskManager(
+                atm,
+                "getTaskBounds",
+                taskId
+            ) as? Rect
 
-            methods.forEach { method ->
-                val args: Array<Any?> = when (method.parameterTypes.size) {
-                    1 -> arrayOf(100)
-                    2 -> arrayOf(100, false)
-                    3 -> arrayOf(100, false, false)
-                    4 -> arrayOf(100, false, false, -1)
-                    else -> return@forEach
-                }
-
-                try {
-                    val tasks = method.invoke(atm, *args) as? List<*>
-                        ?: return@forEach
-                    val info = tasks
-                        .filterIsInstance<ActivityManager.RunningTaskInfo>()
-                        .firstOrNull { it.taskId == taskId }
-                        ?: return@forEach
-
-                    val bounds = info.configuration.windowConfiguration.bounds
-                    val windowingMode =
-                        info.configuration.windowConfiguration.windowingMode
-
-                    return "task=$taskId mode=$windowingMode bounds=" +
-                        "${bounds.width()}×${bounds.height()}"
-                } catch (_: Throwable) {
-                }
+            if (bounds != null && !bounds.isEmpty) {
+                return "task=$taskId bounds=${bounds.width()}×${bounds.height()}"
             }
         } catch (_: Throwable) {
         }
 
-        return "task=$taskId geometry unavailable"
+        val dump = try {
+            runCommand("/system/bin/dumpsys", "activity", "activities")
+        } catch (_: Throwable) {
+            return "task=$taskId geometry unavailable"
+        }
+
+        val taskLine = dump.lineSequence().firstOrNull { line ->
+            (
+                line.contains("#$taskId") ||
+                    line.contains("taskId=$taskId")
+                ) &&
+                (line.contains("bounds=") || line.contains("windowingMode="))
+        }
+
+        return if (taskLine != null) {
+            "task=$taskId " + taskLine.trim().take(220)
+        } else {
+            "task=$taskId geometry unavailable"
+        }
     }
 
     private fun isTaskPortrait(taskId: Int): Boolean {
@@ -807,38 +804,6 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
             if (bounds != null && !bounds.isEmpty) {
                 return bounds.width() < bounds.height()
-            }
-        } catch (_: Throwable) {
-        }
-
-        try {
-            val atm = getActivityTaskManagerService()
-            val methods = atm.javaClass.methods
-                .filter { it.name == "getTasks" }
-                .sortedBy { it.parameterTypes.size }
-
-            methods.forEach { method ->
-                val args: Array<Any?> = when (method.parameterTypes.size) {
-                    1 -> arrayOf(100)
-                    2 -> arrayOf(100, false)
-                    3 -> arrayOf(100, false, false)
-                    4 -> arrayOf(100, false, false, -1)
-                    else -> return@forEach
-                }
-
-                try {
-                    val tasks = method.invoke(atm, *args) as? List<*>
-                        ?: return@forEach
-                    val info = tasks
-                        .filterIsInstance<ActivityManager.RunningTaskInfo>()
-                        .firstOrNull { it.taskId == taskId }
-                        ?: return@forEach
-                    val bounds = info.configuration.windowConfiguration.bounds
-                    if (!bounds.isEmpty) {
-                        return bounds.width() < bounds.height()
-                    }
-                } catch (_: Throwable) {
-                }
             }
         } catch (_: Throwable) {
         }
