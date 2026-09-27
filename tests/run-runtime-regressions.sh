@@ -13,7 +13,10 @@ jar --create --file "$test_dir/classes.jar" -C "$test_dir/classes" .
 "$build_tools/aapt2" link -I "$android_jar" --manifest tests/portrait-fixture/AndroidManifest.xml -o "$test_dir/fixture.apk"
 (cd "$test_dir/dex" && zip -q "$test_dir/fixture.apk" classes.dex)
 "$build_tools/zipalign" -p 4 "$test_dir/fixture.apk" "$test_dir/aligned.apk"
-"$build_tools/apksigner" sign --ks "$HOME/.android/debug.keystore" --ks-pass pass:android "$test_dir/aligned.apk"
+# The fixture is a different app and needs no relation to the manager's key.
+keytool -genkeypair -keystore "$test_dir/fixture.jks" -storepass android -keypass android \
+    -alias fixture -keyalg RSA -keysize 2048 -validity 2 -dname 'CN=Runtime Test Fixture' >/dev/null 2>&1
+"$build_tools/apksigner" sign --ks "$test_dir/fixture.jks" --ks-pass pass:android "$test_dir/aligned.apk"
 
 package=moe.shizuku.privileged.api
 runner="$package.test/moe.shizuku.manager.regression.RuntimeRegressionInstrumentation"
