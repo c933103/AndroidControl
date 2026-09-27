@@ -1,5 +1,6 @@
 package moe.shizuku.manager.control
 
+import android.app.ActivityManager
 import android.content.Context
 import android.graphics.Rect
 import androidx.annotation.Keep
@@ -82,6 +83,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         const val WINDOWING_MODE_FULLSCREEN = 1
         const val WINDOWING_MODE_FREEFORM = 5
         const val RESIZE_MODE_SYSTEM = 0
+        const val RESIZE_MODE_FORCE_RESIZABLE_PORTRAIT_ONLY = 6
     }
 
     override fun destroy() {
@@ -98,6 +100,11 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         if (enabled) {
             targetPortraitStatus =
                 "Target game: waiting for $TARGET_PACKAGE to become foreground"
+
+            val sdk = getSdkInt()
+            val targetWasRunning =
+                sdk == 33 && isTargetRunningOrTaskPresent()
+
             val portraitRotation = getPortraitRotation()
 
             // Apply the actual display-orientation policy first. The old implementation
@@ -139,7 +146,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             } catch (_: Throwable) {
             }
 
-            if (getSdkInt() == 33) {
+            if (sdk == 33) {
+                if (targetWasRunning) {
+                    restartTargetGameBestEffort()
+                }
                 startPortraitAppWatcher()
             }
 
@@ -466,6 +476,48 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     }
 
     private fun findTargetTaskId(): Int? {
+        // Prefer the binder task list. This avoids depending on OEM-specific dumpsys
+        // formatting, which was a likely reason the Android 13 fallback never ran.
+        try {
+            val atm = getActivityTaskManagerService()
+            val methods = atm.javaClass.methods
+                .filter { it.name == "getTasks" }
+                .sortedBy { it.parameterTypes.size }
+
+            methods.forEach { method ->
+                val args: Array<Any?> = when (method.parameterTypes.size) {
+                    1 -> arrayOf(100)
+                    2 -> arrayOf(100, false)
+                    3 -> arrayOf(100, false, false)
+                    4 -> arrayOf(100, false, false, -1)
+                    else -> return@forEach
+                }
+
+                try {
+                    @Suppress("UNCHECKED_CAST")
+                    val tasks = method.invoke(atm, *args) as? List<*> ?: return@forEach
+
+                    tasks.forEach { entry ->
+                        val info = entry as? ActivityManager.RunningTaskInfo
+                            ?: return@forEach
+                        val topPackage = info.topActivity?.packageName
+                        val basePackage = info.baseActivity?.packageName
+
+                        if (
+                            topPackage == TARGET_PACKAGE ||
+                            basePackage == TARGET_PACKAGE
+                        ) {
+                            return info.taskId
+                        }
+                    }
+                } catch (_: Throwable) {
+                }
+            }
+        } catch (_: Throwable) {
+        }
+
+        // Fallback for vendor builds whose IActivityTaskManager proxy does not
+        // expose a callable getTasks signature to reflection.
         val dump = runCommand("/system/bin/dumpsys", "activity", "activities")
         val lines = dump.lineSequence().toList()
 
@@ -487,6 +539,73 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             ?.groupValues
             ?.getOrNull(1)
             ?.toIntOrNull()
+    }
+
+    private fun isTargetRunningOrTaskPresent(): Boolean {
+        if (findTargetTaskId() != null) return true
+
+        return try {
+            runCommand("/system/bin/pidof", TARGET_PACKAGE).trim().isNotEmpty()
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun restartTargetGameBestEffort() {
+        targetPortraitStatus =
+            "Target game: restarting once to apply Android 13 portrait compatibility"
+
+        try {
+            runAm("force-stop", TARGET_PACKAGE)
+        } catch (_: Throwable) {
+            return
+        }
+
+        try {
+            Thread.sleep(250)
+        } catch (_: InterruptedException) {
+        }
+
+        val component = try {
+            runCommand(
+                "/system/bin/cmd",
+                "package",
+                "resolve-activity",
+                "--brief",
+                "-a",
+                "android.intent.action.MAIN",
+                "-c",
+                "android.intent.category.LAUNCHER",
+                TARGET_PACKAGE
+            )
+                .lineSequence()
+                .map { it.trim() }
+                .lastOrNull { it.contains('/') && !it.startsWith("No activity") }
+        } catch (_: Throwable) {
+            null
+        }
+
+        if (component != null) {
+            try {
+                runAm("start", "-n", component)
+                return
+            } catch (_: Throwable) {
+            }
+        }
+
+        try {
+            runCommand(
+                "/system/bin/monkey",
+                "-p",
+                TARGET_PACKAGE,
+                "-c",
+                "android.intent.category.LAUNCHER",
+                "1"
+            )
+        } catch (_: Throwable) {
+            targetPortraitStatus =
+                "Target game: compatibility applied; reopen the game manually"
+        }
     }
 
     private fun enforceAndroid13PortraitTask(taskId: Int): Boolean {
@@ -520,7 +639,12 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
         val binderError = try {
             val atm = getActivityTaskManagerService()
-            invokeActivityTaskManager(atm, "setTaskResizeable", taskId, 2)
+            invokeActivityTaskManager(
+                atm,
+                "setTaskResizeable",
+                taskId,
+                RESIZE_MODE_FORCE_RESIZABLE_PORTRAIT_ONLY
+            )
             invokeActivityTaskManager(
                 atm,
                 "setTaskWindowingMode",
@@ -566,7 +690,12 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         size: Pair<Int, Int>
     ): String? {
         return try {
-            runAm("task", "resizeable", taskId.toString(), "2")
+            runAm(
+                "task",
+                "resizeable",
+                taskId.toString(),
+                RESIZE_MODE_FORCE_RESIZABLE_PORTRAIT_ONLY.toString()
+            )
             runAm(
                 "task",
                 "resize",
