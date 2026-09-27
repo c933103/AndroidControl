@@ -471,6 +471,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         portraitWatcherRunning = true
         val thread = Thread({
             var activeTaskId: Int? = null
+            var firstSeenAt = 0L
             var configured = false
 
             while (portraitWatcherRunning) {
@@ -478,19 +479,42 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                     val taskId = findTargetTaskId()
                     if (taskId == null) {
                         activeTaskId = null
+                        firstSeenAt = 0L
                         configured = false
                         targetPortraitStatus =
-                            "Target game: waiting for $TARGET_PACKAGE to become foreground"
+                            "Target game: waiting for " + TARGET_PACKAGE +
+                                " to become foreground"
                     } else {
                         if (activeTaskId != taskId) {
                             activeTaskId = taskId
+                            firstSeenAt = System.currentTimeMillis()
                             configured = false
                         }
 
-                        if (!configured) {
-                            synchronized(portraitOperationLock) {
-                                if (portraitWatcherRunning) {
-                                    configured = enforceAndroid13PortraitTask(taskId)
+                        val geometry = getTargetActivityGeometry(taskId)
+                        if (geometry?.isPortrait == true) {
+                            configured = true
+                            targetPortraitStatus =
+                                "Target game: portrait activity active; " +
+                                    geometry.describe() + "; " +
+                                    describeTargetTask(taskId)
+                        } else if (!configured) {
+                            val graceMs =
+                                if (android13OrientationOverrideAccepted) 2000L else 0L
+                            val elapsed = System.currentTimeMillis() - firstSeenAt
+
+                            if (elapsed < graceMs) {
+                                targetPortraitStatus =
+                                    "Target game: orientation override accepted; " +
+                                        "waiting for activity recreation; " +
+                                        (geometry?.describe()
+                                            ?: "activity geometry unavailable")
+                            } else {
+                                synchronized(portraitOperationLock) {
+                                    if (portraitWatcherRunning) {
+                                        configured =
+                                            enforceAndroid13PortraitTask(taskId)
+                                    }
                                 }
                             }
                         }
