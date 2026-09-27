@@ -27,6 +27,19 @@ object TargetPortraitDisplayClient {
     )
 
     private val pending = mutableListOf<PendingAction>()
+    private val bindTimeout = Runnable { failPending() }
+
+    private fun failPending() {
+        val actions: List<PendingAction>
+        synchronized(this) {
+            remote = null
+            binding = false
+            actions = pending.toList()
+            pending.clear()
+        }
+        mainHandler.removeCallbacks(bindTimeout)
+        actions.forEach { it.fail() }
+    }
 
     private val userServiceArgs =
         Shizuku.UserServiceArgs(
@@ -46,6 +59,7 @@ object TargetPortraitDisplayClient {
                     null
                 }
 
+            mainHandler.removeCallbacks(bindTimeout)
             val actions: List<PendingAction>
             synchronized(this@TargetPortraitDisplayClient) {
                 binding = false
@@ -62,11 +76,7 @@ object TargetPortraitDisplayClient {
         }
 
         override fun onServiceDisconnected(name: ComponentName) {
-            synchronized(this@TargetPortraitDisplayClient) {
-                remote = null
-                binding = false
-                pending.clear()
-            }
+            failPending()
         }
     }
 
@@ -92,16 +102,11 @@ object TargetPortraitDisplayClient {
             binding = true
         }
 
+        mainHandler.postDelayed(bindTimeout, 10000)
         try {
             Shizuku.bindUserService(userServiceArgs, connection)
         } catch (_: Throwable) {
-            val failed: List<PendingAction>
-            synchronized(this) {
-                binding = false
-                failed = pending.toList()
-                pending.clear()
-            }
-            failed.forEach { it.fail() }
+            failPending()
         }
     }
 
@@ -156,22 +161,24 @@ object TargetPortraitDisplayClient {
     fun stop(
         displayId: Int,
         relaunchOnDefaultDisplay: Boolean,
-        callback: (() -> Unit)? = null
+        callback: ((String?) -> Unit)? = null
     ) {
         withService({ service ->
             executor.execute {
+                var failure: String? = null
                 try {
                     service.stopTargetPortraitDisplay(
                         displayId,
                         relaunchOnDefaultDisplay
                     )
-                } catch (_: Throwable) {
+                } catch (t: Throwable) {
+                    failure = t.message ?: t.javaClass.simpleName
                 } finally {
-                    mainHandler.post { callback?.invoke() }
+                    mainHandler.post { callback?.invoke(failure) }
                 }
             }
         }, {
-            mainHandler.post { callback?.invoke() }
+            mainHandler.post { callback?.invoke("Shizuku unavailable; restoration will retry next launch") }
         })
     }
 }
