@@ -710,8 +710,18 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
     private fun enforceAndroid13PortraitTask(taskId: Int): Boolean {
         val size = getPortraitDisplayBounds()
+
+        val before = getTargetActivityGeometry(taskId)
+        if (before?.isPortrait == true) {
+            targetPortraitStatus =
+                "Target game: portrait activity already active; " +
+                    before.describe() + "; " + describeTargetTask(taskId)
+            return true
+        }
+
         targetPortraitStatus =
-            "Target game: applying portrait task bounds to task $taskId"
+            "Target game: activity is still landscape; applying Android 13 fallback; " +
+                (before?.describe() ?: "activity geometry unavailable")
 
         // Record before the first resize/windowing mutation. Even if every attempt
         // fails afterward, Restore normal rotation must know this task may have had
@@ -721,11 +731,13 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         val directBinderError =
             tryResizeTargetTaskWithBinder(taskId, size, forceFreeform = false)
 
-        if (isTaskPortrait(taskId)) {
-            rememberFallbackTask(taskId)
+        waitForActivityConfigurationUpdate()
+        if (isTargetActivityPortrait(taskId)) {
+            val geometry = getTargetActivityGeometry(taskId)
             targetPortraitStatus =
-                "Target game: portrait task active (${size.first}×${size.second}); " +
-                    describeTargetTask(taskId)
+                "Target game: portrait activity active after resize; " +
+                    (geometry?.describe() ?: "activity geometry unavailable") +
+                    "; " + describeTargetTask(taskId)
             return true
         }
 
@@ -739,21 +751,25 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         val freeformBinderError =
             tryResizeTargetTaskWithBinder(taskId, size, forceFreeform = true)
 
-        if (isTaskPortrait(taskId)) {
-            rememberFallbackTask(taskId)
+        waitForActivityConfigurationUpdate()
+        if (isTargetActivityPortrait(taskId)) {
+            val geometry = getTargetActivityGeometry(taskId)
             targetPortraitStatus =
-                "Target game: portrait task active (${size.first}×${size.second}); " +
-                    describeTargetTask(taskId)
+                "Target game: portrait activity active in freeform; " +
+                    (geometry?.describe() ?: "activity geometry unavailable") +
+                    "; " + describeTargetTask(taskId)
             return true
         }
 
         val shellError = tryResizeTargetTaskWithShell(taskId, size)
 
-        if (isTaskPortrait(taskId)) {
-            rememberFallbackTask(taskId)
+        waitForActivityConfigurationUpdate()
+        if (isTargetActivityPortrait(taskId)) {
+            val geometry = getTargetActivityGeometry(taskId)
             targetPortraitStatus =
-                "Target game: portrait task active (${size.first}×${size.second}); " +
-                    describeTargetTask(taskId)
+                "Target game: portrait activity active after shell resize; " +
+                    (geometry?.describe() ?: "activity geometry unavailable") +
+                    "; " + describeTargetTask(taskId)
             return true
         }
 
@@ -765,12 +781,18 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             .distinct()
             .joinToString(" | ")
 
-        val geometry = describeTargetTask(taskId)
+        val activityGeometry =
+            getTargetActivityGeometry(taskId)?.describe()
+                ?: "activity geometry unavailable"
+        val taskGeometry = describeTargetTask(taskId)
+
         targetPortraitStatus =
             if (details.isBlank()) {
-                "Target game: system kept task non-portrait; $geometry"
+                "Target game: task changed but activity remained landscape; " +
+                    activityGeometry + "; " + taskGeometry
             } else {
-                "Target game: portrait task failed: $details; $geometry"
+                "Target game: portrait activity failed: " + details + "; " +
+                    activityGeometry + "; " + taskGeometry
             }
 
         return false
