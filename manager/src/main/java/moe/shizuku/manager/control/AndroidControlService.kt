@@ -631,6 +631,11 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         targetPortraitStatus =
             "Target game: applying portrait task bounds to task $taskId"
 
+        // Record before the first resize/windowing mutation. Even if every attempt
+        // fails afterward, Restore normal rotation must know this task may have had
+        // its resize mode or windowing mode changed.
+        rememberFallbackTask(taskId)
+
         val directBinderError =
             tryResizeTargetTaskWithBinder(taskId, size, forceFreeform = false)
 
