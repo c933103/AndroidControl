@@ -5,6 +5,9 @@ import android.content.ServiceConnection
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.Surface
 import moe.shizuku.manager.BuildConfig
 import rikka.shizuku.Shizuku
 import java.util.concurrent.CopyOnWriteArraySet
@@ -171,6 +174,109 @@ object OrientationControlClient {
         }
     }
 
+
+    fun createAndLaunchPortraitVirtualDisplay(
+        surface: Surface,
+        width: Int,
+        height: Int,
+        densityDpi: Int,
+        callback: (Result<Int>) -> Unit
+    ) {
+        val service = remote
+        if (service == null || !service.asBinder().pingBinder()) {
+            mainHandler.post {
+                callback(
+                    Result.failure(
+                        IllegalStateException("Privileged control service is unavailable")
+                    )
+                )
+            }
+            return
+        }
+
+        executor.execute {
+            try {
+                if (!service.isForcePortraitEnabled()) {
+                    service.setForcePortrait(true)
+                }
+
+                val displayId = service.createPortraitVirtualDisplay(
+                    surface,
+                    width,
+                    height,
+                    densityDpi
+                )
+
+                if (
+                    !service.launchTargetOnPortraitVirtualDisplay(
+                        displayId,
+                        width,
+                        height
+                    )
+                ) {
+                    throw IllegalStateException(
+                        "Target game did not launch on portrait virtual display"
+                    )
+                }
+
+                val targetStatus = service.targetPortraitStatus
+                publish(
+                    state.copy(
+                        available = true,
+                        forcedPortrait = true,
+                        targetStatus = targetStatus,
+                        error = null
+                    )
+                )
+
+                mainHandler.post {
+                    callback(Result.success(displayId))
+                }
+            } catch (t: Throwable) {
+                try {
+                    service.releasePortraitVirtualDisplay()
+                } catch (_: Throwable) {
+                }
+
+                mainHandler.post {
+                    callback(Result.failure(t))
+                }
+            }
+        }
+    }
+
+    fun releasePortraitVirtualDisplay() {
+        val service = remote ?: return
+        executor.execute {
+            try {
+                service.releasePortraitVirtualDisplay()
+            } catch (_: Throwable) {
+            }
+        }
+    }
+
+    fun injectPortraitMotionEvent(event: MotionEvent, displayId: Int) {
+        val service = remote ?: return
+        if (!service.asBinder().pingBinder()) return
+
+        val copy = MotionEvent.obtain(event)
+        try {
+            service.injectPortraitMotionEvent(copy, displayId)
+        } catch (_: Throwable) {
+        } finally {
+            copy.recycle()
+        }
+    }
+
+    fun injectPortraitKeyEvent(event: KeyEvent, displayId: Int) {
+        val service = remote ?: return
+        if (!service.asBinder().pingBinder()) return
+
+        try {
+            service.injectPortraitKeyEvent(KeyEvent(event), displayId)
+        } catch (_: Throwable) {
+        }
+    }
 
     private fun publish(newState: State) {
         state = newState
