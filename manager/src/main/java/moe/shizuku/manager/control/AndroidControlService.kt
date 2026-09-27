@@ -586,6 +586,24 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         }
 
         if (component != null) {
+            // Prefer launching directly into freeform on Android 13. In freeform,
+            // the activity's fixed landscape request no longer gets the fullscreen
+            // fixed-orientation letterbox treatment. The watcher then applies the
+            // exact portrait bounds.
+            prepareAndroid13FreeformSupportBestEffort()
+
+            try {
+                runAm(
+                    "start",
+                    "--windowingMode",
+                    WINDOWING_MODE_FREEFORM.toString(),
+                    "-n",
+                    component
+                )
+                return
+            } catch (_: Throwable) {
+            }
+
             try {
                 runAm("start", "-n", component)
                 return
