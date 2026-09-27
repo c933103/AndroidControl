@@ -5,6 +5,8 @@ test_dir=$(mktemp -d)
 trap 'rm -rf "$test_dir"' EXIT
 build_tools="$ANDROID_HOME/build-tools/36.0.0"
 android_jar="$ANDROID_HOME/platforms/android-36/android.jar"
+test "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" = 1
+test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = 33
 mkdir -p "$test_dir/classes" "$test_dir/dex" runtime-results
 
 javac --release 8 -cp "$android_jar" -d "$test_dir/classes" tests/portrait-fixture/RegressionGame.java
@@ -22,7 +24,7 @@ package=moe.shizuku.privileged.api
 runner="$package.test/moe.shizuku.manager.regression.RuntimeRegressionInstrumentation"
 run_phase() {
     adb shell am instrument -w -e phase "$1" "$runner" | tee "runtime-results/$1.txt"
-    rg -q "regression=PASS $1" "runtime-results/$1.txt"
+    grep -q "regression=PASS $1" "runtime-results/$1.txt"
 }
 
 adb install "$RUNNER_TEMP/baseline.apk"
@@ -47,4 +49,4 @@ adb logcat -d -s AndroidRuntime ShizukuServer AndroidControlService > runtime-re
 adb exec-out screencap -p > runtime-results/screen.png
 test "$result" = 0
 adb shell run-as game.qualiarts.hololive.dreams.jp cat files/touches | tee runtime-results/touches.txt
-rg -q touch runtime-results/touches.txt
+grep -q touch runtime-results/touches.txt
