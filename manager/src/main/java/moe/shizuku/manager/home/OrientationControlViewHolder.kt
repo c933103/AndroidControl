@@ -1,10 +1,12 @@
 package moe.shizuku.manager.home
 
+import android.content.Intent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import moe.shizuku.manager.R
 import moe.shizuku.manager.control.OrientationControlClient
+import moe.shizuku.manager.control.TargetPortraitDisplayActivity
 import moe.shizuku.manager.databinding.HomeItemContainerBinding
 import moe.shizuku.manager.databinding.HomeOrientationControlBinding
 import moe.shizuku.manager.model.ServiceStatus
@@ -29,10 +31,13 @@ class OrientationControlViewHolder(
     }
 
     init {
-        binding.button1.setOnClickListener {
-            binding.button1.isEnabled = false
-            binding.text1.setText(R.string.home_orientation_description_working)
-            OrientationControlClient.toggle()
+        binding.button1.setOnClickListener { view ->
+            view.context.startActivity(
+                Intent(
+                    view.context,
+                    TargetPortraitDisplayActivity::class.java
+                )
+            )
         }
     }
 
@@ -55,7 +60,7 @@ class OrientationControlViewHolder(
     private fun render(state: OrientationControlClient.State) {
         if (!data.isRunning) {
             binding.button1.isEnabled = false
-            binding.button1.setText(R.string.home_orientation_force)
+            binding.button1.setText(R.string.home_orientation_open_display)
             binding.text1.text = context.getString(
                 R.string.home_status_service_not_running,
                 context.getString(R.string.app_name)
@@ -67,14 +72,14 @@ class OrientationControlViewHolder(
         if (!state.available) {
             if (state.error != null) {
                 binding.button1.isEnabled = true
-                binding.button1.setText(R.string.home_orientation_retry)
+                binding.button1.setText(R.string.home_orientation_open_display)
                 binding.text1.text = context.getString(
                     R.string.home_orientation_description_error,
                     state.error
                 )
             } else {
                 binding.button1.isEnabled = false
-                binding.button1.setText(R.string.home_orientation_force)
+                binding.button1.setText(R.string.home_orientation_open_display)
                 binding.text1.setText(R.string.home_orientation_description_connecting)
             }
             binding.text2.text =
@@ -82,16 +87,13 @@ class OrientationControlViewHolder(
             return
         }
 
-        val forced = state.forcedPortrait == true
         binding.button1.isEnabled = true
-        binding.button1.setText(
-            if (forced) R.string.home_orientation_restore else R.string.home_orientation_force
-        )
+        binding.button1.setText(R.string.home_orientation_open_display)
         binding.text1.setText(
-            when {
-                state.error != null -> R.string.home_orientation_description_error_short
-                forced -> R.string.home_orientation_description_forced
-                else -> R.string.home_orientation_description_normal
+            if (state.error != null) {
+                R.string.home_orientation_description_error_short
+            } else {
+                R.string.home_orientation_description_normal
             }
         )
 

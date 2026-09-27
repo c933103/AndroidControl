@@ -80,6 +80,10 @@
             </intent-filter>
         </activity>
         <activity
+            android:name=".control.TargetPortraitDisplayActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+        <activity
             android:name=".management.ApplicationManagementActivity"
             android:label="@string/home_app_management_title" />
         <activity
