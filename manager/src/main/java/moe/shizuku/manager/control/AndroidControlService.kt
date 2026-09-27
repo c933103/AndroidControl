@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Rect
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.os.IBinder
 import android.view.Display
 import android.view.InputEvent
 import android.view.KeyEvent
@@ -86,6 +87,9 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
     @Volatile
     private var portraitVirtualDisplayId = Display.INVALID_DISPLAY
+
+    private var portraitClientToken: IBinder? = null
+    private var portraitClientDeathRecipient: IBinder.DeathRecipient? = null
 
     private val portraitVirtualDisplayLock = Any()
 
@@ -261,13 +265,35 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         surface: Surface,
         width: Int,
         height: Int,
-        densityDpi: Int
+        densityDpi: Int,
+        clientToken: IBinder
     ): Int {
         require(surface.isValid) { "Portrait container surface is not valid" }
         require(width > 0 && height > 0) { "Invalid portrait display dimensions" }
 
         synchronized(portraitVirtualDisplayLock) {
             releasePortraitVirtualDisplayLocked()
+
+            val deathRecipient = IBinder.DeathRecipient {
+                Thread({
+                    try {
+                        releasePortraitVirtualDisplay()
+                    } catch (_: Throwable) {
+                    }
+                }, "androidcontrol-portrait-client-death").start()
+            }
+
+            try {
+                clientToken.linkToDeath(deathRecipient, 0)
+            } catch (t: Throwable) {
+                throw IllegalStateException(
+                    "Portrait container client is already gone",
+                    t
+                )
+            }
+
+            portraitClientToken = clientToken
+            portraitClientDeathRecipient = deathRecipient
 
             val context = requireShellPackageContext()
             val displayManager =
@@ -492,6 +518,19 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     }
 
     private fun releasePortraitVirtualDisplayLocked() {
+        val token = portraitClientToken
+        val recipient = portraitClientDeathRecipient
+
+        portraitClientToken = null
+        portraitClientDeathRecipient = null
+
+        if (token != null && recipient != null) {
+            try {
+                token.unlinkToDeath(recipient, 0)
+            } catch (_: Throwable) {
+            }
+        }
+
         try {
             portraitVirtualDisplay?.release()
         } catch (_: Throwable) {
