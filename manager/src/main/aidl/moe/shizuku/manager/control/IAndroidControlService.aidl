@@ -1,5 +1,8 @@
 package moe.shizuku.manager.control;
 
+import android.os.IBinder;
+import android.view.MotionEvent;
+
 interface IAndroidControlService {
     void destroy() = 16777114;
 
@@ -7,4 +10,8 @@ interface IAndroidControlService {
     boolean isForcePortraitEnabled() = 2;
     boolean toggleForcePortrait() = 3;
     String getTargetPortraitStatus() = 4;
+
+    boolean launchTargetOnPortraitDisplay(int displayId, int width, int height, IBinder hostToken) = 5;
+    oneway void injectTargetMotionEvent(int displayId, in MotionEvent event) = 6;
+    void stopTargetPortraitDisplay(int displayId, boolean relaunchOnDefaultDisplay) = 7;
 }

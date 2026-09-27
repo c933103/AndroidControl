@@ -66,17 +66,25 @@
     <string name="adb_files_root_summary">Files accessible to the current Shizuku service identity</string>
 
     <!-- Home - Global orientation control -->
-    <string name="home_orientation_title">Global portrait control</string>
-    <string name="home_orientation_description_normal">Tap to force the display to portrait. Per-app resize and display overrides are applied only to game.qualiarts.hololive.dreams.jp.</string>
-    <string name="home_orientation_description_forced">Portrait is forced system-wide. App orientation requests are being ignored.</string>
+    <string name="home_orientation_title">Hololive Dreams portrait display</string>
+    <string name="home_orientation_description_normal">Run game.qualiarts.hololive.dreams.jp on a separate portrait-shaped logical display. The game remains landscape-only; AndroidControl forces its resizable task to fill a display whose height exceeds its width.</string>
+    <string name="home_orientation_description_forced">The legacy global portrait mode is active.</string>
     <string name="home_orientation_description_connecting">Connecting to the privileged control service…</string>
     <string name="home_orientation_description_working">Applying display orientation…</string>
     <string name="home_orientation_description_error">Portrait control unavailable: %1$s</string>
     <string name="home_orientation_description_error_short">The previous orientation operation failed. Tap to try again.</string>
     <string name="home_orientation_force">Force portrait</string>
+    <string name="home_orientation_open_display">Open portrait display</string>
     <string name="home_orientation_restore">Restore normal rotation</string>
     <string name="home_orientation_retry">Retry</string>
-    <string name="home_orientation_target_waiting">Target game: waiting for game.qualiarts.hololive.dreams.jp to become foreground.</string>
+    <string name="home_orientation_target_waiting">Target game: portrait display inactive.</string>
+    <string name="target_portrait_display_starting">Preparing portrait display…</string>
+    <string name="target_portrait_display_bad_size">Portrait display surface has invalid dimensions.</string>
+    <string name="target_portrait_display_create_failed">Could not create the portrait logical display.</string>
+    <string name="target_portrait_display_launching">Launching target on %1$d×%2$d portrait display (display %3$d)…</string>
+    <string name="target_portrait_display_running">Target is running on the portrait display.</string>
+    <string name="target_portrait_display_launch_failed">Target did not enter portrait display bounds.</string>
+    <string name="target_portrait_display_restoring">Restoring target to the normal display…</string>
 
     <!-- Home - Root -->
     <string name="home_root_title"><![CDATA[Start (for rooted devices)]]></string>
