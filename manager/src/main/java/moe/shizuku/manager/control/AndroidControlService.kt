@@ -368,57 +368,85 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                     startOutput.trim()
             )
 
-        try {
-            runAm("task", "resizeable", id.toString(), "2")
-        } catch (_: Throwable) {
-        }
-
         val errors = mutableListOf<String>()
-        try {
-            val atm = getActivityTaskManagerService()
-
-            try {
-                invokeActivityTaskManager(
-                    atm,
-                    "setTaskWindowingMode",
-                    id,
-                    WINDOWING_MODE_FREEFORM,
-                    true
-                )
-            } catch (t: Throwable) {
-                errors.add("freeform=" + (t.message ?: t.javaClass.simpleName))
-            }
-
-            try {
-                invokeActivityTaskManager(
-                    atm,
-                    "resizeTask",
-                    id,
-                    Rect(0, 0, width, height),
-                    RESIZE_MODE_SYSTEM
-                )
-            } catch (t: Throwable) {
-                errors.add("resize=" + (t.message ?: t.javaClass.simpleName))
-            }
+        val atm = try {
+            getActivityTaskManagerService()
         } catch (t: Throwable) {
             errors.add("task-service=" + (t.message ?: t.javaClass.simpleName))
+            null
         }
 
-        try {
-            Thread.sleep(600)
-        } catch (_: InterruptedException) {
+        if (atm != null) {
+            try {
+                invokeActivityTaskManager(
+                    atm,
+                    "setTaskResizeable",
+                    id,
+                    RESIZE_MODE_FORCE_RESIZABLE_PORTRAIT_ONLY
+                )
+            } catch (t: Throwable) {
+                errors.add("resizeable=" + (t.message ?: t.javaClass.simpleName))
+                try {
+                    runAm("task", "resizeable", id.toString(), "2")
+                } catch (shell: Throwable) {
+                    errors.add("resizeable-shell=" + (shell.message ?: shell.javaClass.simpleName))
+                }
+            }
         }
 
-        val geometry = getTargetActivityGeometry(id)
-        val portraitBounds = geometry != null && geometry.width < geometry.height
+        // The activity may recreate after being moved to the virtual display. Reassert
+        // freeform + portrait task bounds until the ActivityRecord itself reports
+        // width < height. Its requested orientation may remain landscape; that is OK.
+        var geometry: TargetActivityGeometry? = null
+        for (attempt in 0 until 20) {
+            if (atm != null) {
+                try {
+                    invokeActivityTaskManager(
+                        atm,
+                        "setTaskWindowingMode",
+                        id,
+                        WINDOWING_MODE_FREEFORM,
+                        true
+                    )
+                } catch (t: Throwable) {
+                    if (attempt == 0) {
+                        errors.add("freeform=" + (t.message ?: t.javaClass.simpleName))
+                    }
+                }
+
+                try {
+                    invokeActivityTaskManager(
+                        atm,
+                        "resizeTask",
+                        id,
+                        Rect(0, 0, width, height),
+                        RESIZE_MODE_SYSTEM
+                    )
+                } catch (t: Throwable) {
+                    if (attempt == 0) {
+                        errors.add("resize=" + (t.message ?: t.javaClass.simpleName))
+                    }
+                }
+            }
+
+            try {
+                Thread.sleep(250)
+            } catch (_: InterruptedException) {
+            }
+
+            geometry = getTargetActivityGeometry(id)
+            if (geometry?.hasPortraitBounds == true) break
+        }
+
+        val portraitBounds = geometry?.hasPortraitBounds == true
 
         targetPortraitStatus =
             if (portraitBounds) {
-                "Target game: landscape-only app running on portrait display; " +
+                "Target game: app bounds are portrait-shaped; landscape orientation is allowed; " +
                     geometry!!.describe() + "; display=$displayId " +
                     width + "x" + height
             } else {
-                "Target game: portrait display created but app bounds are still landscape; " +
+                "Target game: portrait display exists but Android still reports landscape-shaped app bounds; " +
                     (geometry?.describe() ?: "activity geometry unavailable") +
                     if (errors.isEmpty()) "" else "; " + errors.joinToString(" | ")
             }
@@ -832,10 +860,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                         }
 
                         val geometry = getTargetActivityGeometry(taskId)
-                        if (geometry?.isPortrait == true) {
+                        if (geometry?.hasPortraitBounds == true) {
                             configured = true
                             targetPortraitStatus =
-                                "Target game: portrait activity active; " +
+                                "Target game: portrait-shaped app bounds active; " +
                                     geometry.describe() + "; " +
                                     describeTargetTask(taskId)
                         } else if (!configured) {
@@ -1138,9 +1166,9 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
         if (component != null) {
             if (!preferFreeform) {
-                // Let the Android 13 QPR orientation override recreate the activity
-                // normally first. The watcher verifies the activity's real app bounds
-                // and escalates to freeform only if they remain landscape.
+                // Let the activity recreate normally first. The watcher verifies its
+                // real app bounds and escalates to freeform if width still exceeds height.
+                // A landscape orientation enum by itself is not considered a failure.
                 try {
                     runAm("start", "-n", component)
                     return
@@ -1190,7 +1218,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         val size = getPortraitDisplayBounds()
 
         val before = getTargetActivityGeometry(taskId)
-        if (before?.isPortrait == true) {
+        if (before?.hasPortraitBounds == true) {
             targetPortraitStatus =
                 "Target game: portrait activity already active; " +
                     before.describe() + "; " + describeTargetTask(taskId)
@@ -1198,7 +1226,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         }
 
         targetPortraitStatus =
-            "Target game: activity is still landscape; applying Android 13 fallback; " +
+            "Target game: app bounds are still landscape-shaped; applying Android 13 fallback; " +
                 (before?.describe() ?: "activity geometry unavailable")
 
         // Record before the first resize/windowing mutation. Even if every attempt
@@ -1210,10 +1238,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             tryResizeTargetTaskWithBinder(taskId, size, forceFreeform = false)
 
         waitForActivityConfigurationUpdate()
-        if (isTargetActivityPortrait(taskId)) {
+        if (hasTargetPortraitBounds(taskId)) {
             val geometry = getTargetActivityGeometry(taskId)
             targetPortraitStatus =
-                "Target game: portrait activity active after resize; " +
+                "Target game: portrait-shaped app bounds active after resize; " +
                     (geometry?.describe() ?: "activity geometry unavailable") +
                     "; " + describeTargetTask(taskId)
             return true
@@ -1230,10 +1258,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             tryResizeTargetTaskWithBinder(taskId, size, forceFreeform = true)
 
         waitForActivityConfigurationUpdate()
-        if (isTargetActivityPortrait(taskId)) {
+        if (hasTargetPortraitBounds(taskId)) {
             val geometry = getTargetActivityGeometry(taskId)
             targetPortraitStatus =
-                "Target game: portrait activity active in freeform; " +
+                "Target game: portrait-shaped app bounds active in freeform; " +
                     (geometry?.describe() ?: "activity geometry unavailable") +
                     "; " + describeTargetTask(taskId)
             return true
@@ -1242,10 +1270,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         val shellError = tryResizeTargetTaskWithShell(taskId, size)
 
         waitForActivityConfigurationUpdate()
-        if (isTargetActivityPortrait(taskId)) {
+        if (hasTargetPortraitBounds(taskId)) {
             val geometry = getTargetActivityGeometry(taskId)
             targetPortraitStatus =
-                "Target game: portrait activity active after shell resize; " +
+                "Target game: portrait-shaped app bounds active after shell resize; " +
                     (geometry?.describe() ?: "activity geometry unavailable") +
                     "; " + describeTargetTask(taskId)
             return true
@@ -1269,7 +1297,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 "Target game: task changed but activity remained landscape; " +
                     activityGeometry + "; " + taskGeometry
             } else {
-                "Target game: portrait activity failed: " + details + "; " +
+                "Target game: portrait-shaped app bounds failed: " + details + "; " +
                     activityGeometry + "; " + taskGeometry
             }
 
@@ -1349,13 +1377,14 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         val height: Int,
         val orientation: String?
     ) {
-        val isPortrait: Boolean
-            get() = width < height && orientation != "land"
+        val hasPortraitBounds: Boolean
+            get() = width < height
 
         fun describe(): String {
             val orientationText = orientation ?: "orientation?"
-            return "activity=" + orientationText +
-                " appBounds=" + width + "×" + height
+            return "orientation=" + orientationText +
+                " appBounds=" + width + "×" + height +
+                if (hasPortraitBounds) " (portrait-shaped bounds)" else " (landscape-shaped bounds)"
         }
     }
 
@@ -1366,8 +1395,8 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         }
     }
 
-    private fun isTargetActivityPortrait(taskId: Int): Boolean {
-        return getTargetActivityGeometry(taskId)?.isPortrait == true
+    private fun hasTargetPortraitBounds(taskId: Int): Boolean {
+        return getTargetActivityGeometry(taskId)?.hasPortraitBounds == true
     }
 
     private fun getTargetActivityGeometry(taskId: Int): TargetActivityGeometry? {
