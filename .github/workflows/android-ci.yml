@@ -33,6 +33,9 @@ jobs:
       - name: Accept Android SDK licenses
         run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
 
+      - name: Check portrait activity verification
+        run: bash tests/run-portrait-checks.sh
+
       - name: Build debug APK
         run: ./gradlew :manager:assembleDebug
 
