@@ -1,0 +1,11 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="game.qualiarts.hololive.dreams.jp">
+    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="33" />
+    <application android:debuggable="true" android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen" android:label="Portrait regression fixture">
+        <activity android:name=".RegressionGame" android:exported="true" android:screenOrientation="landscape" android:resizeableActivity="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
