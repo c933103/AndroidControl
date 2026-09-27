@@ -1,5 +1,6 @@
 package moe.shizuku.manager.control
 
+import android.app.ActivityManager
 import android.content.Context
 import android.graphics.Rect
 import androidx.annotation.Keep
@@ -82,6 +83,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         const val WINDOWING_MODE_FULLSCREEN = 1
         const val WINDOWING_MODE_FREEFORM = 5
         const val RESIZE_MODE_SYSTEM = 0
+        const val RESIZE_MODE_FORCE_RESIZABLE_PORTRAIT_ONLY = 6
     }
 
     override fun destroy() {
@@ -98,6 +100,11 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         if (enabled) {
             targetPortraitStatus =
                 "Target game: waiting for $TARGET_PACKAGE to become foreground"
+
+            val sdk = getSdkInt()
+            val targetWasRunning =
+                sdk == 33 && isTargetRunningOrTaskPresent()
+
             val portraitRotation = getPortraitRotation()
 
             // Apply the actual display-orientation policy first. The old implementation
@@ -139,7 +146,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             } catch (_: Throwable) {
             }
 
-            if (getSdkInt() == 33) {
+            if (sdk == 33) {
+                if (targetWasRunning) {
+                    restartTargetGameBestEffort()
+                }
                 startPortraitAppWatcher()
             }
 
@@ -466,6 +476,48 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     }
 
     private fun findTargetTaskId(): Int? {
+        // Prefer the binder task list. This avoids depending on OEM-specific dumpsys
+        // formatting, which was a likely reason the Android 13 fallback never ran.
+        try {
+            val atm = getActivityTaskManagerService()
+            val methods = atm.javaClass.methods
+                .filter { it.name == "getTasks" }
+                .sortedBy { it.parameterTypes.size }
+
+            methods.forEach { method ->
+                val args: Array<Any?> = when (method.parameterTypes.size) {
+                    1 -> arrayOf(100)
+                    2 -> arrayOf(100, false)
+                    3 -> arrayOf(100, false, false)
+                    4 -> arrayOf(100, false, false, -1)
+                    else -> return@forEach
+                }
+
+                try {
+                    @Suppress("UNCHECKED_CAST")
+                    val tasks = method.invoke(atm, *args) as? List<*> ?: return@forEach
+
+                    tasks.forEach { entry ->
+                        val info = entry as? ActivityManager.RunningTaskInfo
+                            ?: return@forEach
+                        val topPackage = info.topActivity?.packageName
+                        val basePackage = info.baseActivity?.packageName
+
+                        if (
+                            topPackage == TARGET_PACKAGE ||
+                            basePackage == TARGET_PACKAGE
+                        ) {
+                            return info.taskId
+                        }
+                    }
+                } catch (_: Throwable) {
+                }
+            }
+        } catch (_: Throwable) {
+        }
+
+        // Fallback for vendor builds whose IActivityTaskManager proxy does not
+        // expose a callable getTasks signature to reflection.
         val dump = runCommand("/system/bin/dumpsys", "activity", "activities")
         val lines = dump.lineSequence().toList()
 
@@ -489,16 +541,109 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             ?.toIntOrNull()
     }
 
+    private fun isTargetRunningOrTaskPresent(): Boolean {
+        if (findTargetTaskId() != null) return true
+
+        return try {
+            runCommand("/system/bin/pidof", TARGET_PACKAGE).trim().isNotEmpty()
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun restartTargetGameBestEffort() {
+        targetPortraitStatus =
+            "Target game: restarting once to apply Android 13 portrait compatibility"
+
+        try {
+            runAm("force-stop", TARGET_PACKAGE)
+        } catch (_: Throwable) {
+            return
+        }
+
+        try {
+            Thread.sleep(250)
+        } catch (_: InterruptedException) {
+        }
+
+        val component = try {
+            runCommand(
+                "/system/bin/cmd",
+                "package",
+                "resolve-activity",
+                "--brief",
+                "-a",
+                "android.intent.action.MAIN",
+                "-c",
+                "android.intent.category.LAUNCHER",
+                TARGET_PACKAGE
+            )
+                .lineSequence()
+                .map { it.trim() }
+                .lastOrNull { it.contains('/') && !it.startsWith("No activity") }
+        } catch (_: Throwable) {
+            null
+        }
+
+        if (component != null) {
+            // Prefer launching directly into freeform on Android 13. In freeform,
+            // the activity's fixed landscape request no longer gets the fullscreen
+            // fixed-orientation letterbox treatment. The watcher then applies the
+            // exact portrait bounds.
+            prepareAndroid13FreeformSupportBestEffort()
+
+            try {
+                runAm(
+                    "start",
+                    "--windowingMode",
+                    WINDOWING_MODE_FREEFORM.toString(),
+                    "-n",
+                    component
+                )
+                return
+            } catch (_: Throwable) {
+            }
+
+            try {
+                runAm("start", "-n", component)
+                return
+            } catch (_: Throwable) {
+            }
+        }
+
+        try {
+            runCommand(
+                "/system/bin/monkey",
+                "-p",
+                TARGET_PACKAGE,
+                "-c",
+                "android.intent.category.LAUNCHER",
+                "1"
+            )
+        } catch (_: Throwable) {
+            targetPortraitStatus =
+                "Target game: compatibility applied; reopen the game manually"
+        }
+    }
+
     private fun enforceAndroid13PortraitTask(taskId: Int): Boolean {
         val size = getPortraitDisplayBounds()
         targetPortraitStatus =
             "Target game: applying portrait task bounds to task $taskId"
 
-        val firstError = tryResizeTargetTaskWithShell(taskId, size)
+        // Record before the first resize/windowing mutation. Even if every attempt
+        // fails afterward, Restore normal rotation must know this task may have had
+        // its resize mode or windowing mode changed.
+        rememberFallbackTask(taskId)
+
+        val directBinderError =
+            tryResizeTargetTaskWithBinder(taskId, size, forceFreeform = false)
+
         if (isTaskPortrait(taskId)) {
             rememberFallbackTask(taskId)
             targetPortraitStatus =
-                "Target game: portrait task active (${size.first}×${size.second})"
+                "Target game: portrait task active (${size.first}×${size.second}); " +
+                    describeTargetTask(taskId)
             return true
         }
 
@@ -509,56 +654,91 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         } catch (_: InterruptedException) {
         }
 
-        val secondError = tryResizeTargetTaskWithShell(taskId, size)
+        val freeformBinderError =
+            tryResizeTargetTaskWithBinder(taskId, size, forceFreeform = true)
+
         if (isTaskPortrait(taskId)) {
             rememberFallbackTask(taskId)
             targetPortraitStatus =
                 "Target game: portrait task active (${size.first}×${size.second}); " +
-                    "temporary freeform support enabled"
+                    describeTargetTask(taskId)
             return true
         }
 
-        val binderError = try {
+        val shellError = tryResizeTargetTaskWithShell(taskId, size)
+
+        if (isTaskPortrait(taskId)) {
+            rememberFallbackTask(taskId)
+            targetPortraitStatus =
+                "Target game: portrait task active (${size.first}×${size.second}); " +
+                    describeTargetTask(taskId)
+            return true
+        }
+
+        val details = listOfNotNull(
+            directBinderError,
+            freeformBinderError,
+            shellError
+        )
+            .distinct()
+            .joinToString(" | ")
+
+        val geometry = describeTargetTask(taskId)
+        targetPortraitStatus =
+            if (details.isBlank()) {
+                "Target game: system kept task non-portrait; $geometry"
+            } else {
+                "Target game: portrait task failed: $details; $geometry"
+            }
+
+        return false
+    }
+
+    private fun tryResizeTargetTaskWithBinder(
+        taskId: Int,
+        size: Pair<Int, Int>,
+        forceFreeform: Boolean
+    ): String? {
+        return try {
             val atm = getActivityTaskManagerService()
-            invokeActivityTaskManager(atm, "setTaskResizeable", taskId, 2)
+
             invokeActivityTaskManager(
                 atm,
-                "setTaskWindowingMode",
+                "setTaskResizeable",
                 taskId,
-                WINDOWING_MODE_FREEFORM,
-                true
+                RESIZE_MODE_FORCE_RESIZABLE_PORTRAIT_ONLY
             )
-            invokeActivityTaskManager(
+
+            if (forceFreeform) {
+                val result = invokeActivityTaskManager(
+                    atm,
+                    "setTaskWindowingMode",
+                    taskId,
+                    WINDOWING_MODE_FREEFORM,
+                    true
+                )
+                if (result is Boolean && !result) {
+                    throw IllegalStateException(
+                        "setTaskWindowingMode(FREEFORM) returned false"
+                    )
+                }
+            }
+
+            val result = invokeActivityTaskManager(
                 atm,
                 "resizeTask",
                 taskId,
                 Rect(0, 0, size.first, size.second),
                 RESIZE_MODE_SYSTEM
             )
+            if (result is Boolean && !result) {
+                throw IllegalStateException("resizeTask returned false")
+            }
+
             null
         } catch (t: Throwable) {
             t.message ?: t.javaClass.simpleName
         }
-
-        if (isTaskPortrait(taskId)) {
-            rememberFallbackTask(taskId)
-            targetPortraitStatus =
-                "Target game: portrait task active (${size.first}×${size.second})"
-            return true
-        }
-
-        val details = listOfNotNull(firstError, secondError, binderError)
-            .distinct()
-            .joinToString(" | ")
-
-        targetPortraitStatus =
-            if (details.isBlank()) {
-                "Target game: system kept the task non-portrait after all resize attempts"
-            } else {
-                "Target game: portrait task failed: $details"
-            }
-
-        return false
     }
 
     private fun tryResizeTargetTaskWithShell(
@@ -579,6 +759,42 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             null
         } catch (t: Throwable) {
             t.message ?: t.javaClass.simpleName
+        }
+    }
+
+    private fun describeTargetTask(taskId: Int): String {
+        try {
+            val atm = getActivityTaskManagerService()
+            val bounds = invokeActivityTaskManager(
+                atm,
+                "getTaskBounds",
+                taskId
+            ) as? Rect
+
+            if (bounds != null && !bounds.isEmpty) {
+                return "task=$taskId bounds=${bounds.width()}×${bounds.height()}"
+            }
+        } catch (_: Throwable) {
+        }
+
+        val dump = try {
+            runCommand("/system/bin/dumpsys", "activity", "activities")
+        } catch (_: Throwable) {
+            return "task=$taskId geometry unavailable"
+        }
+
+        val taskLine = dump.lineSequence().firstOrNull { line ->
+            (
+                line.contains("#$taskId") ||
+                    line.contains("taskId=$taskId")
+                ) &&
+                (line.contains("bounds=") || line.contains("windowingMode="))
+        }
+
+        return if (taskLine != null) {
+            "task=$taskId " + taskLine.trim().take(220)
+        } else {
+            "task=$taskId geometry unavailable"
         }
     }
 
