@@ -238,17 +238,6 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             WmApi.UNSUPPORTED -> false
         }
 
-        if (!forced && hasTargetPortraitState()) {
-            stopPortraitAppWatcher()
-            restoreAndroid13FallbackTasksBestEffort()
-            restoreAndroid13SupportSettingsBestEffort()
-            try {
-                restoreTargetPortraitCompat()
-            } catch (_: Throwable) {
-            }
-            targetPortraitStatus = "Target game: overrides inactive"
-        }
-
         return forced
     }
 
@@ -478,6 +467,19 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     override fun releasePortraitVirtualDisplay() {
         synchronized(portraitVirtualDisplayLock) {
             releasePortraitVirtualDisplayLocked()
+        }
+
+        stopPortraitAppWatcher()
+        restoreAndroid13FallbackTasksBestEffort()
+        restoreAndroid13SupportSettingsBestEffort()
+
+        try {
+            restoreTargetPortraitCompat()
+            targetPortraitStatus = "Target game: overrides inactive"
+        } catch (t: Throwable) {
+            targetPortraitStatus =
+                "Target game restore error: " +
+                    (t.message ?: t.javaClass.simpleName)
         }
     }
 
