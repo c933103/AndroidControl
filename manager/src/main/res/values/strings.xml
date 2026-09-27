@@ -67,8 +67,8 @@
 
     <!-- Home - Global orientation control -->
     <string name="home_orientation_title">Hololive Dreams portrait</string>
-    <string name="home_orientation_description_normal">Open game.qualiarts.hololive.dreams.jp on a portrait virtual display so the game receives portrait display geometry instead of the phone's landscape-shaped activity bounds.</string>
-    <string name="home_orientation_description_forced">Portrait mode is active. The target game can be opened inside AndroidControl's portrait virtual display.</string>
+    <string name="home_orientation_description_normal">Open game.qualiarts.hololive.dreams.jp on a portrait virtual display so the game receives portrait display geometry instead of landscape-shaped physical activity bounds.</string>
+    <string name="home_orientation_description_forced">Portrait mode is active. The target game can be opened inside the AndroidControl portrait virtual display.</string>
     <string name="home_orientation_description_connecting">Connecting to the privileged control service…</string>
     <string name="home_orientation_description_working">Applying display orientation…</string>
     <string name="home_orientation_description_error">Portrait control unavailable: %1$s</string>
