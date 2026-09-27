@@ -13,6 +13,10 @@ public final class PortraitActivityGeometryTest {
         if (!value) throw new AssertionError();
     }
     public static void main(String[] args) {
+        // The exact task ID from the Android 13 failure report must parse too.
+        PortraitActivityGeometry reported = PortraitActivityGeometry.parse(record(58934, config(712, 1662)), PKG, 58934);
+        check(reported != null && reported.width == 712 && reported.height == 1662);
+        check(PortraitActivityGeometry.parse(record(589340, config(712, 1662)), PKG, 58934) == null);
         PortraitActivityGeometry g = PortraitActivityGeometry.parse(record(12, config(712, 1662)), PKG, 12);
         check(g != null && g.width == 712 && g.height == 1662 && "land".equals(g.orientation));
         check(PortraitActivityGeometry.parse(record(123, config(712, 1662)), PKG, 12) == null);

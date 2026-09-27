@@ -30,6 +30,8 @@ On Back, launch failure, host process death or display disappearance, remove the
 
 `bash tests/run-portrait-checks.sh` checks exact task identity, neighbouring activity isolation, stale configuration rejection, invalid dimensions and portrait bounds with a landscape enum. Android CI also compiles the complete APK.
 
+The r1203 device test exposed a parser bug: desktop OpenJDK accepted an unescaped closing brace that Android's ICU regex engine rejected. The literal is now escaped. CI additionally runs the production parser through `app_process` on an Android 13 emulator, first reproducing the exact old pattern failure and then running the fixed parser's regression cases (`tests/run-portrait-android-checks.sh`). Desktop-only checks are insufficient for Android runtime compatibility.
+
 On-device acceptance is still required on the Sony Android 13 device:
 
 1. Start the mode and verify the actual game scene fills the intended portrait container, with correct touch coordinates. Save the status and game log if Unity continues rendering a wide scene.
