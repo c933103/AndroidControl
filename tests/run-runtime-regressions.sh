@@ -23,7 +23,7 @@ keytool -genkeypair -keystore "$test_dir/fixture.jks" -storepass android -keypas
 package=moe.shizuku.privileged.api
 runner="$package.test/moe.shizuku.manager.regression.RuntimeRegressionInstrumentation"
 run_phase() {
-    adb shell am instrument -w -e phase "$1" "$runner" | tee "runtime-results/$1.txt"
+    timeout 90s adb shell am instrument -w -e phase "$1" "$runner" | tee "runtime-results/$1.txt"
     grep -q "regression=PASS $1" "runtime-results/$1.txt"
 }
 
@@ -37,6 +37,8 @@ run_phase reopen || result=1
 adb install -r manager/build/outputs/apk/debug/*.apk
 run_phase upgrade || result=1
 run_phase key-failure || result=1
+run_phase fresh || result=1
+run_phase fresh-reopen || result=1
 
 adb install "$test_dir/aligned.apk"
 apk_path=$(adb shell pm path "$package" | sed 's/^package://' | tr -d '\r')

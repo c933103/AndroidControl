@@ -38,6 +38,10 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
                 }
                 "upgrade" -> checkPairingIdentity()
                 "key-failure" -> checkKeyReadFailure()
+                "fresh" -> saveFreshIdentity()
+                "fresh-reopen" -> check(fingerprint(freshStore()) == testPreferences().getString("freshFingerprint", null)) {
+                    "New pairing identity was not durable before returning to the caller"
+                }
                 "display" -> checkDisplay()
                 else -> error("Unknown regression phase")
             }
@@ -47,8 +51,8 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         }
     }
 
-    private fun fingerprint(): String {
-        val key = AdbKey(PreferenceAdbKeyStore(ShizukuSettings.getPreferences()), "shizuku")
+    private fun fingerprint(store: AdbKeyStore = PreferenceAdbKeyStore(ShizukuSettings.getPreferences())): String {
+        val key = AdbKey(store, "shizuku")
         return MessageDigest.getInstance("SHA-256").digest(key.adbPublicKey)
             .joinToString("") { "%02x".format(it) }
     }
@@ -58,8 +62,28 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
 
     private fun savePairingIdentity() {
         val identity = fingerprint()
+        // The baseline uses asynchronous apply(); establish a durably saved
+        // identity before killing its process to test the APK replacement.
+        check(ShizukuSettings.getPreferences().edit().commit())
         check(testPreferences().edit().putString("publicFingerprint", identity)
             .putString("keyState", keyState()).commit())
+    }
+
+    private fun freshStore() = PreferenceAdbKeyStore(targetContext.createDeviceProtectedStorageContext()
+        .getSharedPreferences("pairing_write_regression", Context.MODE_PRIVATE))
+
+    private fun saveFreshIdentity() {
+        val executor = Executors.newFixedThreadPool(4)
+        val identity: String
+        try {
+            val identities = (1..8).map { executor.submit<String> { fingerprint(freshStore()) } }.map { it.get() }
+            check(identities.toSet().size == 1) { "Concurrent callers created different pairing identities" }
+            identity = identities.first()
+        } finally {
+            executor.shutdownNow()
+        }
+        check(testPreferences().edit().putString("freshFingerprint", identity).commit())
+        // Do not flush the key preferences here: production must save before use.
     }
 
     private fun keyState(): String {
