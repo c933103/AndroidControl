@@ -1,7 +1,16 @@
 package moe.shizuku.manager.control
 
+import android.app.ActivityOptions
 import android.content.Context
+import android.content.Intent
 import android.graphics.Rect
+import android.hardware.display.DisplayManager
+import android.hardware.display.VirtualDisplay
+import android.view.Display
+import android.view.InputEvent
+import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.Surface
 import androidx.annotation.Keep
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.io.BufferedReader
@@ -11,8 +20,12 @@ import java.io.InputStreamReader
 @Keep
 class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() {
 
+    private var serviceContext: Context? = null
+
     @Keep
-    constructor(context: Context) : this()
+    constructor(context: Context) : this() {
+        serviceContext = context.applicationContext
+    }
 
     private enum class WmApi {
         MODERN,
@@ -67,6 +80,14 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     private var targetPortraitStatus =
         "Target game: overrides inactive"
 
+    @Volatile
+    private var portraitVirtualDisplay: VirtualDisplay? = null
+
+    @Volatile
+    private var portraitVirtualDisplayId = Display.INVALID_DISPLAY
+
+    private val portraitVirtualDisplayLock = Any()
+
     private companion object {
         const val TARGET_PACKAGE = "game.qualiarts.hololive.dreams.jp"
 
@@ -82,6 +103,13 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         const val WINDOWING_MODE_FULLSCREEN = 1
         const val WINDOWING_MODE_FREEFORM = 5
         const val RESIZE_MODE_SYSTEM = 0
+
+        const val VIRTUAL_DISPLAY_FLAG_PUBLIC = 1 shl 0
+        const val VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY = 1 shl 3
+        const val VIRTUAL_DISPLAY_FLAG_SUPPORTS_TOUCH = 1 shl 6
+        const val VIRTUAL_DISPLAY_FLAG_DESTROY_CONTENT_ON_REMOVAL = 1 shl 8
+        const val VIRTUAL_DISPLAY_FLAG_TRUSTED = 1 shl 10
+        const val INPUT_INJECTION_MODE_ASYNC = 0
     }
 
     override fun destroy() {
@@ -234,6 +262,312 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         return targetPortraitStatus
     }
 
+    override fun createPortraitVirtualDisplay(
+        surface: Surface,
+        width: Int,
+        height: Int,
+        densityDpi: Int
+    ): Int {
+        require(surface.isValid) { "Portrait container surface is not valid" }
+        require(width > 0 && height > 0) { "Invalid portrait display dimensions" }
+
+        synchronized(portraitVirtualDisplayLock) {
+            releasePortraitVirtualDisplayLocked()
+
+            val context = requireServiceContext()
+            val displayManager =
+                context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
+                    ?: throw IllegalStateException("DisplayManager is unavailable")
+
+            val portraitWidth = minOf(width, height)
+            val portraitHeight = maxOf(width, height)
+            val density = densityDpi.coerceAtLeast(120)
+
+            val baseFlags =
+                VIRTUAL_DISPLAY_FLAG_PUBLIC or
+                    VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY or
+                    VIRTUAL_DISPLAY_FLAG_SUPPORTS_TOUCH or
+                    VIRTUAL_DISPLAY_FLAG_DESTROY_CONTENT_ON_REMOVAL
+
+            val virtualDisplay =
+                try {
+                    displayManager.createVirtualDisplay(
+                        "AndroidControl-TargetApp-Portrait",
+                        portraitWidth,
+                        portraitHeight,
+                        density,
+                        surface,
+                        baseFlags or VIRTUAL_DISPLAY_FLAG_TRUSTED
+                    )
+                } catch (_: SecurityException) {
+                    // AOSP shell normally holds ADD_TRUSTED_DISPLAY. Keep a fallback
+                    // for vendor builds that remove it; shell still has privileged
+                    // activity-launch and input-injection permissions on normal AOSP.
+                    displayManager.createVirtualDisplay(
+                        "AndroidControl-TargetApp-Portrait",
+                        portraitWidth,
+                        portraitHeight,
+                        density,
+                        surface,
+                        baseFlags
+                    )
+                } ?: throw IllegalStateException("Could not create portrait virtual display")
+
+            portraitVirtualDisplay = virtualDisplay
+            portraitVirtualDisplayId = virtualDisplay.display.displayId
+
+            configurePortraitVirtualDisplay(portraitVirtualDisplayId)
+
+            targetPortraitStatus =
+                "Target game: portrait virtual display ready " +
+                    "(${portraitWidth}×${portraitHeight}, display " +
+                    portraitVirtualDisplayId + ")"
+
+            return portraitVirtualDisplayId
+        }
+    }
+
+    override fun launchTargetOnPortraitVirtualDisplay(
+        displayId: Int,
+        width: Int,
+        height: Int
+    ): Boolean {
+        synchronized(portraitVirtualDisplayLock) {
+            if (
+                portraitVirtualDisplay == null ||
+                portraitVirtualDisplayId != displayId
+            ) {
+                throw IllegalStateException("Portrait virtual display is not active")
+            }
+        }
+
+        val context = requireServiceContext()
+        val portraitWidth = minOf(width, height)
+        val portraitHeight = maxOf(width, height)
+
+        configurePortraitVirtualDisplay(displayId)
+
+        try {
+            restoreTargetPortraitCompat()
+        } catch (_: Throwable) {
+        }
+        enableTargetPortraitCompat()
+
+        if (getSdkInt() == 33) {
+            prepareAndroid13FreeformSupportBestEffort()
+        }
+
+        // Ensure Android does not reuse an existing landscape task from the default
+        // display. This does not remove application data.
+        try {
+            runAm("force-stop", TARGET_PACKAGE)
+        } catch (_: Throwable) {
+        }
+
+        val launchIntent =
+            context.packageManager.getLaunchIntentForPackage(TARGET_PACKAGE)
+                ?: throw IllegalStateException(
+                    "No launcher activity found for $TARGET_PACKAGE"
+                )
+
+        launchIntent.addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_MULTIPLE_TASK
+        )
+
+        val options = ActivityOptions.makeBasic()
+            .setLaunchDisplayId(displayId)
+            .setLaunchBounds(Rect(0, 0, portraitWidth, portraitHeight))
+
+        try {
+            HiddenApiBypass.addHiddenApiExemptions("Landroid/app/ActivityOptions;")
+            val method = ActivityOptions::class.java.getDeclaredMethod(
+                "setLaunchWindowingMode",
+                Int::class.javaPrimitiveType
+            )
+            method.isAccessible = true
+            method.invoke(options, WINDOWING_MODE_FREEFORM)
+        } catch (_: Throwable) {
+            // The virtual display itself still has portrait geometry if the
+            // vendor build hides/rejects the freeform launch option.
+        }
+
+        context.startActivity(launchIntent, options.toBundle())
+
+        try {
+            Thread.sleep(700)
+        } catch (_: InterruptedException) {
+        }
+
+        val taskId = findTargetTaskId()
+        if (taskId != null) {
+            try {
+                runAm("task", "resizeable", taskId.toString(), "2")
+                runAm(
+                    "task",
+                    "resize",
+                    taskId.toString(),
+                    "0",
+                    "0",
+                    portraitWidth.toString(),
+                    portraitHeight.toString()
+                )
+            } catch (_: Throwable) {
+            }
+
+            try {
+                val atm = getActivityTaskManagerService()
+                invokeActivityTaskManager(atm, "setTaskResizeable", taskId, 2)
+                invokeActivityTaskManager(
+                    atm,
+                    "setTaskWindowingMode",
+                    taskId,
+                    WINDOWING_MODE_FREEFORM,
+                    true
+                )
+                invokeActivityTaskManager(
+                    atm,
+                    "resizeTask",
+                    taskId,
+                    Rect(0, 0, portraitWidth, portraitHeight),
+                    RESIZE_MODE_SYSTEM
+                )
+            } catch (_: Throwable) {
+            }
+        }
+
+        targetPortraitStatus =
+            "Target game: running on portrait virtual display " +
+                "${portraitWidth}×${portraitHeight} (display $displayId)"
+
+        return true
+    }
+
+    override fun releasePortraitVirtualDisplay() {
+        synchronized(portraitVirtualDisplayLock) {
+            releasePortraitVirtualDisplayLocked()
+        }
+    }
+
+    override fun injectPortraitMotionEvent(event: MotionEvent, displayId: Int) {
+        injectPortraitInputEvent(event, displayId)
+    }
+
+    override fun injectPortraitKeyEvent(event: KeyEvent, displayId: Int) {
+        injectPortraitInputEvent(event, displayId)
+    }
+
+    private fun releasePortraitVirtualDisplayLocked() {
+        try {
+            portraitVirtualDisplay?.release()
+        } catch (_: Throwable) {
+        } finally {
+            portraitVirtualDisplay = null
+            portraitVirtualDisplayId = Display.INVALID_DISPLAY
+        }
+    }
+
+    private fun configurePortraitVirtualDisplay(displayId: Int) {
+        try {
+            runWm(
+                "user-rotation",
+                "-d",
+                displayId.toString(),
+                "lock",
+                "0"
+            )
+        } catch (_: Throwable) {
+        }
+
+        try {
+            runWm(
+                "fixed-to-user-rotation",
+                "-d",
+                displayId.toString(),
+                "enabled"
+            )
+        } catch (_: Throwable) {
+        }
+
+        if (supportsIgnoreOrientationRequest) {
+            try {
+                runWm(
+                    "set-ignore-orientation-request",
+                    "-d",
+                    displayId.toString(),
+                    "true"
+                )
+            } catch (_: Throwable) {
+            }
+        }
+    }
+
+    private fun injectPortraitInputEvent(event: InputEvent, displayId: Int) {
+        if (
+            displayId == Display.INVALID_DISPLAY ||
+            displayId != portraitVirtualDisplayId
+        ) {
+            return
+        }
+
+        try {
+            HiddenApiBypass.addHiddenApiExemptions(
+                "Landroid/view/InputEvent;",
+                "Landroid/hardware/input/InputManager;"
+            )
+
+            val setDisplayId = InputEvent::class.java.getDeclaredMethod(
+                "setDisplayId",
+                Int::class.javaPrimitiveType
+            )
+            setDisplayId.isAccessible = true
+            setDisplayId.invoke(event, displayId)
+
+            val context = requireServiceContext()
+            val inputManager = context.getSystemService(Context.INPUT_SERVICE)
+                ?: return
+
+            val inputEventClass = Class.forName("android.view.InputEvent")
+            val injectMethod = inputManager.javaClass.methods.firstOrNull { method ->
+                method.name == "injectInputEvent" &&
+                    method.parameterTypes.size == 2 &&
+                    method.parameterTypes[0].isAssignableFrom(inputEventClass)
+            } ?: Class.forName("android.hardware.input.InputManager")
+                .getDeclaredMethod(
+                    "injectInputEvent",
+                    inputEventClass,
+                    Int::class.javaPrimitiveType
+                )
+
+            injectMethod.isAccessible = true
+            injectMethod.invoke(
+                inputManager,
+                event,
+                INPUT_INJECTION_MODE_ASYNC
+            )
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun requireServiceContext(): Context {
+        serviceContext?.let { return it }
+
+        try {
+            HiddenApiBypass.addHiddenApiExemptions("Landroid/app/ActivityThread;")
+            val activityThread = Class.forName("android.app.ActivityThread")
+            val currentApplication = activityThread
+                .getDeclaredMethod("currentApplication")
+                .invoke(null) as? Context
+            if (currentApplication != null) {
+                serviceContext = currentApplication.applicationContext
+                return serviceContext!!
+            }
+        } catch (_: Throwable) {
+        }
+
+        throw IllegalStateException("AndroidControl service context is unavailable")
+    }
+
     private fun getPortraitRotation(): Int {
         val output = runWm("size")
         val match = Regex("""Physical size:\s*(\d+)x(\d+)""").find(output)
@@ -246,6 +580,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     }
 
     private fun restoreNormalRotation() {
+        releasePortraitVirtualDisplay()
         stopPortraitAppWatcher()
         restoreAndroid13FallbackTasksBestEffort()
         restoreAndroid13SupportSettingsBestEffort()
