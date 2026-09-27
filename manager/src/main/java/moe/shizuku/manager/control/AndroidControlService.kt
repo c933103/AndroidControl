@@ -341,33 +341,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         // original manifest resize policy on the next normal launch.
         portraitDisplayStateFile.writeText(displayId.toString())
         enableTargetDisplayCompat()
-
-        try {
-            runWm(
-                "set-ignore-orientation-request",
-                "-d",
-                displayId.toString(),
-                "true"
-            )
-        } catch (_: Throwable) {
-        }
-
-        try {
-            runWm(
-                "fixed-to-user-rotation",
-                "-d",
-                displayId.toString(),
-                "enabled"
-            )
-        } catch (_: Throwable) {
-        }
-
+        runWm("set-ignore-orientation-request", "-d", displayId.toString(), "true")
+        runWm("fixed-to-user-rotation", "-d", displayId.toString(), "enabled")
         prepareAndroid13FreeformSupportBestEffort()
-
-        try {
-            runAm("force-stop", TARGET_PACKAGE)
-        } catch (_: Throwable) {
-        }
+        runAm("force-stop", TARGET_PACKAGE)
 
         val component = resolveTargetLauncherComponent()
             ?: throw IllegalStateException(
@@ -420,7 +397,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             } catch (t: Throwable) {
                 errors.add("resizeable=" + (t.message ?: t.javaClass.simpleName))
                 try {
-                    runAm("task", "resizeable", id.toString(), "2")
+                    runAm("task", "resizeable", id.toString(), RESIZE_MODE_FORCE_RESIZABLE_PORTRAIT_ONLY.toString())
                 } catch (shell: Throwable) {
                     errors.add("resizeable-shell=" + (shell.message ?: shell.javaClass.simpleName))
                 }

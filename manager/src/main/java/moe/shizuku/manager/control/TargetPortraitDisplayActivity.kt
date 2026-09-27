@@ -221,19 +221,19 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
         statusView.text = getString(R.string.target_portrait_display_restoring)
 
         val id = displayId
+        val retiringDisplay = virtualDisplay
+        virtualDisplay = null
         if (id >= 0) {
             TargetPortraitDisplayClient.stop(
                 id,
                 relaunchOnDefaultDisplay = true
             ) { failure ->
                 if (failure != null) Toast.makeText(this, failure, Toast.LENGTH_LONG).show()
-                virtualDisplay?.release()
-                virtualDisplay = null
+                retiringDisplay?.release()
                 finish()
             }
         } else {
-            virtualDisplay?.release()
-            virtualDisplay = null
+            retiringDisplay?.release()
             finish()
         }
     }
