@@ -80,6 +80,12 @@
             </intent-filter>
         </activity>
         <activity
+            android:name=".control.PortraitGameActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <activity
             android:name=".management.ApplicationManagementActivity"
             android:label="@string/home_app_management_title" />
         <activity
