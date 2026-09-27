@@ -1,8 +1,6 @@
 package moe.shizuku.manager.control
 
-import android.app.ActivityOptions
 import android.content.Context
-import android.content.Intent
 import android.graphics.Rect
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
@@ -21,6 +19,9 @@ import java.io.InputStreamReader
 class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() {
 
     private var serviceContext: Context? = null
+
+    @Volatile
+    private var shellPackageContext: Context? = null
 
     @Keep
     constructor(context: Context) : this() {
@@ -274,7 +275,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         synchronized(portraitVirtualDisplayLock) {
             releasePortraitVirtualDisplayLocked()
 
-            val context = requireServiceContext()
+            val context = requireShellPackageContext()
             val displayManager =
                 context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
                     ?: throw IllegalStateException("DisplayManager is unavailable")
@@ -341,7 +342,6 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             }
         }
 
-        val context = requireServiceContext()
         val portraitWidth = minOf(width, height)
         val portraitHeight = maxOf(width, height)
 
@@ -364,35 +364,50 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         } catch (_: Throwable) {
         }
 
-        val launchIntent =
-            context.packageManager.getLaunchIntentForPackage(TARGET_PACKAGE)
-                ?: throw IllegalStateException(
-                    "No launcher activity found for $TARGET_PACKAGE"
-                )
-
-        launchIntent.addFlags(
-            Intent.FLAG_ACTIVITY_NEW_TASK or
-                Intent.FLAG_ACTIVITY_MULTIPLE_TASK
-        )
-
-        val options = ActivityOptions.makeBasic()
-            .setLaunchDisplayId(displayId)
-            .setLaunchBounds(Rect(0, 0, portraitWidth, portraitHeight))
-
-        try {
-            HiddenApiBypass.addHiddenApiExemptions("Landroid/app/ActivityOptions;")
-            val method = ActivityOptions::class.java.getDeclaredMethod(
-                "setLaunchWindowingMode",
-                Int::class.javaPrimitiveType
+        // Launch from the shell identity rather than Context.startActivity().
+        // UserService runs as UID 2000; keeping the launch under "am" avoids
+        // attributing a shell Binder call to the AndroidControl app package.
+        val launchWithBoundsError = try {
+            runAm(
+                "start",
+                "--display",
+                displayId.toString(),
+                "--windowingMode",
+                WINDOWING_MODE_FREEFORM.toString(),
+                "--bounds",
+                "0,0,${portraitWidth},${portraitHeight}",
+                "-f",
+                "0x18000000",
+                "-a",
+                "android.intent.action.MAIN",
+                "-c",
+                "android.intent.category.LAUNCHER",
+                "-p",
+                TARGET_PACKAGE
             )
-            method.isAccessible = true
-            method.invoke(options, WINDOWING_MODE_FREEFORM)
-        } catch (_: Throwable) {
-            // The virtual display itself still has portrait geometry if the
-            // vendor build hides/rejects the freeform launch option.
+            null
+        } catch (t: Throwable) {
+            t
         }
 
-        context.startActivity(launchIntent, options.toBundle())
+        if (launchWithBoundsError != null) {
+            // Some vendor ActivityManager shells omit the windowing/bounds options.
+            // The essential requirement is still --display: the target then receives
+            // the portrait VirtualDisplay metrics.
+            runAm(
+                "start",
+                "--display",
+                displayId.toString(),
+                "-f",
+                "0x18000000",
+                "-a",
+                "android.intent.action.MAIN",
+                "-c",
+                "android.intent.category.LAUNCHER",
+                "-p",
+                TARGET_PACKAGE
+            )
+        }
 
         try {
             Thread.sleep(700)
@@ -547,6 +562,27 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             )
         } catch (_: Throwable) {
         }
+    }
+
+    private fun requireShellPackageContext(): Context {
+        shellPackageContext?.let { return it }
+
+        val base = requireServiceContext()
+        val shellContext = try {
+            base.createPackageContext(
+                "com.android.shell",
+                Context.CONTEXT_IGNORE_SECURITY
+            )
+        } catch (t: Throwable) {
+            throw IllegalStateException(
+                "Unable to create com.android.shell context for shell UID: " +
+                    (t.message ?: t.javaClass.simpleName),
+                t
+            )
+        }
+
+        shellPackageContext = shellContext
+        return shellContext
     }
 
     private fun requireServiceContext(): Context {
