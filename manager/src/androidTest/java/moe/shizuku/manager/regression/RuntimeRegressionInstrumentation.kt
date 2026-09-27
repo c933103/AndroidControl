@@ -33,6 +33,9 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
             waitForIdleSync()
             when (args.getString("phase")) {
                 "seed" -> savePairingIdentity()
+                "reopen" -> check(fingerprint() == testPreferences().getString("publicFingerprint", null)) {
+                    "Baseline app did not retain its ADB identity before updating; ${keyState()}"
+                }
                 "upgrade" -> checkPairingIdentity()
                 "key-failure" -> checkKeyReadFailure()
                 "display" -> checkDisplay()
@@ -54,7 +57,19 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         .getSharedPreferences("runtime_regression", Context.MODE_PRIVATE)
 
     private fun savePairingIdentity() {
-        check(testPreferences().edit().putString("publicFingerprint", fingerprint()).commit())
+        val identity = fingerprint()
+        check(testPreferences().edit().putString("publicFingerprint", identity)
+            .putString("keyState", keyState()).commit())
+    }
+
+    private fun keyState(): String {
+        val preferences = ShizukuSettings.getPreferences()
+        val encrypted = preferences.getString("adbkey", null)
+        val digest = encrypted?.let {
+            MessageDigest.getInstance("SHA-256").digest(it.toByteArray())
+                .joinToString("") { byte -> "%02x".format(byte) }
+        }
+        return "preferences=${preferences.javaClass.simpleName}; saved=${preferences.contains("adbkey")}; encryptedDigest=$digest"
     }
 
     private fun checkPairingIdentity() {
@@ -63,7 +78,9 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         val executor = Executors.newFixedThreadPool(4)
         try {
             val identities = (1..8).map { executor.submit<String> { fingerprint() } }
-            identities.forEach { check(it.get() == expected) { "ADB identity changed across APK update" } }
+            identities.forEach { check(it.get() == expected) {
+                "ADB identity changed across APK update; before=${testPreferences().getString("keyState", null)}; after=${keyState()}"
+            } }
         } finally {
             executor.shutdownNow()
         }
