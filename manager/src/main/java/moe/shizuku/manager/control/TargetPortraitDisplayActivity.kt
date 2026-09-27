@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.Matrix
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.os.Binder
 import android.os.Bundle
 import android.view.Gravity
 import android.view.MotionEvent
@@ -29,6 +30,7 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
     private var virtualHeight: Int = 0
     private var stopping = false
     private var launched = false
+    private val hostToken = Binder()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -98,7 +100,8 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
             getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
 
         val flags =
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY or
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC or
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY or
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION
 
         virtualDisplay = displayManager.createVirtualDisplay(
@@ -128,7 +131,8 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
         TargetPortraitDisplayClient.start(
             displayId,
             virtualWidth,
-            virtualHeight
+            virtualHeight,
+            hostToken
         ) { ok, status ->
             launched = ok
             statusView.text =
