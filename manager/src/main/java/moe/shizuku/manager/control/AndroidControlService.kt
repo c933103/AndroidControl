@@ -77,6 +77,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         const val ALWAYS_SANDBOX_DISPLAY_APIS = "185004937"
         const val OVERRIDE_SANDBOX_VIEW_BOUNDS_APIS = "237531167"
         const val OVERRIDE_UNDEFINED_ORIENTATION_TO_PORTRAIT = "265452344"
+        const val OVERRIDE_ORIENTATION_ONLY_FOR_CAMERA = "265456536"
         const val OVERRIDE_ANY_ORIENTATION = "265464455"
         const val OVERRIDE_ANY_ORIENTATION_TO_USER = "310816437"
 
@@ -141,9 +142,23 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 restoreTargetPortraitCompat()
             } catch (_: Throwable) {
             }
-            try {
+            val targetCompat = try {
                 enableTargetPortraitCompat()
             } catch (_: Throwable) {
+                emptySet()
+            }
+
+            if (
+                targetCompat.contains(OVERRIDE_ANY_ORIENTATION) &&
+                targetCompat.contains(OVERRIDE_UNDEFINED_ORIENTATION_TO_PORTRAIT)
+            ) {
+                targetPortraitStatus =
+                    "Target game: Android orientation override accepted; " +
+                        "forcing requested orientation to portrait"
+            } else if (sdk == 33) {
+                targetPortraitStatus =
+                    "Target game: Android 13 orientation override unavailable; " +
+                        "using task/freeform fallback"
             }
 
             if (sdk == 33) {
@@ -301,9 +316,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         failure?.let { throw it }
     }
 
-    private fun enableTargetPortraitCompat() {
+    private fun enableTargetPortraitCompat(): Set<String> {
         val sdk = getSdkInt()
         targetCompatStateFile.delete()
+        val applied = linkedSetOf<String>()
 
         fun applyCompat(mode: String, changeId: String) {
             // Record intent before applying. If the process dies after the compat
@@ -311,6 +327,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             appendTargetCompatChange(changeId)
             try {
                 runAm("compat", mode, "--no-kill", changeId, TARGET_PACKAGE)
+                applied.add(changeId)
             } catch (_: Throwable) {
                 // This call definitely did not complete successfully, so remove the
                 // provisional ledger entry. A process death after a successful call
@@ -328,7 +345,14 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         applyCompat("enable", OVERRIDE_SANDBOX_VIEW_BOUNDS_APIS)
         applyCompat("enable", FORCE_RESIZE_APP)
 
-        if (sdk >= 34) {
+        // These orientation overrides landed during the Android 13 QPR cycle.
+        // Do not gate them behind API 34: OEM Android 13 builds may already expose
+        // them through PlatformCompat. Unsupported builds simply reject the command
+        // and applyCompat removes the provisional ledger entry.
+        if (sdk >= 33) {
+            // If an OEM enabled the camera-only gate, disable it so the portrait
+            // treatment applies to the game at all times, not only while using camera.
+            applyCompat("disable", OVERRIDE_ORIENTATION_ONLY_FOR_CAMERA)
             applyCompat("enable", OVERRIDE_ANY_ORIENTATION)
             applyCompat("enable", OVERRIDE_UNDEFINED_ORIENTATION_TO_PORTRAIT)
         }
@@ -336,6 +360,8 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         if (sdk >= 35) {
             applyCompat("enable", OVERRIDE_ANY_ORIENTATION_TO_USER)
         }
+
+        return applied
     }
 
     @Synchronized
