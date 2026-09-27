@@ -54,6 +54,20 @@ jobs:
       - name: Build debug APK
         run: ./gradlew :manager:assembleDebug
 
+      - name: Verify permanent signing identity
+        shell: bash
+        run: |
+          expected_cert=5f3ab2f36ce4a7856c12b1744b799ff775e6f74f05c0bd2c9d8db824674b7ef1
+          for apk in manager/build/outputs/apk/debug/*.apk; do
+            cert_info=$("$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk")
+            echo "$cert_info"
+            actual_cert=$(echo "$cert_info" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr '[:upper:]' '[:lower:]')
+            if [ "$actual_cert" != "$expected_cert" ]; then
+              echo "::error::APK does not match the established permanent signing certificate."
+              exit 1
+            fi
+          done
+
       - name: Prepare release metadata
         id: meta
         shell: bash
@@ -67,4 +81,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          gh release create "${{ steps.meta.outputs.tag }}"             manager/build/outputs/apk/debug/*.apk             --repo "$GITHUB_REPOSITORY"             --target "$GITHUB_SHA"             --title "${{ steps.meta.outputs.title }}"             --notes "Private test build from merged master. Debug-signed APK. Not published."             --draft             --prerelease
+          gh release create "${{ steps.meta.outputs.tag }}"             manager/build/outputs/apk/debug/*.apk             --repo "$GITHUB_REPOSITORY"             --target "$GITHUB_SHA"             --title "${{ steps.meta.outputs.title }}"             --notes "Private test build from merged master. Debug APK signed with the verified permanent test key. Portrait container and restoration changes require device validation. Not published."             --draft             --prerelease
