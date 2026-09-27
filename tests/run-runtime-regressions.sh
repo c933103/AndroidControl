@@ -27,26 +27,26 @@ run_phase() {
     grep -q "regression=PASS $1" "runtime-results/$1.txt"
 }
 
+result=0
+
 adb install "$RUNNER_TEMP/baseline.apk"
 adb install manager/build/outputs/apk/androidTest/debug/*.apk
-run_phase seed
+run_phase seed || result=1
+run_phase reopen || result=1
 # A real package replacement, without clearing app data or Keystore.
 adb install -r manager/build/outputs/apk/debug/*.apk
-run_phase upgrade
-run_phase key-failure
+run_phase upgrade || result=1
+run_phase key-failure || result=1
 
 adb install "$test_dir/aligned.apk"
 apk_path=$(adb shell pm path "$package" | sed 's/^package://' | tr -d '\r')
 adb shell "${apk_path%/*}/lib/x86_64/libshizuku.so --apk=$apk_path"
 adb logcat -c
-set +e
-run_phase display
-result=$?
-set -e
+run_phase display || result=1
 adb shell dumpsys activity activities > runtime-results/activities.txt
 adb shell dumpsys display > runtime-results/displays.txt
 adb logcat -d -s AndroidRuntime ShizukuServer AndroidControlService > runtime-results/runtime-log.txt
 adb exec-out screencap -p > runtime-results/screen.png
-test "$result" = 0
-adb shell run-as game.qualiarts.hololive.dreams.jp cat files/touches | tee runtime-results/touches.txt
-grep -q touch runtime-results/touches.txt
+adb shell run-as game.qualiarts.hololive.dreams.jp cat files/touches | tee runtime-results/touches.txt || result=1
+grep -q touch runtime-results/touches.txt || result=1
+exit "$result"
