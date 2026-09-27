@@ -106,10 +106,15 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         const val RESIZE_MODE_SYSTEM = 0
 
         const val VIRTUAL_DISPLAY_FLAG_PUBLIC = 1 shl 0
+        const val VIRTUAL_DISPLAY_FLAG_PRESENTATION = 1 shl 1
         const val VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY = 1 shl 3
         const val VIRTUAL_DISPLAY_FLAG_SUPPORTS_TOUCH = 1 shl 6
+        const val VIRTUAL_DISPLAY_FLAG_ROTATES_WITH_CONTENT = 1 shl 7
         const val VIRTUAL_DISPLAY_FLAG_DESTROY_CONTENT_ON_REMOVAL = 1 shl 8
         const val VIRTUAL_DISPLAY_FLAG_TRUSTED = 1 shl 10
+        const val VIRTUAL_DISPLAY_FLAG_OWN_DISPLAY_GROUP = 1 shl 11
+        const val VIRTUAL_DISPLAY_FLAG_ALWAYS_UNLOCKED = 1 shl 12
+        const val VIRTUAL_DISPLAY_FLAG_TOUCH_FEEDBACK_DISABLED = 1 shl 13
         const val INPUT_INJECTION_MODE_ASYNC = 0
     }
 
@@ -286,9 +291,21 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
             val baseFlags =
                 VIRTUAL_DISPLAY_FLAG_PUBLIC or
+                    VIRTUAL_DISPLAY_FLAG_PRESENTATION or
                     VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY or
                     VIRTUAL_DISPLAY_FLAG_SUPPORTS_TOUCH or
+                    VIRTUAL_DISPLAY_FLAG_ROTATES_WITH_CONTENT or
                     VIRTUAL_DISPLAY_FLAG_DESTROY_CONTENT_ON_REMOVAL
+
+            val trustedFlags =
+                if (getSdkInt() >= 33) {
+                    VIRTUAL_DISPLAY_FLAG_TRUSTED or
+                        VIRTUAL_DISPLAY_FLAG_OWN_DISPLAY_GROUP or
+                        VIRTUAL_DISPLAY_FLAG_ALWAYS_UNLOCKED or
+                        VIRTUAL_DISPLAY_FLAG_TOUCH_FEEDBACK_DISABLED
+                } else {
+                    VIRTUAL_DISPLAY_FLAG_TRUSTED
+                }
 
             val virtualDisplay =
                 try {
@@ -298,7 +315,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                         portraitHeight,
                         density,
                         surface,
-                        baseFlags or VIRTUAL_DISPLAY_FLAG_TRUSTED
+                        baseFlags or trustedFlags
                     )
                 } catch (_: SecurityException) {
                     // AOSP shell normally holds ADD_TRUSTED_DISPLAY. Keep a fallback
