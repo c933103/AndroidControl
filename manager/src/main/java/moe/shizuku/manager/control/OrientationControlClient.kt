@@ -2,6 +2,7 @@ package moe.shizuku.manager.control
 
 import android.content.ComponentName
 import android.content.ServiceConnection
+import android.os.Binder
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -31,6 +32,9 @@ object OrientationControlClient {
 
     @Volatile
     private var binding = false
+
+    @Volatile
+    private var portraitClientToken: IBinder? = null
 
     @Volatile
     private var pendingToggle = false
@@ -196,11 +200,15 @@ object OrientationControlClient {
 
         executor.execute {
             try {
+                val clientToken = Binder()
+                portraitClientToken = clientToken
+
                 val displayId = service.createPortraitVirtualDisplay(
                     surface,
                     width,
                     height,
-                    densityDpi
+                    densityDpi,
+                    clientToken
                 )
 
                 if (
@@ -233,6 +241,7 @@ object OrientationControlClient {
                     service.releasePortraitVirtualDisplay()
                 } catch (_: Throwable) {
                 }
+                portraitClientToken = null
 
                 mainHandler.post {
                     callback(Result.failure(t))
@@ -247,6 +256,8 @@ object OrientationControlClient {
             try {
                 service.releasePortraitVirtualDisplay()
             } catch (_: Throwable) {
+            } finally {
+                portraitClientToken = null
             }
         }
     }
