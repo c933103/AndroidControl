@@ -19,7 +19,8 @@ final class PortraitActivityGeometry {
     }
 
     static PortraitActivityGeometry parse(String dump, String packageName, int taskId) {
-        Pattern identity = Pattern.compile(Pattern.quote(packageName) + "/\\S+\\s+t" + taskId + "(?:\\s|})");
+        // Android uses ICU: unlike desktop OpenJDK, it rejects an unescaped '}'.
+        Pattern identity = Pattern.compile(Pattern.quote(packageName) + "/\\S+\\s+t" + taskId + "(?:\\s|\\})");
         boolean inActivity = false;
         int headerIndent = -1;
         for (String line : dump.split("\\r?\\n")) {
