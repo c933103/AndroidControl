@@ -1,10 +1,12 @@
 package moe.shizuku.manager.home
 
+import android.content.Intent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import moe.shizuku.manager.R
 import moe.shizuku.manager.control.OrientationControlClient
+import moe.shizuku.manager.control.PortraitGameActivity
 import moe.shizuku.manager.databinding.HomeItemContainerBinding
 import moe.shizuku.manager.databinding.HomeOrientationControlBinding
 import moe.shizuku.manager.model.ServiceStatus
@@ -24,12 +26,17 @@ class OrientationControlViewHolder(
         }
     }
 
+    private var openContainerWhenForced = false
+
     private val stateListener: (OrientationControlClient.State) -> Unit = { state ->
         render(state)
     }
 
     init {
         binding.button1.setOnClickListener {
+            openContainerWhenForced =
+                OrientationControlClient.state.forcedPortrait != true
+
             binding.button1.isEnabled = false
             binding.text1.setText(R.string.home_orientation_description_working)
             OrientationControlClient.toggle()
@@ -97,5 +104,20 @@ class OrientationControlViewHolder(
 
         binding.text2.text =
             state.targetStatus ?: context.getString(R.string.home_orientation_target_waiting)
+
+        if (
+            openContainerWhenForced &&
+            forced &&
+            state.error == null
+        ) {
+            openContainerWhenForced = false
+            itemView.post {
+                itemView.context.startActivity(
+                    Intent(itemView.context, PortraitGameActivity::class.java)
+                )
+            }
+        } else if (state.error != null) {
+            openContainerWhenForced = false
+        }
     }
 }
