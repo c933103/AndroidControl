@@ -21,7 +21,12 @@ object TargetPortraitDisplayClient {
     @Volatile
     private var binding = false
 
-    private val pending = mutableListOf<(IAndroidControlService) -> Unit>()
+    private data class PendingAction(
+        val run: (IAndroidControlService) -> Unit,
+        val fail: () -> Unit
+    )
+
+    private val pending = mutableListOf<PendingAction>()
 
     private val userServiceArgs =
         Shizuku.UserServiceArgs(
@@ -41,7 +46,7 @@ object TargetPortraitDisplayClient {
                     null
                 }
 
-            val actions: List<(IAndroidControlService) -> Unit>
+            val actions: List<PendingAction>
             synchronized(this@TargetPortraitDisplayClient) {
                 binding = false
                 remote = service
@@ -50,7 +55,9 @@ object TargetPortraitDisplayClient {
             }
 
             if (service != null) {
-                actions.forEach { it(service) }
+                actions.forEach { it.run(service) }
+            } else {
+                actions.forEach { it.fail() }
             }
         }
 
@@ -63,7 +70,10 @@ object TargetPortraitDisplayClient {
         }
     }
 
-    private fun withService(action: (IAndroidControlService) -> Unit) {
+    private fun withService(
+        action: (IAndroidControlService) -> Unit,
+        onFailure: () -> Unit
+    ) {
         val current = remote
         if (current != null && current.asBinder().pingBinder()) {
             action(current)
@@ -77,7 +87,7 @@ object TargetPortraitDisplayClient {
                 return
             }
 
-            pending.add(action)
+            pending.add(PendingAction(action, onFailure))
             if (binding) return
             binding = true
         }
@@ -85,10 +95,13 @@ object TargetPortraitDisplayClient {
         try {
             Shizuku.bindUserService(userServiceArgs, connection)
         } catch (_: Throwable) {
+            val failed: List<PendingAction>
             synchronized(this) {
                 binding = false
+                failed = pending.toList()
                 pending.clear()
             }
+            failed.forEach { it.fail() }
         }
     }
 
@@ -96,15 +109,17 @@ object TargetPortraitDisplayClient {
         displayId: Int,
         width: Int,
         height: Int,
+        hostToken: IBinder,
         callback: (Boolean, String?) -> Unit
     ) {
-        withService { service ->
+        withService({ service ->
             executor.execute {
                 try {
                     val ok = service.launchTargetOnPortraitDisplay(
                         displayId,
                         width,
-                        height
+                        height,
+                        hostToken
                     )
                     val status = try {
                         service.targetPortraitStatus
@@ -118,7 +133,11 @@ object TargetPortraitDisplayClient {
                     }
                 }
             }
-        }
+        }, {
+            mainHandler.post {
+                callback(false, "Shizuku service unavailable")
+            }
+        })
     }
 
     fun inject(displayId: Int, event: MotionEvent) {
@@ -139,7 +158,7 @@ object TargetPortraitDisplayClient {
         relaunchOnDefaultDisplay: Boolean,
         callback: (() -> Unit)? = null
     ) {
-        withService { service ->
+        withService({ service ->
             executor.execute {
                 try {
                     service.stopTargetPortraitDisplay(
@@ -151,6 +170,8 @@ object TargetPortraitDisplayClient {
                     mainHandler.post { callback?.invoke() }
                 }
             }
-        }
+        }, {
+            mainHandler.post { callback?.invoke() }
+        })
     }
 }
