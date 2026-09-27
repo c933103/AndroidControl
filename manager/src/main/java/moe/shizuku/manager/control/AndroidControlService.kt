@@ -68,6 +68,9 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     private var targetPortraitStatus =
         "Target game: overrides inactive"
 
+    @Volatile
+    private var android13OrientationOverrideAccepted = false
+
     private companion object {
         const val TARGET_PACKAGE = "game.qualiarts.hololive.dreams.jp"
 
@@ -77,6 +80,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         const val ALWAYS_SANDBOX_DISPLAY_APIS = "185004937"
         const val OVERRIDE_SANDBOX_VIEW_BOUNDS_APIS = "237531167"
         const val OVERRIDE_UNDEFINED_ORIENTATION_TO_PORTRAIT = "265452344"
+        const val OVERRIDE_ORIENTATION_ONLY_FOR_CAMERA = "265456536"
         const val OVERRIDE_ANY_ORIENTATION = "265464455"
         const val OVERRIDE_ANY_ORIENTATION_TO_USER = "310816437"
 
@@ -141,14 +145,32 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 restoreTargetPortraitCompat()
             } catch (_: Throwable) {
             }
-            try {
+            val targetCompat = try {
                 enableTargetPortraitCompat()
             } catch (_: Throwable) {
+                emptySet()
+            }
+
+            android13OrientationOverrideAccepted =
+                sdk == 33 &&
+                    targetCompat.contains(OVERRIDE_ANY_ORIENTATION) &&
+                    targetCompat.contains(OVERRIDE_UNDEFINED_ORIENTATION_TO_PORTRAIT)
+
+            if (android13OrientationOverrideAccepted) {
+                targetPortraitStatus =
+                    "Target game: Android 13 orientation override accepted; " +
+                        "waiting for portrait activity bounds"
+            } else if (sdk == 33) {
+                targetPortraitStatus =
+                    "Target game: Android 13 orientation override unavailable; " +
+                        "using task/freeform fallback"
             }
 
             if (sdk == 33) {
                 if (targetWasRunning) {
-                    restartTargetGameBestEffort()
+                    restartTargetGameBestEffort(
+                        preferFreeform = !android13OrientationOverrideAccepted
+                    )
                 }
                 startPortraitAppWatcher()
             }
@@ -162,6 +184,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             }
         } else {
             restoreNormalRotation()
+            android13OrientationOverrideAccepted = false
             targetPortraitStatus = "Target game: overrides inactive"
         }
 
@@ -301,16 +324,24 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         failure?.let { throw it }
     }
 
-    private fun enableTargetPortraitCompat() {
+    private fun enableTargetPortraitCompat(): Set<String> {
         val sdk = getSdkInt()
         targetCompatStateFile.delete()
+        val applied = linkedSetOf<String>()
 
         fun applyCompat(mode: String, changeId: String) {
             // Record intent before applying. If the process dies after the compat
             // command succeeds, Restore can still reset this ID on the next run.
             appendTargetCompatChange(changeId)
             try {
-                runAm("compat", mode, "--no-kill", changeId, TARGET_PACKAGE)
+                val output = runAm(
+                    "compat", mode, "--no-kill", changeId, TARGET_PACKAGE
+                )
+                if (compatOutputSaysUnknown(output)) {
+                    removeTargetCompatChange(changeId)
+                    return
+                }
+                applied.add(changeId)
             } catch (_: Throwable) {
                 // This call definitely did not complete successfully, so remove the
                 // provisional ledger entry. A process death after a successful call
@@ -328,7 +359,14 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         applyCompat("enable", OVERRIDE_SANDBOX_VIEW_BOUNDS_APIS)
         applyCompat("enable", FORCE_RESIZE_APP)
 
-        if (sdk >= 34) {
+        // These orientation overrides landed during the Android 13 QPR cycle.
+        // Do not gate them behind API 34: OEM Android 13 builds may already expose
+        // them through PlatformCompat. Unsupported builds simply reject the command
+        // and applyCompat removes the provisional ledger entry.
+        if (sdk >= 33) {
+            // If an OEM enabled the camera-only gate, disable it so the portrait
+            // treatment applies to the game at all times, not only while using camera.
+            applyCompat("disable", OVERRIDE_ORIENTATION_ONLY_FOR_CAMERA)
             applyCompat("enable", OVERRIDE_ANY_ORIENTATION)
             applyCompat("enable", OVERRIDE_UNDEFINED_ORIENTATION_TO_PORTRAIT)
         }
@@ -336,6 +374,17 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         if (sdk >= 35) {
             applyCompat("enable", OVERRIDE_ANY_ORIENTATION_TO_USER)
         }
+
+        return applied
+    }
+
+    private fun compatOutputSaysUnknown(output: String): Boolean {
+        val text = output.lowercase()
+        return text.contains("not known yet") ||
+            text.contains("unknown change") ||
+            text.contains("unknown or invalid change") ||
+            text.contains("no such change") ||
+            text.contains("could have no effect")
     }
 
     @Synchronized
@@ -422,6 +471,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         portraitWatcherRunning = true
         val thread = Thread({
             var activeTaskId: Int? = null
+            var firstSeenAt = 0L
             var configured = false
 
             while (portraitWatcherRunning) {
@@ -429,19 +479,42 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                     val taskId = findTargetTaskId()
                     if (taskId == null) {
                         activeTaskId = null
+                        firstSeenAt = 0L
                         configured = false
                         targetPortraitStatus =
-                            "Target game: waiting for $TARGET_PACKAGE to become foreground"
+                            "Target game: waiting for " + TARGET_PACKAGE +
+                                " to become foreground"
                     } else {
                         if (activeTaskId != taskId) {
                             activeTaskId = taskId
+                            firstSeenAt = System.currentTimeMillis()
                             configured = false
                         }
 
-                        if (!configured) {
-                            synchronized(portraitOperationLock) {
-                                if (portraitWatcherRunning) {
-                                    configured = enforceAndroid13PortraitTask(taskId)
+                        val geometry = getTargetActivityGeometry(taskId)
+                        if (geometry?.isPortrait == true) {
+                            configured = true
+                            targetPortraitStatus =
+                                "Target game: portrait activity active; " +
+                                    geometry.describe() + "; " +
+                                    describeTargetTask(taskId)
+                        } else if (!configured) {
+                            val graceMs =
+                                if (android13OrientationOverrideAccepted) 2000L else 0L
+                            val elapsed = System.currentTimeMillis() - firstSeenAt
+
+                            if (elapsed < graceMs) {
+                                targetPortraitStatus =
+                                    "Target game: orientation override accepted; " +
+                                        "waiting for activity recreation; " +
+                                        (geometry?.describe()
+                                            ?: "activity geometry unavailable")
+                            } else {
+                                synchronized(portraitOperationLock) {
+                                    if (portraitWatcherRunning) {
+                                        configured =
+                                            enforceAndroid13PortraitTask(taskId)
+                                    }
                                 }
                             }
                         }
@@ -551,7 +624,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         }
     }
 
-    private fun restartTargetGameBestEffort() {
+    private fun restartTargetGameBestEffort(preferFreeform: Boolean) {
         targetPortraitStatus =
             "Target game: restarting once to apply Android 13 portrait compatibility"
 
@@ -586,10 +659,19 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         }
 
         if (component != null) {
-            // Prefer launching directly into freeform on Android 13. In freeform,
-            // the activity's fixed landscape request no longer gets the fullscreen
-            // fixed-orientation letterbox treatment. The watcher then applies the
-            // exact portrait bounds.
+            if (!preferFreeform) {
+                // Let the Android 13 QPR orientation override recreate the activity
+                // normally first. The watcher verifies the activity's real app bounds
+                // and escalates to freeform only if they remain landscape.
+                try {
+                    runAm("start", "-n", component)
+                    return
+                } catch (_: Throwable) {
+                }
+            }
+
+            // Fallback: launch directly into freeform. The watcher then applies the
+            // exact portrait task bounds and verifies the activity's own app bounds.
             prepareAndroid13FreeformSupportBestEffort()
 
             try {
@@ -628,8 +710,18 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
     private fun enforceAndroid13PortraitTask(taskId: Int): Boolean {
         val size = getPortraitDisplayBounds()
+
+        val before = getTargetActivityGeometry(taskId)
+        if (before?.isPortrait == true) {
+            targetPortraitStatus =
+                "Target game: portrait activity already active; " +
+                    before.describe() + "; " + describeTargetTask(taskId)
+            return true
+        }
+
         targetPortraitStatus =
-            "Target game: applying portrait task bounds to task $taskId"
+            "Target game: activity is still landscape; applying Android 13 fallback; " +
+                (before?.describe() ?: "activity geometry unavailable")
 
         // Record before the first resize/windowing mutation. Even if every attempt
         // fails afterward, Restore normal rotation must know this task may have had
@@ -639,11 +731,13 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         val directBinderError =
             tryResizeTargetTaskWithBinder(taskId, size, forceFreeform = false)
 
-        if (isTaskPortrait(taskId)) {
-            rememberFallbackTask(taskId)
+        waitForActivityConfigurationUpdate()
+        if (isTargetActivityPortrait(taskId)) {
+            val geometry = getTargetActivityGeometry(taskId)
             targetPortraitStatus =
-                "Target game: portrait task active (${size.first}×${size.second}); " +
-                    describeTargetTask(taskId)
+                "Target game: portrait activity active after resize; " +
+                    (geometry?.describe() ?: "activity geometry unavailable") +
+                    "; " + describeTargetTask(taskId)
             return true
         }
 
@@ -657,21 +751,25 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         val freeformBinderError =
             tryResizeTargetTaskWithBinder(taskId, size, forceFreeform = true)
 
-        if (isTaskPortrait(taskId)) {
-            rememberFallbackTask(taskId)
+        waitForActivityConfigurationUpdate()
+        if (isTargetActivityPortrait(taskId)) {
+            val geometry = getTargetActivityGeometry(taskId)
             targetPortraitStatus =
-                "Target game: portrait task active (${size.first}×${size.second}); " +
-                    describeTargetTask(taskId)
+                "Target game: portrait activity active in freeform; " +
+                    (geometry?.describe() ?: "activity geometry unavailable") +
+                    "; " + describeTargetTask(taskId)
             return true
         }
 
         val shellError = tryResizeTargetTaskWithShell(taskId, size)
 
-        if (isTaskPortrait(taskId)) {
-            rememberFallbackTask(taskId)
+        waitForActivityConfigurationUpdate()
+        if (isTargetActivityPortrait(taskId)) {
+            val geometry = getTargetActivityGeometry(taskId)
             targetPortraitStatus =
-                "Target game: portrait task active (${size.first}×${size.second}); " +
-                    describeTargetTask(taskId)
+                "Target game: portrait activity active after shell resize; " +
+                    (geometry?.describe() ?: "activity geometry unavailable") +
+                    "; " + describeTargetTask(taskId)
             return true
         }
 
@@ -683,12 +781,18 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             .distinct()
             .joinToString(" | ")
 
-        val geometry = describeTargetTask(taskId)
+        val activityGeometry =
+            getTargetActivityGeometry(taskId)?.describe()
+                ?: "activity geometry unavailable"
+        val taskGeometry = describeTargetTask(taskId)
+
         targetPortraitStatus =
             if (details.isBlank()) {
-                "Target game: system kept task non-portrait; $geometry"
+                "Target game: task changed but activity remained landscape; " +
+                    activityGeometry + "; " + taskGeometry
             } else {
-                "Target game: portrait task failed: $details; $geometry"
+                "Target game: portrait activity failed: " + details + "; " +
+                    activityGeometry + "; " + taskGeometry
             }
 
         return false
@@ -760,6 +864,130 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         } catch (t: Throwable) {
             t.message ?: t.javaClass.simpleName
         }
+    }
+
+    private data class TargetActivityGeometry(
+        val width: Int,
+        val height: Int,
+        val orientation: String?
+    ) {
+        val isPortrait: Boolean
+            get() = width < height && orientation != "land"
+
+        fun describe(): String {
+            val orientationText = orientation ?: "orientation?"
+            return "activity=" + orientationText +
+                " appBounds=" + width + "×" + height
+        }
+    }
+
+    private fun waitForActivityConfigurationUpdate() {
+        try {
+            Thread.sleep(500)
+        } catch (_: InterruptedException) {
+        }
+    }
+
+    private fun isTargetActivityPortrait(taskId: Int): Boolean {
+        return getTargetActivityGeometry(taskId)?.isPortrait == true
+    }
+
+    private fun getTargetActivityGeometry(taskId: Int): TargetActivityGeometry? {
+        val dump = try {
+            runCommand("/system/bin/dumpsys", "activity", "activities")
+        } catch (_: Throwable) {
+            return null
+        }
+
+        val lines = dump.lineSequence().toList()
+
+        // Prefer the currently resumed/focused target ActivityRecord. Its token lets
+        // us find the detailed record and avoid reading a stopped activity belonging
+        // to the same package.
+        val resumedLine = lines.firstOrNull { line ->
+            line.contains(TARGET_PACKAGE) &&
+                (
+                    line.contains("topResumedActivity") ||
+                    line.contains("mResumedActivity") ||
+                    line.contains("mFocusedApp")
+                )
+        }
+
+        val activityToken = resumedLine?.let { line ->
+            Regex("""ActivityRecord\{([0-9a-fA-F]+)""")
+                .find(line)
+                ?.groupValues
+                ?.getOrNull(1)
+        }
+
+        val candidateStarts = mutableListOf<Int>()
+
+        if (activityToken != null) {
+            lines.forEachIndexed { index, line ->
+                if (
+                    line.contains("ActivityRecord{" + activityToken) &&
+                    line.contains(TARGET_PACKAGE)
+                ) {
+                    candidateStarts.add(index)
+                }
+            }
+        }
+
+        // OEM dumps can omit/rewrite the resumed token. Fall back to ActivityRecord
+        // headers for this package/task.
+        lines.forEachIndexed { index, line ->
+            if (
+                line.contains(TARGET_PACKAGE) &&
+                line.contains("ActivityRecord{") &&
+                (
+                    line.contains(" t" + taskId) ||
+                    line.contains("taskId=" + taskId) ||
+                    activityToken == null
+                )
+            ) {
+                candidateStarts.add(index)
+            }
+        }
+
+        val appBoundsRegex = Regex(
+            """mAppBounds=Rect\((-?\d+),\s*(-?\d+)\s*-\s*(-?\d+),\s*(-?\d+)\)"""
+        )
+
+        candidateStarts.distinct().forEach { start ->
+            val end = minOf(lines.size, start + 100)
+
+            for (index in start until end) {
+                val line = lines[index]
+
+                if (
+                    !line.contains("CurrentConfiguration=") &&
+                    !line.contains("mOverrideConfig=") &&
+                    !line.contains("mLastReportedConfiguration") &&
+                    !line.contains("mAppBounds=")
+                ) {
+                    continue
+                }
+
+                val match = appBoundsRegex.find(line) ?: continue
+                val left = match.groupValues[1].toIntOrNull() ?: continue
+                val top = match.groupValues[2].toIntOrNull() ?: continue
+                val right = match.groupValues[3].toIntOrNull() ?: continue
+                val bottom = match.groupValues[4].toIntOrNull() ?: continue
+
+                val width = right - left
+                val height = bottom - top
+                if (width <= 0 || height <= 0) continue
+
+                val orientation = Regex("""\b(port|land)\b""")
+                    .find(line)
+                    ?.groupValues
+                    ?.getOrNull(1)
+
+                return TargetActivityGeometry(width, height, orientation)
+            }
+        }
+
+        return null
     }
 
     private fun describeTargetTask(taskId: Int): String {
