@@ -196,10 +196,6 @@ object OrientationControlClient {
 
         executor.execute {
             try {
-                if (!service.isForcePortraitEnabled()) {
-                    service.setForcePortrait(true)
-                }
-
                 val displayId = service.createPortraitVirtualDisplay(
                     surface,
                     width,
@@ -223,7 +219,7 @@ object OrientationControlClient {
                 publish(
                     state.copy(
                         available = true,
-                        forcedPortrait = true,
+                        forcedPortrait = state.forcedPortrait,
                         targetStatus = targetStatus,
                         error = null
                     )
