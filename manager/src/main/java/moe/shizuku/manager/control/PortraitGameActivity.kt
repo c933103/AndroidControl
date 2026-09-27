@@ -26,7 +26,6 @@ class PortraitGameActivity : AppActivity(),
     private var surfaceHeight = 0
     private var displayId = Display.INVALID_DISPLAY
     private var creatingDisplay = false
-    private var forceRequested = false
 
     private val stateListener: (OrientationControlClient.State) -> Unit = { state ->
         when {
@@ -38,16 +37,8 @@ class PortraitGameActivity : AppActivity(),
                 )
             }
 
-            state.available && state.forcedPortrait == true -> {
-                forceRequested = false
+            state.available -> {
                 maybeCreatePortraitDisplay()
-            }
-
-            state.available && !forceRequested -> {
-                forceRequested = true
-                statusView.visibility = View.VISIBLE
-                statusView.setText(R.string.portrait_game_applying)
-                OrientationControlClient.toggle()
             }
 
             else -> {
@@ -116,7 +107,7 @@ class PortraitGameActivity : AppActivity(),
         if (!surfaceView.holder.surface.isValid) return
 
         val state = OrientationControlClient.state
-        if (!state.available || state.forcedPortrait != true) return
+        if (!state.available) return
 
         creatingDisplay = true
         statusView.visibility = View.VISIBLE
