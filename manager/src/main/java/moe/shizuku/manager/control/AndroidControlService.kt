@@ -866,6 +866,130 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         }
     }
 
+    private data class TargetActivityGeometry(
+        val width: Int,
+        val height: Int,
+        val orientation: String?
+    ) {
+        val isPortrait: Boolean
+            get() = width < height && orientation != "land"
+
+        fun describe(): String {
+            val orientationText = orientation ?: "orientation?"
+            return "activity=" + orientationText +
+                " appBounds=" + width + "×" + height
+        }
+    }
+
+    private fun waitForActivityConfigurationUpdate() {
+        try {
+            Thread.sleep(500)
+        } catch (_: InterruptedException) {
+        }
+    }
+
+    private fun isTargetActivityPortrait(taskId: Int): Boolean {
+        return getTargetActivityGeometry(taskId)?.isPortrait == true
+    }
+
+    private fun getTargetActivityGeometry(taskId: Int): TargetActivityGeometry? {
+        val dump = try {
+            runCommand("/system/bin/dumpsys", "activity", "activities")
+        } catch (_: Throwable) {
+            return null
+        }
+
+        val lines = dump.lineSequence().toList()
+
+        // Prefer the currently resumed/focused target ActivityRecord. Its token lets
+        // us find the detailed record and avoid reading a stopped activity belonging
+        // to the same package.
+        val resumedLine = lines.firstOrNull { line ->
+            line.contains(TARGET_PACKAGE) &&
+                (
+                    line.contains("topResumedActivity") ||
+                    line.contains("mResumedActivity") ||
+                    line.contains("mFocusedApp")
+                )
+        }
+
+        val activityToken = resumedLine?.let { line ->
+            Regex("""ActivityRecord\{([0-9a-fA-F]+)""")
+                .find(line)
+                ?.groupValues
+                ?.getOrNull(1)
+        }
+
+        val candidateStarts = mutableListOf<Int>()
+
+        if (activityToken != null) {
+            lines.forEachIndexed { index, line ->
+                if (
+                    line.contains("ActivityRecord{" + activityToken) &&
+                    line.contains(TARGET_PACKAGE)
+                ) {
+                    candidateStarts.add(index)
+                }
+            }
+        }
+
+        // OEM dumps can omit/rewrite the resumed token. Fall back to ActivityRecord
+        // headers for this package/task.
+        lines.forEachIndexed { index, line ->
+            if (
+                line.contains(TARGET_PACKAGE) &&
+                line.contains("ActivityRecord{") &&
+                (
+                    line.contains(" t" + taskId) ||
+                    line.contains("taskId=" + taskId) ||
+                    activityToken == null
+                )
+            ) {
+                candidateStarts.add(index)
+            }
+        }
+
+        val appBoundsRegex = Regex(
+            """mAppBounds=Rect\((-?\d+),\s*(-?\d+)\s*-\s*(-?\d+),\s*(-?\d+)\)"""
+        )
+
+        candidateStarts.distinct().forEach { start ->
+            val end = minOf(lines.size, start + 100)
+
+            for (index in start until end) {
+                val line = lines[index]
+
+                if (
+                    !line.contains("CurrentConfiguration=") &&
+                    !line.contains("mOverrideConfig=") &&
+                    !line.contains("mLastReportedConfiguration") &&
+                    !line.contains("mAppBounds=")
+                ) {
+                    continue
+                }
+
+                val match = appBoundsRegex.find(line) ?: continue
+                val left = match.groupValues[1].toIntOrNull() ?: continue
+                val top = match.groupValues[2].toIntOrNull() ?: continue
+                val right = match.groupValues[3].toIntOrNull() ?: continue
+                val bottom = match.groupValues[4].toIntOrNull() ?: continue
+
+                val width = right - left
+                val height = bottom - top
+                if (width <= 0 || height <= 0) continue
+
+                val orientation = Regex("""\b(port|land)\b""")
+                    .find(line)
+                    ?.groupValues
+                    ?.getOrNull(1)
+
+                return TargetActivityGeometry(width, height, orientation)
+            }
+        }
+
+        return null
+    }
+
     private fun describeTargetTask(taskId: Int): String {
         try {
             val atm = getActivityTaskManagerService()
