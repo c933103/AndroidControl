@@ -68,6 +68,9 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     private var targetPortraitStatus =
         "Target game: overrides inactive"
 
+    @Volatile
+    private var android13OrientationOverrideAccepted = false
+
     private companion object {
         const val TARGET_PACKAGE = "game.qualiarts.hololive.dreams.jp"
 
@@ -148,13 +151,15 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 emptySet()
             }
 
-            if (
-                targetCompat.contains(OVERRIDE_ANY_ORIENTATION) &&
-                targetCompat.contains(OVERRIDE_UNDEFINED_ORIENTATION_TO_PORTRAIT)
-            ) {
+            android13OrientationOverrideAccepted =
+                sdk == 33 &&
+                    targetCompat.contains(OVERRIDE_ANY_ORIENTATION) &&
+                    targetCompat.contains(OVERRIDE_UNDEFINED_ORIENTATION_TO_PORTRAIT)
+
+            if (android13OrientationOverrideAccepted) {
                 targetPortraitStatus =
-                    "Target game: Android orientation override accepted; " +
-                        "forcing requested orientation to portrait"
+                    "Target game: Android 13 orientation override accepted; " +
+                        "waiting for portrait activity bounds"
             } else if (sdk == 33) {
                 targetPortraitStatus =
                     "Target game: Android 13 orientation override unavailable; " +
@@ -163,7 +168,9 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
             if (sdk == 33) {
                 if (targetWasRunning) {
-                    restartTargetGameBestEffort()
+                    restartTargetGameBestEffort(
+                        preferFreeform = !android13OrientationOverrideAccepted
+                    )
                 }
                 startPortraitAppWatcher()
             }
@@ -177,6 +184,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             }
         } else {
             restoreNormalRotation()
+            android13OrientationOverrideAccepted = false
             targetPortraitStatus = "Target game: overrides inactive"
         }
 
@@ -326,7 +334,13 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             // command succeeds, Restore can still reset this ID on the next run.
             appendTargetCompatChange(changeId)
             try {
-                runAm("compat", mode, "--no-kill", changeId, TARGET_PACKAGE)
+                val output = runAm(
+                    "compat", mode, "--no-kill", changeId, TARGET_PACKAGE
+                )
+                if (compatOutputSaysUnknown(output)) {
+                    removeTargetCompatChange(changeId)
+                    return
+                }
                 applied.add(changeId)
             } catch (_: Throwable) {
                 // This call definitely did not complete successfully, so remove the
@@ -362,6 +376,15 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         }
 
         return applied
+    }
+
+    private fun compatOutputSaysUnknown(output: String): Boolean {
+        val text = output.lowercase()
+        return text.contains("not known yet") ||
+            text.contains("unknown change") ||
+            text.contains("unknown or invalid change") ||
+            text.contains("no such change") ||
+            text.contains("could have no effect")
     }
 
     @Synchronized
@@ -577,7 +600,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         }
     }
 
-    private fun restartTargetGameBestEffort() {
+    private fun restartTargetGameBestEffort(preferFreeform: Boolean) {
         targetPortraitStatus =
             "Target game: restarting once to apply Android 13 portrait compatibility"
 
@@ -612,10 +635,19 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         }
 
         if (component != null) {
-            // Prefer launching directly into freeform on Android 13. In freeform,
-            // the activity's fixed landscape request no longer gets the fullscreen
-            // fixed-orientation letterbox treatment. The watcher then applies the
-            // exact portrait bounds.
+            if (!preferFreeform) {
+                // Let the Android 13 QPR orientation override recreate the activity
+                // normally first. The watcher verifies the activity's real app bounds
+                // and escalates to freeform only if they remain landscape.
+                try {
+                    runAm("start", "-n", component)
+                    return
+                } catch (_: Throwable) {
+                }
+            }
+
+            // Fallback: launch directly into freeform. The watcher then applies the
+            // exact portrait task bounds and verifies the activity's own app bounds.
             prepareAndroid13FreeformSupportBestEffort()
 
             try {
