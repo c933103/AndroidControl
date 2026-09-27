@@ -3,6 +3,7 @@ package moe.shizuku.manager.control
 import android.app.ActivityManager
 import android.content.Context
 import android.graphics.Rect
+import android.view.MotionEvent
 import androidx.annotation.Keep
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.io.BufferedReader
@@ -70,6 +71,9 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
     @Volatile
     private var android13OrientationOverrideAccepted = false
+
+    @Volatile
+    private var targetPortraitDisplayId = -1
 
     private companion object {
         const val TARGET_PACKAGE = "game.qualiarts.hololive.dreams.jp"
@@ -265,6 +269,241 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
     override fun getTargetPortraitStatus(): String {
         return targetPortraitStatus
+    }
+
+    override fun launchTargetOnPortraitDisplay(
+        displayId: Int,
+        width: Int,
+        height: Int
+    ): Boolean {
+        if (displayId < 0) {
+            throw IllegalArgumentException("Invalid display ID: $displayId")
+        }
+        if (width <= 0 || height <= 0 || width >= height) {
+            throw IllegalArgumentException(
+                "Portrait display must have positive dimensions with width < height: " +
+                    width + "x" + height
+            )
+        }
+
+        targetPortraitDisplayId = displayId
+        targetPortraitStatus =
+            "Target game: launching on portrait display $displayId " +
+                "(" + width + "x" + height + ")"
+
+        try {
+            restoreTargetPortraitCompat()
+        } catch (_: Throwable) {
+        }
+        enableTargetDisplayCompat()
+
+        try {
+            runWm(
+                "set-ignore-orientation-request",
+                "-d",
+                displayId.toString(),
+                "true"
+            )
+        } catch (_: Throwable) {
+        }
+
+        try {
+            runWm(
+                "fixed-to-user-rotation",
+                "-d",
+                displayId.toString(),
+                "enabled"
+            )
+        } catch (_: Throwable) {
+        }
+
+        prepareAndroid13FreeformSupportBestEffort()
+
+        try {
+            runAm("force-stop", TARGET_PACKAGE)
+        } catch (_: Throwable) {
+        }
+
+        val component = resolveTargetLauncherComponent()
+            ?: throw IllegalStateException(
+                "Could not resolve launcher activity for $TARGET_PACKAGE"
+            )
+
+        val startOutput = runAm(
+            "start",
+            "--display",
+            displayId.toString(),
+            "--windowingMode",
+            WINDOWING_MODE_FREEFORM.toString(),
+            "-n",
+            component
+        )
+
+        var taskId: Int? = null
+        for (attempt in 0 until 30) {
+            taskId = findTargetTaskIdOnDisplay(displayId)
+            if (taskId != null) break
+            try {
+                Thread.sleep(200)
+            } catch (_: InterruptedException) {
+            }
+        }
+
+        val id = taskId
+            ?: throw IllegalStateException(
+                "Target activity did not appear on portrait display $displayId: " +
+                    startOutput.trim()
+            )
+
+        try {
+            runAm("task", "resizeable", id.toString(), "2")
+        } catch (_: Throwable) {
+        }
+
+        val errors = mutableListOf<String>()
+        try {
+            val atm = getActivityTaskManagerService()
+
+            try {
+                invokeActivityTaskManager(
+                    atm,
+                    "setTaskWindowingMode",
+                    id,
+                    WINDOWING_MODE_FREEFORM,
+                    true
+                )
+            } catch (t: Throwable) {
+                errors.add("freeform=" + (t.message ?: t.javaClass.simpleName))
+            }
+
+            try {
+                invokeActivityTaskManager(
+                    atm,
+                    "resizeTask",
+                    id,
+                    Rect(0, 0, width, height),
+                    RESIZE_MODE_SYSTEM
+                )
+            } catch (t: Throwable) {
+                errors.add("resize=" + (t.message ?: t.javaClass.simpleName))
+            }
+        } catch (t: Throwable) {
+            errors.add("task-service=" + (t.message ?: t.javaClass.simpleName))
+        }
+
+        try {
+            Thread.sleep(600)
+        } catch (_: InterruptedException) {
+        }
+
+        val geometry = getTargetActivityGeometry(id)
+        val portraitBounds = geometry != null && geometry.width < geometry.height
+
+        targetPortraitStatus =
+            if (portraitBounds) {
+                "Target game: landscape-only app running on portrait display; " +
+                    geometry!!.describe() + "; display=$displayId " +
+                    width + "x" + height
+            } else {
+                "Target game: portrait display created but app bounds are still landscape; " +
+                    (geometry?.describe() ?: "activity geometry unavailable") +
+                    if (errors.isEmpty()) "" else "; " + errors.joinToString(" | ")
+            }
+
+        return portraitBounds
+    }
+
+    override fun injectTargetMotionEvent(displayId: Int, event: MotionEvent) {
+        try {
+            HiddenApiBypass.addHiddenApiExemptions(
+                "Landroid/view/InputEvent;",
+                "Landroid/hardware/input/InputManager;"
+            )
+        } catch (_: Throwable) {
+        }
+
+        try {
+            val setDisplayId = Class.forName("android.view.InputEvent")
+                .getDeclaredMethod(
+                    "setDisplayId",
+                    Int::class.javaPrimitiveType
+                )
+            setDisplayId.isAccessible = true
+            setDisplayId.invoke(event, displayId)
+
+            val inputManagerClass =
+                Class.forName("android.hardware.input.InputManager")
+            val getInstance =
+                inputManagerClass.getDeclaredMethod("getInstance")
+            getInstance.isAccessible = true
+            val inputManager = getInstance.invoke(null)
+                ?: return
+
+            val inject = inputManagerClass.methods.firstOrNull {
+                it.name == "injectInputEvent" &&
+                    it.parameterTypes.size == 2
+            } ?: return
+
+            inject.isAccessible = true
+            inject.invoke(inputManager, event, 0)
+        } catch (_: Throwable) {
+        }
+    }
+
+    override fun stopTargetPortraitDisplay(
+        displayId: Int,
+        relaunchOnDefaultDisplay: Boolean
+    ) {
+        try {
+            runAm("force-stop", TARGET_PACKAGE)
+        } catch (_: Throwable) {
+        }
+
+        try {
+            runWm(
+                "set-ignore-orientation-request",
+                "-d",
+                displayId.toString(),
+                "false"
+            )
+        } catch (_: Throwable) {
+        }
+
+        try {
+            runWm(
+                "fixed-to-user-rotation",
+                "-d",
+                displayId.toString(),
+                "default"
+            )
+        } catch (_: Throwable) {
+        }
+
+        restoreAndroid13SupportSettingsBestEffort()
+
+        try {
+            restoreTargetPortraitCompat()
+        } catch (_: Throwable) {
+        }
+
+        targetPortraitDisplayId = -1
+        targetPortraitStatus = "Target game: portrait display inactive"
+
+        if (relaunchOnDefaultDisplay) {
+            val component = resolveTargetLauncherComponent()
+            if (component != null) {
+                try {
+                    runAm(
+                        "start",
+                        "--display",
+                        "0",
+                        "-n",
+                        component
+                    )
+                } catch (_: Throwable) {
+                }
+            }
+        }
     }
 
     private fun getPortraitRotation(): Int {
@@ -622,6 +861,105 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         } catch (_: Throwable) {
             false
         }
+    }
+
+    private fun resolveTargetLauncherComponent(): String? {
+        return try {
+            runCommand(
+                "/system/bin/cmd",
+                "package",
+                "resolve-activity",
+                "--brief",
+                "-a",
+                "android.intent.action.MAIN",
+                "-c",
+                "android.intent.category.LAUNCHER",
+                TARGET_PACKAGE
+            )
+                .lineSequence()
+                .map { it.trim() }
+                .lastOrNull {
+                    it.contains('/') && !it.startsWith("No activity")
+                }
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun findTargetTaskIdOnDisplay(displayId: Int): Int? {
+        try {
+            val atm = getActivityTaskManagerService()
+            val methods = atm.javaClass.methods
+                .filter { it.name == "getTasks" }
+                .sortedBy { it.parameterTypes.size }
+
+            methods.forEach { method ->
+                val args: Array<Any?> = when (method.parameterTypes.size) {
+                    1 -> arrayOf(100)
+                    2 -> arrayOf(100, false)
+                    3 -> arrayOf(100, false, false)
+                    4 -> arrayOf(100, false, false, -1)
+                    else -> return@forEach
+                }
+
+                try {
+                    @Suppress("UNCHECKED_CAST")
+                    val tasks =
+                        method.invoke(atm, *args) as? List<*> ?: return@forEach
+
+                    tasks.forEach { entry ->
+                        val info =
+                            entry as? ActivityManager.RunningTaskInfo
+                                ?: return@forEach
+                        val packageName =
+                            info.topActivity?.packageName
+                                ?: info.baseActivity?.packageName
+
+                        if (
+                            packageName == TARGET_PACKAGE &&
+                            info.displayId == displayId
+                        ) {
+                            return info.taskId
+                        }
+                    }
+                } catch (_: Throwable) {
+                }
+            }
+        } catch (_: Throwable) {
+        }
+
+        return null
+    }
+
+    private fun enableTargetDisplayCompat() {
+        val sdk = getSdkInt()
+        targetCompatStateFile.delete()
+
+        fun applyCompat(mode: String, changeId: String) {
+            appendTargetCompatChange(changeId)
+            try {
+                val output = runAm(
+                    "compat",
+                    mode,
+                    "--no-kill",
+                    changeId,
+                    TARGET_PACKAGE
+                )
+                if (compatOutputSaysUnknown(output)) {
+                    removeTargetCompatChange(changeId)
+                }
+            } catch (_: Throwable) {
+                removeTargetCompatChange(changeId)
+            }
+        }
+
+        if (sdk >= 33) {
+            applyCompat("disable", FORCE_NON_RESIZE_APP)
+        }
+        applyCompat("disable", NEVER_SANDBOX_DISPLAY_APIS)
+        applyCompat("enable", ALWAYS_SANDBOX_DISPLAY_APIS)
+        applyCompat("enable", OVERRIDE_SANDBOX_VIEW_BOUNDS_APIS)
+        applyCompat("enable", FORCE_RESIZE_APP)
     }
 
     private fun restartTargetGameBestEffort(preferFreeform: Boolean) {
