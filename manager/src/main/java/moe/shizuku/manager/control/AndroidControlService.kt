@@ -613,11 +613,14 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         targetPortraitStatus =
             "Target game: applying portrait task bounds to task $taskId"
 
-        val firstError = tryResizeTargetTaskWithShell(taskId, size)
+        val directBinderError =
+            tryResizeTargetTaskWithBinder(taskId, size, forceFreeform = false)
+
         if (isTaskPortrait(taskId)) {
             rememberFallbackTask(taskId)
             targetPortraitStatus =
-                "Target game: portrait task active (${size.first}×${size.second})"
+                "Target game: portrait task active (${size.first}×${size.second}); " +
+                    describeTargetTask(taskId)
             return true
         }
 
@@ -628,61 +631,91 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         } catch (_: InterruptedException) {
         }
 
-        val secondError = tryResizeTargetTaskWithShell(taskId, size)
+        val freeformBinderError =
+            tryResizeTargetTaskWithBinder(taskId, size, forceFreeform = true)
+
         if (isTaskPortrait(taskId)) {
             rememberFallbackTask(taskId)
             targetPortraitStatus =
                 "Target game: portrait task active (${size.first}×${size.second}); " +
-                    "temporary freeform support enabled"
+                    describeTargetTask(taskId)
             return true
         }
 
-        val binderError = try {
+        val shellError = tryResizeTargetTaskWithShell(taskId, size)
+
+        if (isTaskPortrait(taskId)) {
+            rememberFallbackTask(taskId)
+            targetPortraitStatus =
+                "Target game: portrait task active (${size.first}×${size.second}); " +
+                    describeTargetTask(taskId)
+            return true
+        }
+
+        val details = listOfNotNull(
+            directBinderError,
+            freeformBinderError,
+            shellError
+        )
+            .distinct()
+            .joinToString(" | ")
+
+        val geometry = describeTargetTask(taskId)
+        targetPortraitStatus =
+            if (details.isBlank()) {
+                "Target game: system kept task non-portrait; $geometry"
+            } else {
+                "Target game: portrait task failed: $details; $geometry"
+            }
+
+        return false
+    }
+
+    private fun tryResizeTargetTaskWithBinder(
+        taskId: Int,
+        size: Pair<Int, Int>,
+        forceFreeform: Boolean
+    ): String? {
+        return try {
             val atm = getActivityTaskManagerService()
+
             invokeActivityTaskManager(
                 atm,
                 "setTaskResizeable",
                 taskId,
                 RESIZE_MODE_FORCE_RESIZABLE_PORTRAIT_ONLY
             )
-            invokeActivityTaskManager(
-                atm,
-                "setTaskWindowingMode",
-                taskId,
-                WINDOWING_MODE_FREEFORM,
-                true
-            )
-            invokeActivityTaskManager(
+
+            if (forceFreeform) {
+                val result = invokeActivityTaskManager(
+                    atm,
+                    "setTaskWindowingMode",
+                    taskId,
+                    WINDOWING_MODE_FREEFORM,
+                    true
+                )
+                if (result is Boolean && !result) {
+                    throw IllegalStateException(
+                        "setTaskWindowingMode(FREEFORM) returned false"
+                    )
+                }
+            }
+
+            val result = invokeActivityTaskManager(
                 atm,
                 "resizeTask",
                 taskId,
                 Rect(0, 0, size.first, size.second),
                 RESIZE_MODE_SYSTEM
             )
+            if (result is Boolean && !result) {
+                throw IllegalStateException("resizeTask returned false")
+            }
+
             null
         } catch (t: Throwable) {
             t.message ?: t.javaClass.simpleName
         }
-
-        if (isTaskPortrait(taskId)) {
-            rememberFallbackTask(taskId)
-            targetPortraitStatus =
-                "Target game: portrait task active (${size.first}×${size.second})"
-            return true
-        }
-
-        val details = listOfNotNull(firstError, secondError, binderError)
-            .distinct()
-            .joinToString(" | ")
-
-        targetPortraitStatus =
-            if (details.isBlank()) {
-                "Target game: system kept the task non-portrait after all resize attempts"
-            } else {
-                "Target game: portrait task failed: $details"
-            }
-
-        return false
     }
 
     private fun tryResizeTargetTaskWithShell(
@@ -690,12 +723,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         size: Pair<Int, Int>
     ): String? {
         return try {
-            runAm(
-                "task",
-                "resizeable",
-                taskId.toString(),
-                RESIZE_MODE_FORCE_RESIZABLE_PORTRAIT_ONLY.toString()
-            )
+            runAm("task", "resizeable", taskId.toString(), "2")
             runAm(
                 "task",
                 "resize",
@@ -711,6 +739,45 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         }
     }
 
+    private fun describeTargetTask(taskId: Int): String {
+        try {
+            val atm = getActivityTaskManagerService()
+            val methods = atm.javaClass.methods
+                .filter { it.name == "getTasks" }
+                .sortedBy { it.parameterTypes.size }
+
+            methods.forEach { method ->
+                val args: Array<Any?> = when (method.parameterTypes.size) {
+                    1 -> arrayOf(100)
+                    2 -> arrayOf(100, false)
+                    3 -> arrayOf(100, false, false)
+                    4 -> arrayOf(100, false, false, -1)
+                    else -> return@forEach
+                }
+
+                try {
+                    val tasks = method.invoke(atm, *args) as? List<*>
+                        ?: return@forEach
+                    val info = tasks
+                        .filterIsInstance<ActivityManager.RunningTaskInfo>()
+                        .firstOrNull { it.taskId == taskId }
+                        ?: return@forEach
+
+                    val bounds = info.configuration.windowConfiguration.bounds
+                    val windowingMode =
+                        info.configuration.windowConfiguration.windowingMode
+
+                    return "task=$taskId mode=$windowingMode bounds=" +
+                        "${bounds.width()}×${bounds.height()}"
+                } catch (_: Throwable) {
+                }
+            }
+        } catch (_: Throwable) {
+        }
+
+        return "task=$taskId geometry unavailable"
+    }
+
     private fun isTaskPortrait(taskId: Int): Boolean {
         try {
             val atm = getActivityTaskManagerService()
@@ -722,6 +789,38 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
             if (bounds != null && !bounds.isEmpty) {
                 return bounds.width() < bounds.height()
+            }
+        } catch (_: Throwable) {
+        }
+
+        try {
+            val atm = getActivityTaskManagerService()
+            val methods = atm.javaClass.methods
+                .filter { it.name == "getTasks" }
+                .sortedBy { it.parameterTypes.size }
+
+            methods.forEach { method ->
+                val args: Array<Any?> = when (method.parameterTypes.size) {
+                    1 -> arrayOf(100)
+                    2 -> arrayOf(100, false)
+                    3 -> arrayOf(100, false, false)
+                    4 -> arrayOf(100, false, false, -1)
+                    else -> return@forEach
+                }
+
+                try {
+                    val tasks = method.invoke(atm, *args) as? List<*>
+                        ?: return@forEach
+                    val info = tasks
+                        .filterIsInstance<ActivityManager.RunningTaskInfo>()
+                        .firstOrNull { it.taskId == taskId }
+                        ?: return@forEach
+                    val bounds = info.configuration.windowConfiguration.bounds
+                    if (!bounds.isEmpty) {
+                        return bounds.width() < bounds.height()
+                    }
+                } catch (_: Throwable) {
+                }
             }
         } catch (_: Throwable) {
         }
