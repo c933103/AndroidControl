@@ -3,6 +3,7 @@ package moe.shizuku.manager.control
 import android.app.ActivityManager
 import android.content.Context
 import android.graphics.Rect
+import android.os.IBinder
 import android.view.MotionEvent
 import androidx.annotation.Keep
 import org.lsposed.hiddenapibypass.HiddenApiBypass
@@ -74,6 +75,14 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
     @Volatile
     private var targetPortraitDisplayId = -1
+
+    private val targetPortraitSessionLock = Any()
+
+    @Volatile
+    private var targetPortraitHostToken: IBinder? = null
+
+    @Volatile
+    private var targetPortraitHostDeathRecipient: IBinder.DeathRecipient? = null
 
     private companion object {
         const val TARGET_PACKAGE = "game.qualiarts.hololive.dreams.jp"
@@ -274,7 +283,8 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     override fun launchTargetOnPortraitDisplay(
         displayId: Int,
         width: Int,
-        height: Int
+        height: Int,
+        hostToken: IBinder
     ): Boolean {
         if (displayId < 0) {
             throw IllegalArgumentException("Invalid display ID: $displayId")
@@ -285,6 +295,9 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                     width + "x" + height
             )
         }
+
+        clearLegacyGlobalOrientationBestEffort()
+        registerTargetPortraitHost(hostToken, displayId)
 
         targetPortraitDisplayId = displayId
         targetPortraitStatus =
@@ -454,6 +467,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         displayId: Int,
         relaunchOnDefaultDisplay: Boolean
     ) {
+        unregisterTargetPortraitHost()
         try {
             runAm("force-stop", TARGET_PACKAGE)
         } catch (_: Throwable) {
@@ -503,6 +517,93 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 } catch (_: Throwable) {
                 }
             }
+        }
+    }
+
+    private fun registerTargetPortraitHost(
+        hostToken: IBinder,
+        displayId: Int
+    ) {
+        synchronized(targetPortraitSessionLock) {
+            unregisterTargetPortraitHostLocked()
+
+            val deathRecipient = IBinder.DeathRecipient {
+                Thread({
+                    try {
+                        stopTargetPortraitDisplay(
+                            displayId,
+                            relaunchOnDefaultDisplay = false
+                        )
+                    } catch (_: Throwable) {
+                    }
+                }, "androidcontrol-portrait-host-death").start()
+            }
+
+            hostToken.linkToDeath(deathRecipient, 0)
+            targetPortraitHostToken = hostToken
+            targetPortraitHostDeathRecipient = deathRecipient
+        }
+    }
+
+    private fun unregisterTargetPortraitHost() {
+        synchronized(targetPortraitSessionLock) {
+            unregisterTargetPortraitHostLocked()
+        }
+    }
+
+    private fun unregisterTargetPortraitHostLocked() {
+        val token = targetPortraitHostToken
+        val recipient = targetPortraitHostDeathRecipient
+
+        targetPortraitHostToken = null
+        targetPortraitHostDeathRecipient = null
+
+        if (token != null && recipient != null) {
+            try {
+                token.unlinkToDeath(recipient, 0)
+            } catch (_: Throwable) {
+            }
+        }
+    }
+
+    private fun clearLegacyGlobalOrientationBestEffort() {
+        // The old portrait implementation wrote WindowManager state on display 0.
+        // Legacy recovery has already been completed on the test device, but this
+        // makes the new mode self-contained for an upgrade from an older build
+        // without exposing legacy recovery controls in the UI.
+        try {
+            when (wmApi) {
+                WmApi.MODERN -> {
+                    if (supportsIgnoreOrientationRequest) {
+                        try {
+                            runWm("set-ignore-orientation-request", "false")
+                        } catch (_: Throwable) {
+                        }
+                    }
+                    try {
+                        runWm("fixed-to-user-rotation", "default")
+                    } catch (_: Throwable) {
+                    }
+                    try {
+                        runWm("user-rotation", "free")
+                    } catch (_: Throwable) {
+                    }
+                }
+
+                WmApi.LEGACY -> {
+                    try {
+                        runWm("set-fix-to-user-rotation", "default")
+                    } catch (_: Throwable) {
+                    }
+                    try {
+                        runWm("set-user-rotation", "free")
+                    } catch (_: Throwable) {
+                    }
+                }
+
+                WmApi.UNSUPPORTED -> Unit
+            }
+        } catch (_: Throwable) {
         }
     }
 
