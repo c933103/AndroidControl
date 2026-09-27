@@ -39,3 +39,13 @@ On-device acceptance is still required on the Sony Android 13 device:
 3. Exercise failed launch, immediate Back, host destruction and repeated start/stop. Verify no temporary portrait resize mode survives normal launch.
 
 CI proves compilation and the parser regression cases. It cannot prove Unity rendering or OEM display/input behavior without the device.
+
+## Broader requirements retained from the original discussion
+
+AndroidControl is a self-contained Shizuku-derived control toolbox, including its own pairing, server, terminal, root support and app authorization. There is no separate LADB installation in the user's setup. A stable APK signing certificate and the stored ADB pairing key are distinct identities; verifying the first does not test preservation of the second.
+
+The original discussion repeatedly identified the need for AndroidControl's own app identity while retaining its Shizuku functionality. The portrait-only audit missed this outstanding requirement. The user explicitly deferred that change on 2026-09-28 (Asia/Taipei); do not rename the package or disturb the installed pairing as part of the current fixes.
+
+Current device reports: pairing must be repeated after updates, and the game appears vertically before technical text covers it and interaction stops about two seconds later. Do not treat an earlier parser fix or successful APK compilation as verification of either behavior. The precise new on-device error text has not yet been obtained.
+
+The Android 13 runtime regression job installs the previous APK, creates its ADB identity, updates in place, and compares the identity using real app storage/Keystore. It also exercises the production portrait host against a landscape-only fixture and checks touch forwarding. The fixture is only installed in a fresh CI emulator and is never bundled into AndroidControl. It does not reproduce Unity or Sony-specific behavior.
