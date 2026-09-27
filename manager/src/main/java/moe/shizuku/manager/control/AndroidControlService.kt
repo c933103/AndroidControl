@@ -917,7 +917,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
                         if (
                             packageName == TARGET_PACKAGE &&
-                            info.displayId == displayId
+                            getRunningTaskDisplayId(info) == displayId
                         ) {
                             return info.taskId
                         }
@@ -925,6 +925,45 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 } catch (_: Throwable) {
                 }
             }
+        } catch (_: Throwable) {
+        }
+
+        return null
+    }
+
+    private fun getRunningTaskDisplayId(
+        info: ActivityManager.RunningTaskInfo
+    ): Int? {
+        // TaskInfo.displayId exists on the Android runtime used here, but it is
+        // absent from this project's compile-time public stubs on some API levels.
+        // Resolve it at runtime instead of baking a newer SDK field reference into
+        // the APK.
+        try {
+            val field = info.javaClass.getField("displayId")
+            return field.getInt(info)
+        } catch (_: Throwable) {
+        }
+
+        try {
+            var clazz: Class<*>? = info.javaClass
+            while (clazz != null) {
+                try {
+                    val field = clazz.getDeclaredField("displayId")
+                    field.isAccessible = true
+                    return field.getInt(info)
+                } catch (_: NoSuchFieldException) {
+                    clazz = clazz.superclass
+                }
+            }
+        } catch (_: Throwable) {
+        }
+
+        try {
+            val method = info.javaClass.methods.firstOrNull {
+                it.name == "getDisplayId" && it.parameterTypes.isEmpty()
+            }
+            val value = method?.invoke(info)
+            if (value is Int) return value
         } catch (_: Throwable) {
         }
 
