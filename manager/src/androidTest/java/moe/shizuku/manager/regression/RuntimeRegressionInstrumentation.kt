@@ -9,12 +9,14 @@ import android.view.MotionEvent
 import android.view.View
 import android.widget.TextView
 import moe.shizuku.manager.ShizukuSettings
+import moe.shizuku.manager.MainActivity
 import moe.shizuku.manager.adb.AdbKey
 import moe.shizuku.manager.adb.AdbKeyStore
 import moe.shizuku.manager.adb.PreferenceAdbKeyStore
 import moe.shizuku.manager.control.TargetPortraitDisplayActivity
 import java.security.MessageDigest
 import java.util.concurrent.Executors
+import rikka.shizuku.Shizuku
 
 /** Runs in the installed app UID, with the real Android Keystore and display host. */
 class RuntimeRegressionInstrumentation : Instrumentation() {
@@ -28,6 +30,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
 
     override fun onStart() {
         try {
+            waitForIdleSync()
             when (args.getString("phase")) {
                 "seed" -> savePairingIdentity()
                 "upgrade" -> checkPairingIdentity()
@@ -79,6 +82,13 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
     }
 
     private fun checkDisplay() {
+        startActivitySync(Intent(targetContext, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        val binderDeadline = SystemClock.uptimeMillis() + 10000
+        while (!Shizuku.pingBinder() && SystemClock.uptimeMillis() < binderDeadline) {
+            SystemClock.sleep(100)
+        }
+        check(Shizuku.pingBinder()) { "Test server did not connect to the manager" }
         val activity = startActivitySync(Intent(targetContext, TargetPortraitDisplayActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as TargetPortraitDisplayActivity
         val launchedField = activity.javaClass.getDeclaredField("launched").apply { isAccessible = true }
