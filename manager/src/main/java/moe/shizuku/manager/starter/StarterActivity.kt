@@ -17,6 +17,7 @@ import moe.shizuku.manager.ShizukuSettings
 import moe.shizuku.manager.adb.AdbClient
 import moe.shizuku.manager.adb.AdbKey
 import moe.shizuku.manager.adb.AdbKeyException
+import moe.shizuku.manager.adb.AdbKeyRecovery
 import moe.shizuku.manager.adb.PreferenceAdbKeyStore
 import moe.shizuku.manager.app.AppBarActivity
 import moe.shizuku.manager.databinding.StarterActivityBinding
@@ -69,7 +70,7 @@ class StarterActivity : AppBarActivity() {
                 var message = 0
                 when (it.error) {
                     is AdbKeyException -> {
-                        message = R.string.adb_error_key_store
+                        AdbKeyRecovery.show(this)
                     }
                     is NotRootedException -> {
                         message = R.string.start_with_root_failed
