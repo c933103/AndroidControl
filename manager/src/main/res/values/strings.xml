@@ -211,4 +211,6 @@ With %1$s, in any terminal app, you can connect to and interact with the shell r
     <string name="orientation_system_active">System-wide portrait is enabled.</string>
     <string name="orientation_system_pending">Saved rotation settings are waiting to be restored.</string>
     <string name="orientation_system_unsupported">This Android build does not expose the required system-wide orientation controls.</string>
+    <string name="orientation_system_clear_existing">Clear existing system portrait lock</string>
+    <string name="orientation_system_existing">Portrait is already forced, with no saved earlier settings. Clear returns to Android’s default rotation policy with auto-rotate enabled.</string>
 </resources>

@@ -274,6 +274,17 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         service.setForcePortrait(true)
         service.setForcePortrait(false)
         check(rotationSnapshot() == automatic) { "Automatic rotation was not restored" }
+        // Upgrade from a pre-journal version must still offer an explicit way out.
+        shell("wm user-rotation -d 0 lock 0")
+        shell("wm fixed-to-user-rotation -d 0 enabled")
+        shell("wm set-ignore-orientation-request -d 0 true")
+        val forcedDeadline = SystemClock.uptimeMillis() + 5000
+        while (!service.isForcePortraitEnabled && SystemClock.uptimeMillis() < forcedDeadline) SystemClock.sleep(100)
+        check(service.isForcePortraitEnabled && !service.hasSystemPortraitOverride())
+        check(!service.toggleForcePortrait()) { "Existing pre-journal portrait policy could not be cleared" }
+        check(!service.hasSystemPortraitOverride())
+        check(shell("wm user-rotation -d 0") == "free")
+        check(shell("wm fixed-to-user-rotation -d 0") == "default")
     }
 
     private fun closeDisplay(activity: TargetPortraitDisplayActivity) {

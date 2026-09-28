@@ -91,7 +91,11 @@ class OrientationControlViewHolder(
         binding.button1.isEnabled = ready
         binding.changeTarget.isEnabled = ready
         binding.systemPortrait.isEnabled = ready && (state.systemSupported || state.systemOverride)
-        binding.systemPortrait.setText(if (state.systemOverride) R.string.orientation_system_restore else R.string.orientation_system_enable)
+        binding.systemPortrait.setText(when {
+            state.systemOverride -> R.string.orientation_system_restore
+            state.forcedPortrait == true -> R.string.orientation_system_clear_existing
+            else -> R.string.orientation_system_enable
+        })
         binding.text1.setText(R.string.home_orientation_description_normal)
         binding.text2.text = when {
             !data.isRunning -> context.getString(R.string.home_status_service_not_running, context.getString(R.string.app_name))
@@ -105,6 +109,7 @@ class OrientationControlViewHolder(
             !state.available -> context.getString(R.string.home_orientation_description_connecting)
             !state.systemSupported -> context.getString(R.string.orientation_system_unsupported)
             state.systemOverride -> context.getString(if (state.forcedPortrait == true) R.string.orientation_system_active else R.string.orientation_system_pending)
+            state.forcedPortrait == true -> context.getString(R.string.orientation_system_existing)
             else -> context.getString(R.string.orientation_system_inactive)
         }
     }

@@ -65,3 +65,5 @@ The system-wide button only changes display 0 user rotation, fixed-to-user rotat
 Target display launch no longer runs the historical display-0 auto-cleanup. Target and system-wide settings can therefore coexist; closing a target session does not disable the independent system-wide setting. The retired legacy recovery UI and broad package scan stay retired.
 
 Native regression coverage includes a second installed landscape-only package, validation and saved selection across manager restart, target launch and touch forwarding while system-wide mode is enabled, editing the next target before Back, and restoring both locked and automatic main-display rotation. These run on Android 13 and Android 15 alongside the existing pairing and portrait-parser regressions.
+
+If an older build or another controller already forced portrait without a saved snapshot, the UI explicitly offers “Clear existing system portrait lock”. This returns to Android’s default fixed-orientation policy and auto-rotate; it does not invent a previous preference. Target mode never clears this state automatically.
