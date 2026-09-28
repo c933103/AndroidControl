@@ -11,6 +11,48 @@ on:
   workflow_dispatch:
 
 jobs:
+  android-13-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Accept Android SDK licenses
+        run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
+      - name: Build previous APK and current APK with the same test signing key
+        run: |
+          git checkout --detach 8e997d2f7860684b596f6caf2a9e5e4a16367ad4
+          ./gradlew :manager:assembleDebug
+          cp manager/build/outputs/apk/debug/*.apk "$RUNNER_TEMP/baseline.apk"
+          rm manager/build/outputs/apk/debug/*.apk
+          git checkout --detach "$GITHUB_SHA"
+          ./gradlew :manager:assembleDebug :manager:assembleDebugAndroidTest
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Check APK update, key preservation, display host and forwarded touches
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: bash tests/run-runtime-regressions.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-13-runtime-results
+          path: runtime-results
+
   android-13-parser:
     runs-on: ubuntu-latest
     timeout-minutes: 15

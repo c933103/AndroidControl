@@ -8,7 +8,6 @@ import android.security.keystore.KeyProperties
 import android.util.Base64
 import android.util.Log
 import androidx.annotation.RequiresApi
-import androidx.core.content.edit
 import org.bouncycastle.asn1.x500.X500Name
 import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo
 import org.bouncycastle.cert.X509v3CertificateBuilder
@@ -48,6 +47,14 @@ class AdbKey(private val adbKeyStore: AdbKeyStore, name: String) {
 
         private const val IV_SIZE_IN_BYTES = 12
         private const val TAG_SIZE_IN_BYTES = 16
+        private val KEY_LOCK = Any()
+
+        /** Only called after the user explicitly confirms resetting wireless pairing. */
+        fun resetPairing(preferences: SharedPreferences) = synchronized(KEY_LOCK) {
+            val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+            check(preferences.edit().remove("adbkey").commit()) { "Could not reset wireless pairing" }
+            keyStore.deleteEntry(ENCRYPTION_KEY_ALIAS)
+        }
 
         private val PADDING = byteArrayOf(
                 0x00, 0x01, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
@@ -71,16 +78,16 @@ class AdbKey(private val adbKeyStore: AdbKeyStore, name: String) {
                 0x04, 0x14)
     }
 
-    private val encryptionKey: Key
-
     private val privateKey: RSAPrivateKey
     private val publicKey: RSAPublicKey
     private val certificate: X509Certificate
 
     init {
-        this.encryptionKey = getOrCreateEncryptionKey() ?: error("Failed to generate encryption key with AndroidKeyManager.")
-
-        this.privateKey = getOrCreatePrivateKey()
+        this.privateKey = synchronized(KEY_LOCK) {
+            val ciphertext = adbKeyStore.get()
+            val encryptionKey = getOrCreateEncryptionKey(ciphertext != null)
+            getOrCreatePrivateKey(encryptionKey, ciphertext)
+        }
         this.publicKey = KeyFactory.getInstance("RSA").generatePublic(RSAPublicKeySpec(privateKey.modulus, RSAKeyGenParameterSpec.F4)) as RSAPublicKey
 
         val signer = JcaContentSignerBuilder("SHA256withRSA").build(privateKey)
@@ -95,18 +102,20 @@ class AdbKey(private val adbKeyStore: AdbKeyStore, name: String) {
         this.certificate = CertificateFactory.getInstance("X.509")
                 .generateCertificate(ByteArrayInputStream(x509Certificate.encoded)) as X509Certificate
 
-        Log.d(TAG, privateKey.toString())
     }
 
     val adbPublicKey: ByteArray by unsafeLazy {
         publicKey.adbEncoded(name)
     }
 
-    private fun getOrCreateEncryptionKey(): Key? {
+    private fun getOrCreateEncryptionKey(hasSavedKey: Boolean): Key {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
         keyStore.load(null)
 
         return keyStore.getKey(ENCRYPTION_KEY_ALIAS, null) ?: run {
+            check(!hasSavedKey) {
+                "Saved wireless debugging key cannot be read: its encryption key is unavailable. The saved key has been preserved."
+            }
             val parameterSpec = KeyGenParameterSpec.Builder(ENCRYPTION_KEY_ALIAS, KeyProperties.PURPOSE_DECRYPT or KeyProperties.PURPOSE_ENCRYPT)
                     .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                     .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
@@ -118,7 +127,7 @@ class AdbKey(private val adbKeyStore: AdbKeyStore, name: String) {
         }
     }
 
-    private fun encrypt(plaintext: ByteArray, aad: ByteArray?): ByteArray? {
+    private fun encrypt(encryptionKey: Key, plaintext: ByteArray, aad: ByteArray?): ByteArray? {
         if (plaintext.size > Int.MAX_VALUE - IV_SIZE_IN_BYTES - TAG_SIZE_IN_BYTES) {
             return null
         }
@@ -131,7 +140,7 @@ class AdbKey(private val adbKeyStore: AdbKeyStore, name: String) {
         return ciphertext
     }
 
-    private fun decrypt(ciphertext: ByteArray, aad: ByteArray?): ByteArray? {
+    private fun decrypt(encryptionKey: Key, ciphertext: ByteArray, aad: ByteArray?): ByteArray? {
         if (ciphertext.size < IV_SIZE_IN_BYTES + TAG_SIZE_IN_BYTES) {
             return null
         }
@@ -142,33 +151,28 @@ class AdbKey(private val adbKeyStore: AdbKeyStore, name: String) {
         return cipher.doFinal(ciphertext, IV_SIZE_IN_BYTES, ciphertext.size - IV_SIZE_IN_BYTES)
     }
 
-    private fun getOrCreatePrivateKey(): RSAPrivateKey {
-        var privateKey: RSAPrivateKey? = null
-
+    private fun getOrCreatePrivateKey(encryptionKey: Key, ciphertext: ByteArray?): RSAPrivateKey {
         val aad = ByteArray(16)
         "adbkey".toByteArray().copyInto(aad)
 
-        var ciphertext = adbKeyStore.get()
         if (ciphertext != null) {
             try {
-                val plaintext = decrypt(ciphertext, aad)
-
+                val plaintext = decrypt(encryptionKey, ciphertext, aad)
+                    ?: error("Invalid saved key length")
                 val keyFactory = KeyFactory.getInstance("RSA")
-                privateKey = keyFactory.generatePrivate(PKCS8EncodedKeySpec(plaintext)) as RSAPrivateKey
+                return keyFactory.generatePrivate(PKCS8EncodedKeySpec(plaintext)) as RSAPrivateKey
             } catch (e: Exception) {
+                // A transient Keystore/read failure must not revoke an existing
+                // pairing by silently generating and saving a different ADB key.
+                throw IllegalStateException("Could not read the saved wireless debugging key. It has been preserved; retry after unlocking the device.", e)
             }
         }
-        if (privateKey == null) {
-            val keyPairGenerator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_RSA)
-            keyPairGenerator.initialize(RSAKeyGenParameterSpec(2048, RSAKeyGenParameterSpec.F4))
-            val keyPair = keyPairGenerator.generateKeyPair()
-            privateKey = keyPair.private as RSAPrivateKey
-
-            ciphertext = encrypt(privateKey.encoded, aad)
-            if (ciphertext != null) {
-                adbKeyStore.put(ciphertext)
-            }
-        }
+        val keyPairGenerator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_RSA)
+        keyPairGenerator.initialize(RSAKeyGenParameterSpec(2048, RSAKeyGenParameterSpec.F4))
+        val privateKey = keyPairGenerator.generateKeyPair().private as RSAPrivateKey
+        val encrypted = encrypt(encryptionKey, privateKey.encoded, aad)
+            ?: error("Could not encrypt the wireless debugging key")
+        adbKeyStore.put(encrypted)
         return privateKey
     }
 
@@ -269,7 +273,9 @@ class PreferenceAdbKeyStore(private val preference: SharedPreferences) : AdbKeyS
     private val preferenceKey = "adbkey"
 
     override fun put(bytes: ByteArray) {
-        preference.edit { putString(preferenceKey, String(Base64.encode(bytes, Base64.NO_WRAP))) }
+        check(preference.edit().putString(preferenceKey, Base64.encodeToString(bytes, Base64.NO_WRAP)).commit()) {
+            "Could not save the wireless debugging key"
+        }
     }
 
     override fun get(): ByteArray? {

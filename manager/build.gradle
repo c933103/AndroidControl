@@ -15,6 +15,7 @@ android {
         applicationId "moe.shizuku.privileged.api"
         versionCode rootProject.ext.versionCode
         versionName rootProject.ext.versionName
+        testInstrumentationRunner 'moe.shizuku.manager.regression.RuntimeRegressionInstrumentation'
         externalNativeBuild {
             cmake {
                 arguments '-DANDROID_STL=none'
