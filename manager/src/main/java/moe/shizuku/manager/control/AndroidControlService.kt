@@ -73,7 +73,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
     @Volatile
     private var targetPortraitStatus =
-        "Target game: overrides inactive"
+        "Target app: overrides inactive"
 
     @Volatile
     private var android13OrientationOverrideAccepted = false
@@ -356,11 +356,11 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
         targetPortraitStatus =
             if (portraitBounds) {
-                "Target game: portrait app bounds and full-display task verified; landscape policy unchanged; " +
+                "Target app: portrait app bounds and full-display task verified; landscape policy unchanged; " +
                     geometry!!.describe() + "; display=$displayId " +
                     width + "x" + height
             } else {
-                "Target game: portrait bounds not verified; taskFillsDisplay=$fillsDisplay; " +
+                "Target app: portrait bounds not verified; taskFillsDisplay=$fillsDisplay; " +
                     (geometry?.describe() ?: "activity geometry unavailable") +
                     if (errors.isEmpty()) "" else "; " + errors.joinToString(" | ")
             }
@@ -465,7 +465,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 failures.add("Restoration records retained for retry")
             }
             if (failures.isNotEmpty()) {
-                targetPortraitStatus = "Target game: restoration incomplete; " + failures.joinToString(" | ")
+                targetPortraitStatus = "Target app: restoration incomplete; " + failures.joinToString(" | ")
                 throw IllegalStateException(targetPortraitStatus)
             }
             targetOwnerFile.delete()
@@ -756,7 +756,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                         firstSeenAt = 0L
                         configured = false
                         targetPortraitStatus =
-                            "Target game: waiting for " + targetPackage +
+                            "Target app: waiting for " + targetPackage +
                                 " to become foreground"
                     } else {
                         if (activeTaskId != taskId) {
@@ -769,7 +769,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                         if (geometry?.hasPortraitBounds == true) {
                             configured = true
                             targetPortraitStatus =
-                                "Target game: portrait-shaped app bounds active; " +
+                                "Target app: portrait-shaped app bounds active; " +
                                     geometry.describe() + "; " +
                                     describeTargetTask(taskId)
                         } else if (!configured) {
@@ -779,7 +779,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
                             if (elapsed < graceMs) {
                                 targetPortraitStatus =
-                                    "Target game: orientation override accepted; " +
+                                    "Target app: orientation override accepted; " +
                                         "waiting for activity recreation; " +
                                         (geometry?.describe()
                                             ?: "activity geometry unavailable")
@@ -1038,7 +1038,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
     private fun restartTargetGameBestEffort(preferFreeform: Boolean) {
         targetPortraitStatus =
-            "Target game: restarting once to apply Android 13 portrait compatibility"
+            "Target app: restarting once to apply Android 13 portrait compatibility"
 
         try {
             runAm("force-stop", targetPackage)
@@ -1116,7 +1116,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             )
         } catch (_: Throwable) {
             targetPortraitStatus =
-                "Target game: compatibility applied; reopen the game manually"
+                "Target app: compatibility applied; reopen the game manually"
         }
     }
 
@@ -1126,13 +1126,13 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         val before = getTargetActivityGeometry(taskId)
         if (before?.hasPortraitBounds == true) {
             targetPortraitStatus =
-                "Target game: portrait activity already active; " +
+                "Target app: portrait activity already active; " +
                     before.describe() + "; " + describeTargetTask(taskId)
             return true
         }
 
         targetPortraitStatus =
-            "Target game: app bounds are still landscape-shaped; applying Android 13 fallback; " +
+            "Target app: app bounds are still landscape-shaped; applying Android 13 fallback; " +
                 (before?.describe() ?: "activity geometry unavailable")
 
         // Record before the first resize/windowing mutation. Even if every attempt
@@ -1147,7 +1147,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         if (hasTargetPortraitBounds(taskId)) {
             val geometry = getTargetActivityGeometry(taskId)
             targetPortraitStatus =
-                "Target game: portrait-shaped app bounds active after resize; " +
+                "Target app: portrait-shaped app bounds active after resize; " +
                     (geometry?.describe() ?: "activity geometry unavailable") +
                     "; " + describeTargetTask(taskId)
             return true
@@ -1167,7 +1167,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         if (hasTargetPortraitBounds(taskId)) {
             val geometry = getTargetActivityGeometry(taskId)
             targetPortraitStatus =
-                "Target game: portrait-shaped app bounds active in freeform; " +
+                "Target app: portrait-shaped app bounds active in freeform; " +
                     (geometry?.describe() ?: "activity geometry unavailable") +
                     "; " + describeTargetTask(taskId)
             return true
@@ -1179,7 +1179,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         if (hasTargetPortraitBounds(taskId)) {
             val geometry = getTargetActivityGeometry(taskId)
             targetPortraitStatus =
-                "Target game: portrait-shaped app bounds active after shell resize; " +
+                "Target app: portrait-shaped app bounds active after shell resize; " +
                     (geometry?.describe() ?: "activity geometry unavailable") +
                     "; " + describeTargetTask(taskId)
             return true
@@ -1200,10 +1200,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
         targetPortraitStatus =
             if (details.isBlank()) {
-                "Target game: task changed but activity remained landscape; " +
+                "Target app: task changed but activity remained landscape; " +
                     activityGeometry + "; " + taskGeometry
             } else {
-                "Target game: portrait-shaped app bounds failed: " + details + "; " +
+                "Target app: portrait-shaped app bounds failed: " + details + "; " +
                     activityGeometry + "; " + taskGeometry
             }
 

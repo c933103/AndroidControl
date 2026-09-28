@@ -61,7 +61,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
                     "New pairing identity was not durable before returning to the caller"
                 }
                 "key-recovery" -> checkKeyRecovery()
-                "display" -> checkDisplay()
+                "display" -> closeDisplay(checkDisplay())
                 "select-target" -> selectTarget()
                 "separate-controls" -> checkSeparateControls()
                 else -> error("Unknown regression phase")
@@ -261,10 +261,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         check(shell("run-as $otherPackage cat files/touches").contains("touch"))
         // Changing the next selection must not retarget this session's cleanup.
         PortraitTarget.save(PortraitTarget.DEFAULT_PACKAGE)
-        runOnMainSync { activity.onBackPressed() }
-        val deadline = SystemClock.uptimeMillis() + 20000
-        while (!activity.isFinishing && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(100)
-        check(activity.isFinishing) { "Target session did not finish restoration" }
+        closeDisplay(activity)
         check(rotationSnapshot() == forced) { "Target restoration disabled the global mode" }
         check(shell("test ! -e /data/local/tmp/androidcontrol-portrait-target-package && echo clean") == "clean")
         check(shell("dumpsys activity activities").contains(otherPackage)) { "Back did not reopen the session's original target" }
@@ -277,6 +274,16 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         service.setForcePortrait(true)
         service.setForcePortrait(false)
         check(rotationSnapshot() == automatic) { "Automatic rotation was not restored" }
+    }
+
+    private fun closeDisplay(activity: TargetPortraitDisplayActivity) {
+        runOnMainSync { activity.onBackPressed() }
+        val deadline = SystemClock.uptimeMillis() + 30000
+        while (!activity.isFinishing && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(100)
+        check(activity.isFinishing) { "Target session did not finish restoration" }
+        check(shell("test ! -e /data/local/tmp/androidcontrol-portrait-target-package && echo clean") == "clean") {
+            "Target cleanup did not finish: " + shell("cat /data/local/tmp/androidcontrol-hololive-dreams-compat")
+        }
     }
 
     private fun checkDisplay(): TargetPortraitDisplayActivity {
