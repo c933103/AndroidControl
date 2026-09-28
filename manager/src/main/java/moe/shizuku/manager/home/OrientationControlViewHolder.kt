@@ -1,0 +1,103 @@
+package moe.shizuku.manager.home
+
+import android.content.Intent
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import moe.shizuku.manager.R
+import moe.shizuku.manager.control.OrientationControlClient
+import moe.shizuku.manager.control.TargetPortraitDisplayActivity
+import moe.shizuku.manager.databinding.HomeItemContainerBinding
+import moe.shizuku.manager.databinding.HomeOrientationControlBinding
+import moe.shizuku.manager.model.ServiceStatus
+import rikka.recyclerview.BaseViewHolder
+import rikka.recyclerview.BaseViewHolder.Creator
+
+class OrientationControlViewHolder(
+    private val binding: HomeOrientationControlBinding,
+    root: View
+) : BaseViewHolder<ServiceStatus>(root) {
+
+    companion object {
+        val CREATOR = Creator<ServiceStatus> { inflater: LayoutInflater, parent: ViewGroup? ->
+            val outer = HomeItemContainerBinding.inflate(inflater, parent, false)
+            val inner = HomeOrientationControlBinding.inflate(inflater, outer.root, true)
+            OrientationControlViewHolder(inner, outer.root)
+        }
+    }
+
+    private val stateListener: (OrientationControlClient.State) -> Unit = { state ->
+        render(state)
+    }
+
+    init {
+        binding.button1.setOnClickListener { view ->
+            view.context.startActivity(
+                Intent(
+                    view.context,
+                    TargetPortraitDisplayActivity::class.java
+                )
+            )
+        }
+    }
+
+    override fun onBind() {
+        OrientationControlClient.removeListener(stateListener)
+        OrientationControlClient.addListener(stateListener)
+
+        if (data.isRunning) {
+            OrientationControlClient.connect()
+        } else {
+            render(OrientationControlClient.State())
+        }
+    }
+
+    override fun onRecycle() {
+        OrientationControlClient.removeListener(stateListener)
+        super.onRecycle()
+    }
+
+    private fun render(state: OrientationControlClient.State) {
+        if (!data.isRunning) {
+            binding.button1.isEnabled = false
+            binding.button1.setText(R.string.home_orientation_open_display)
+            binding.text1.text = context.getString(
+                R.string.home_status_service_not_running,
+                context.getString(R.string.app_name)
+            )
+            binding.text2.setText(R.string.home_orientation_target_waiting)
+            return
+        }
+
+        if (!state.available) {
+            if (state.error != null) {
+                binding.button1.isEnabled = true
+                binding.button1.setText(R.string.home_orientation_open_display)
+                binding.text1.text = context.getString(
+                    R.string.home_orientation_description_error,
+                    state.error
+                )
+            } else {
+                binding.button1.isEnabled = false
+                binding.button1.setText(R.string.home_orientation_open_display)
+                binding.text1.setText(R.string.home_orientation_description_connecting)
+            }
+            binding.text2.text =
+                state.targetStatus ?: context.getString(R.string.home_orientation_target_waiting)
+            return
+        }
+
+        binding.button1.isEnabled = true
+        binding.button1.setText(R.string.home_orientation_open_display)
+        binding.text1.setText(
+            if (state.error != null) {
+                R.string.home_orientation_description_error_short
+            } else {
+                R.string.home_orientation_description_normal
+            }
+        )
+
+        binding.text2.text =
+            state.targetStatus ?: context.getString(R.string.home_orientation_target_waiting)
+    }
+}
