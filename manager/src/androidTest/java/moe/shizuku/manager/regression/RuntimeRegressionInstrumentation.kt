@@ -190,6 +190,9 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
     private fun shell(command: String): String = ParcelFileDescriptor.AutoCloseInputStream(
         uiAutomation.executeShellCommand(command)).bufferedReader().use { it.readText().trim() }
 
+    private fun controlRecordExists(name: String): Boolean = shell("ls /data/local/tmp")
+        .lineSequence().any { it.trim() == name }
+
     private fun controlService(): IAndroidControlService {
         startActivitySync(Intent(targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val deadline = SystemClock.uptimeMillis() + 10000
@@ -246,7 +249,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         check(service.setForcePortrait(true))
         val forced = rotationSnapshot()
         check(service.hasSystemPortraitOverride())
-        check(shell("test ! -e /data/local/tmp/androidcontrol-hololive-dreams-compat && echo clean") == "clean") {
+        check(!controlRecordExists("androidcontrol-hololive-dreams-compat")) {
             "System-wide mode applied target compatibility flags"
         }
         runCatching { service.destroy() }
@@ -263,7 +266,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         PortraitTarget.save(PortraitTarget.DEFAULT_PACKAGE)
         closeDisplay(activity)
         check(rotationSnapshot() == forced) { "Target restoration disabled the global mode" }
-        check(shell("test ! -e /data/local/tmp/androidcontrol-portrait-target-package && echo clean") == "clean")
+        check(!controlRecordExists("androidcontrol-portrait-target-package"))
         check(shell("dumpsys activity activities").contains(otherPackage)) { "Back did not reopen the session's original target" }
         service.setForcePortrait(false)
         check(!service.hasSystemPortraitOverride())
@@ -292,7 +295,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         val deadline = SystemClock.uptimeMillis() + 30000
         while (!activity.isFinishing && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(100)
         check(activity.isFinishing) { "Target session did not finish restoration" }
-        check(shell("test ! -e /data/local/tmp/androidcontrol-portrait-target-package && echo clean") == "clean") {
+        check(!controlRecordExists("androidcontrol-portrait-target-package")) {
             "Target cleanup did not finish: " + shell("cat /data/local/tmp/androidcontrol-hololive-dreams-compat")
         }
     }
