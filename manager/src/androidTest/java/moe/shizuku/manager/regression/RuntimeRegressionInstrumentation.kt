@@ -250,6 +250,16 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         "wm get-ignore-orientation-request -d 0", "settings get system user_rotation"
     ).joinToString("\n") { shell(it) }
 
+    private fun awaitUserRotation(mode: String, angle: Int) {
+        val deadline = SystemClock.uptimeMillis() + 5000
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (shell("wm user-rotation -d 0") == mode &&
+                shell("settings get system user_rotation") == angle.toString()) return
+            SystemClock.sleep(100)
+        }
+        error("Test rotation baseline did not settle: ${rotationSnapshot()}")
+    }
+
     private fun checkSeparateControls() {
         // This phase runs in a fresh manager process after selection was saved.
         check(PortraitTarget.get() == otherPackage) { "Target selection did not survive a restart" }
@@ -258,6 +268,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         shell("wm user-rotation -d 0 lock 1")
         shell("wm fixed-to-user-rotation -d 0 disabled")
         shell("wm set-ignore-orientation-request -d 0 false")
+        awaitUserRotation("lock 1", 1)
         val previous = rotationSnapshot()
         check(service.setForcePortrait(true))
         val forced = rotationSnapshot()
@@ -286,14 +297,15 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         check(shell("dumpsys activity activities").contains(otherPackage)) { "Back did not reopen the session's original target" }
         service.setForcePortrait(false)
         check(!service.hasSystemPortraitOverride())
-        check(rotationSnapshot() == previous) { "Previous manual rotation policy was not restored" }
+        check(rotationSnapshot() == previous) { "Previous manual rotation policy was not restored; expected=$previous; actual=${rotationSnapshot()}" }
         checkpoint("manual rotation restored")
         // Also verify an automatically rotating display restores its remembered angle.
         shell("wm user-rotation -d 0 free")
+        awaitUserRotation("free", 1)
         val automatic = rotationSnapshot()
         service.setForcePortrait(true)
         service.setForcePortrait(false)
-        check(rotationSnapshot() == automatic) { "Automatic rotation was not restored" }
+        check(rotationSnapshot() == automatic) { "Automatic rotation was not restored; expected=$automatic; actual=${rotationSnapshot()}" }
         checkpoint("automatic rotation restored")
         // Upgrade from a pre-journal version must still offer an explicit way out.
         shell("wm user-rotation -d 0 lock 0")
