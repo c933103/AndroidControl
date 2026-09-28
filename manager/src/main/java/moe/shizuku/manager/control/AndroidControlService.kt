@@ -4,6 +4,7 @@ import android.app.ActivityManager
 import android.content.Context
 import android.graphics.Rect
 import android.os.IBinder
+import android.util.AtomicFile
 import android.view.MotionEvent
 import androidx.annotation.Keep
 import org.lsposed.hiddenapibypass.HiddenApiBypass
@@ -72,7 +73,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
     @Volatile
     private var targetPortraitStatus =
-        "Target game: overrides inactive"
+        "Target app: overrides inactive"
 
     @Volatile
     private var android13OrientationOverrideAccepted = false
@@ -88,8 +89,31 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     @Volatile
     private var targetPortraitHostDeathRecipient: IBinder.DeathRecipient? = null
 
+    private val targetOwnerFile = AtomicFile(File("/data/local/tmp/androidcontrol-portrait-target-package"))
+    private var targetPackage: String = readTargetOwner()
+
+    private fun readTargetOwner(): String {
+        return try {
+            PortraitTarget.validate(targetOwnerFile.openRead().bufferedReader().use { it.readText() })
+        } catch (t: java.io.FileNotFoundException) {
+            DEFAULT_TARGET_PACKAGE
+        }
+    }
+
+    private fun saveTargetOwner(packageName: String) {
+        val stream = targetOwnerFile.startWrite()
+        try {
+            stream.write(packageName.toByteArray(Charsets.UTF_8))
+            targetOwnerFile.finishWrite(stream)
+        } catch (t: Throwable) {
+            targetOwnerFile.failWrite(stream)
+            throw t
+        }
+        targetPackage = packageName
+    }
+
     private companion object {
-        const val TARGET_PACKAGE = "game.qualiarts.hololive.dreams.jp"
+        const val DEFAULT_TARGET_PACKAGE = "game.qualiarts.hololive.dreams.jp"
 
         const val FORCE_RESIZE_APP = "174042936"
         const val FORCE_NON_RESIZE_APP = "181136395"
@@ -111,155 +135,26 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         System.exit(0)
     }
 
-    override fun setForcePortrait(enabled: Boolean): Boolean {
-        if (wmApi == WmApi.UNSUPPORTED) {
-            throw UnsupportedOperationException(
-                "This Android build does not expose the required WindowManager rotation controls."
-            )
-        }
-
-        if (enabled) {
-            targetPortraitStatus =
-                "Target game: waiting for $TARGET_PACKAGE to become foreground"
-
-            val sdk = getSdkInt()
-            val targetWasRunning =
-                sdk == 33 && isTargetRunningOrTaskPresent()
-
-            val portraitRotation = getPortraitRotation()
-
-            // Apply the actual display-orientation policy first. The old implementation
-            // spent up to a minute changing compat flags for every installed app before
-            // reaching these commands, so a slow/unsupported compat command could make
-            // the button appear to do nothing.
-            try {
-                when (wmApi) {
-                    WmApi.MODERN -> {
-                        runWm("user-rotation", "lock", portraitRotation.toString())
-                        runWm("fixed-to-user-rotation", "enabled")
-                        if (supportsIgnoreOrientationRequest) {
-                            runWm("set-ignore-orientation-request", "true")
-                        }
-                    }
-
-                    WmApi.LEGACY -> {
-                        runWm("set-user-rotation", "lock", portraitRotation.toString())
-                        runWm("set-fix-to-user-rotation", "enabled")
-                    }
-
-                    WmApi.UNSUPPORTED -> error("unreachable")
-                }
-            } catch (t: Throwable) {
-                restoreNormalRotationBestEffort()
-                throw t
-            }
-
-            // Per-app enhancement layers are intentionally limited to the target game.
-            // Clean any stale target-only ledger from an interrupted newer run before
-            // applying a fresh set. Do not touch the global force_resizable_activities
-            // developer setting here.
-            try {
-                restoreTargetPortraitCompat()
-            } catch (_: Throwable) {
-            }
-            val targetCompat = try {
-                enableTargetPortraitCompat()
-            } catch (_: Throwable) {
-                emptySet()
-            }
-
-            android13OrientationOverrideAccepted =
-                sdk == 33 &&
-                    targetCompat.contains(OVERRIDE_ANY_ORIENTATION) &&
-                    targetCompat.contains(OVERRIDE_UNDEFINED_ORIENTATION_TO_PORTRAIT)
-
-            if (android13OrientationOverrideAccepted) {
-                targetPortraitStatus =
-                    "Target game: Android 13 orientation override accepted; " +
-                        "waiting for portrait activity bounds"
-            } else if (sdk == 33) {
-                targetPortraitStatus =
-                    "Target game: Android 13 orientation override unavailable; " +
-                        "using task/freeform fallback"
-            }
-
-            if (sdk == 33) {
-                if (targetWasRunning) {
-                    restartTargetGameBestEffort(
-                        preferFreeform = !android13OrientationOverrideAccepted
-                    )
-                }
-                startPortraitAppWatcher()
-            }
-
-            val forced = isForcePortraitEnabled()
-            if (!forced) {
-                // Never leave compatibility or task changes behind when the core
-                // WindowManager portrait policy did not actually stick.
-                restoreNormalRotationBestEffort()
-                return false
-            }
-        } else {
-            restoreNormalRotation()
-            android13OrientationOverrideAccepted = false
-            targetPortraitStatus = "Target game: overrides inactive"
-        }
-
-        return isForcePortraitEnabled()
+    private val systemPortrait by lazy {
+        SystemPortraitController(
+            File("/data/local/tmp/androidcontrol-system-rotation-prev"),
+            { wmApi == WmApi.MODERN && supportsIgnoreOrientationRequest },
+            { args -> runWm(*args) },
+            { runSettings("get", "system", "user_rotation").trim().toIntOrNull() ?: 0 },
+            { getPortraitRotation() }
+        )
     }
 
-    override fun isForcePortraitEnabled(): Boolean = synchronized(targetPortraitSessionLock) {
-        isForcePortraitEnabledLocked()
-    }
+    override fun setForcePortrait(enabled: Boolean) = systemPortrait.setEnabled(enabled)
+    override fun isForcePortraitEnabled() = systemPortrait.isEnabled()
+    override fun isSystemPortraitSupported() = systemPortrait.isSupported()
+    override fun hasSystemPortraitOverride() = systemPortrait.hasOverride()
 
-    private fun isForcePortraitEnabledLocked(): Boolean {
-        if (wmApi == WmApi.UNSUPPORTED) {
-            return false
+    override fun validateTargetPackage(packageName: String) {
+        val name = PortraitTarget.validate(packageName)
+        check(resolveTargetLauncherComponent(name) != null) {
+            "No launchable app installed for $name in the current Android user"
         }
-
-        val portraitRotation = getPortraitRotation()
-
-        val forced = when (wmApi) {
-            WmApi.MODERN -> {
-                val userRotation = runWm("user-rotation").trim()
-                val fixedToUserRotation = runWm("fixed-to-user-rotation").trim()
-
-                val ignoreOrientationOk =
-                    if (supportsIgnoreOrientationRequest) {
-                        Regex("""ignoreOrientationRequest\s+true\b""")
-                            .containsMatchIn(runWm("get-ignore-orientation-request"))
-                    } else {
-                        true
-                    }
-
-                userRotation == "lock $portraitRotation" &&
-                    fixedToUserRotation == "enabled" &&
-                    ignoreOrientationOk
-            }
-
-            WmApi.LEGACY -> {
-                val dump = runCommand("/system/bin/dumpsys", "window", "displays")
-                val rotationName = when (portraitRotation) {
-                    0 -> "ROTATION_0"
-                    1 -> "ROTATION_90"
-                    2 -> "ROTATION_180"
-                    3 -> "ROTATION_270"
-                    else -> return false
-                }
-
-                Regex("""mUserRotationMode=USER_ROTATION_LOCKED\b""")
-                    .containsMatchIn(dump) &&
-                    Regex("""mUserRotation=$rotationName\b""")
-                        .containsMatchIn(dump) &&
-                    Regex("""mFixedToUserRotation=(?:true|enabled)\b""")
-                        .containsMatchIn(dump)
-            }
-
-            WmApi.UNSUPPORTED -> false
-        }
-
-
-        return forced
     }
 
     private fun hasTargetPortraitState(): Boolean {
@@ -271,7 +166,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     }
 
     override fun toggleForcePortrait(): Boolean {
-        return setForcePortrait(!isForcePortraitEnabled())
+        return systemPortrait.toggle()
     }
 
     override fun getTargetPortraitStatus(): String {
@@ -282,10 +177,11 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         displayId: Int,
         width: Int,
         height: Int,
-        hostToken: IBinder
+        hostToken: IBinder,
+        packageName: String
     ): Boolean = synchronized(targetPortraitSessionLock) {
         try {
-            launchTargetOnPortraitDisplayLocked(displayId, width, height, hostToken)
+            launchTargetOnPortraitDisplayLocked(displayId, width, height, hostToken, packageName)
         } catch (t: Throwable) {
             val failure = t.cause?.message ?: t.message ?: t.javaClass.simpleName
             if (targetPortraitDisplayId == displayId && targetPortraitHostToken === hostToken) {
@@ -305,7 +201,8 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         displayId: Int,
         width: Int,
         height: Int,
-        hostToken: IBinder
+        hostToken: IBinder,
+        packageName: String
     ): Boolean {
         if (displayId <= 0) {
             throw IllegalArgumentException("Invalid display ID: $displayId")
@@ -323,6 +220,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             "Logical display is ${actualWidth}x${actualHeight}, expected ${width}x${height}"
         }
 
+        validateTargetPackage(packageName)
         check(targetPortraitDisplayId < 0) { "A portrait display session is already running" }
         stopPortraitAppWatcher()
         restoreTargetDisplayTasks()
@@ -330,11 +228,12 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         restoreAndroid13SupportSettingsBestEffort()
         restoreTargetPortraitCompat()
         check(!hasTargetPortraitState()) { "Previous restoration is incomplete; retry before launching" }
-        clearLegacyGlobalOrientationBestEffort()
+        check(!portraitDisplayStateFile.exists()) { "Previous task restoration is incomplete" }
+        saveTargetOwner(PortraitTarget.validate(packageName))
         registerTargetPortraitHost(hostToken, displayId)
         targetPortraitDisplayId = displayId
         targetPortraitStatus =
-            "Target game: launching on portrait display $displayId " +
+            "$targetPackage: launching on portrait display $displayId " +
                 "(" + width + "x" + height + ")"
 
         // This session always owns a fresh task. Discarding it on exit restores its
@@ -344,11 +243,11 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         runWm("set-ignore-orientation-request", "-d", displayId.toString(), "true")
         runWm("fixed-to-user-rotation", "-d", displayId.toString(), "enabled")
         prepareAndroid13FreeformSupportBestEffort()
-        runAm("force-stop", TARGET_PACKAGE)
+        runAm("force-stop", targetPackage)
 
         val component = resolveTargetLauncherComponent()
             ?: throw IllegalStateException(
-                "Could not resolve launcher activity for $TARGET_PACKAGE"
+                "Could not resolve launcher activity for $targetPackage"
             )
 
         val startOutput = runAm(
@@ -457,11 +356,11 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
         targetPortraitStatus =
             if (portraitBounds) {
-                "Target game: portrait app bounds and full-display task verified; landscape policy unchanged; " +
+                "Target app: portrait app bounds and full-display task verified; landscape policy unchanged; " +
                     geometry!!.describe() + "; display=$displayId " +
                     width + "x" + height
             } else {
-                "Target game: portrait bounds not verified; taskFillsDisplay=$fillsDisplay; " +
+                "Target app: portrait bounds not verified; taskFillsDisplay=$fillsDisplay; " +
                     (geometry?.describe() ?: "activity geometry unavailable") +
                     if (errors.isEmpty()) "" else "; " + errors.joinToString(" | ")
             }
@@ -557,7 +456,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 }
             }
             restore { restoreTargetDisplayTasks() }
-            restore { runAm("force-stop", TARGET_PACKAGE) }
+            restore { runAm("force-stop", targetPackage) }
             restore { restoreAndroid13FallbackTasksBestEffort() }
             restore { restoreAndroid13SupportSettingsBestEffort() }
             restore { restoreTargetPortraitCompat() }
@@ -566,10 +465,11 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 failures.add("Restoration records retained for retry")
             }
             if (failures.isNotEmpty()) {
-                targetPortraitStatus = "Target game: restoration incomplete; " + failures.joinToString(" | ")
+                targetPortraitStatus = "Target app: restoration incomplete; " + failures.joinToString(" | ")
                 throw IllegalStateException(targetPortraitStatus)
             }
-            targetPortraitStatus = "Target game: portrait display inactive; session task removed"
+            targetOwnerFile.delete()
+            targetPortraitStatus = "$targetPackage: portrait display inactive; session task removed"
             if (relaunchOnDefaultDisplay) {
                 val component = resolveTargetLauncherComponent()
                     ?: throw IllegalStateException("Cannot resolve the game's normal launcher")
@@ -592,7 +492,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         val sessionIds = saved.drop(1).toMutableSet()
         running.filter { info ->
             getRunningTaskDisplayId(info) == displayId &&
-                info.baseActivity?.packageName == TARGET_PACKAGE
+                info.baseActivity?.packageName == targetPackage
         }.forEach { sessionIds.add(it.taskId) }
         // Save discovered tasks before removing any of them; a partial failure is retryable.
         portraitDisplayStateFile.writeText((listOf(displayId) + sessionIds).joinToString("\n"))
@@ -601,7 +501,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             if (task != null) {
                 val packageName = task.baseActivity?.packageName ?: task.baseIntent.component?.packageName
                 check(packageName != null) { "Cannot verify owner of saved task $id" }
-                if (packageName == TARGET_PACKAGE) {
+                if (packageName == targetPackage) {
                     val removed = invokeActivityTaskManager(atm, "removeTask", id) as? Boolean
                     check(removed == true) { "Could not remove portrait session task $id" }
                 }
@@ -687,54 +587,6 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         }
     }
 
-    private fun clearLegacyGlobalOrientationBestEffort() {
-        // Do not change an ordinary user rotation lock. Only migrate the old
-        // combination of fixed-to-user-rotation plus ignored orientation requests.
-        if (wmApi != WmApi.MODERN) return
-        try {
-            if (runWm("fixed-to-user-rotation").trim() != "enabled" ||
-                !runWm("get-ignore-orientation-request").contains("true")) return
-        } catch (_: Throwable) { return }
-        // The old portrait implementation wrote WindowManager state on display 0.
-        // Legacy recovery has already been completed on the test device, but this
-        // makes the new mode self-contained for an upgrade from an older build
-        // without exposing legacy recovery controls in the UI.
-        try {
-            when (wmApi) {
-                WmApi.MODERN -> {
-                    if (supportsIgnoreOrientationRequest) {
-                        try {
-                            runWm("set-ignore-orientation-request", "false")
-                        } catch (_: Throwable) {
-                        }
-                    }
-                    try {
-                        runWm("fixed-to-user-rotation", "default")
-                    } catch (_: Throwable) {
-                    }
-                    try {
-                        runWm("user-rotation", "free")
-                    } catch (_: Throwable) {
-                    }
-                }
-
-                WmApi.LEGACY -> {
-                    try {
-                        runWm("set-fix-to-user-rotation", "default")
-                    } catch (_: Throwable) {
-                    }
-                    try {
-                        runWm("set-user-rotation", "free")
-                    } catch (_: Throwable) {
-                    }
-                }
-
-                WmApi.UNSUPPORTED -> Unit
-            }
-        } catch (_: Throwable) {
-        }
-    }
-
     private fun getPortraitRotation(): Int {
         val output = runWm("size")
         val match = Regex("""Physical size:\s*(\d+)x(\d+)""").find(output)
@@ -744,52 +596,6 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
         // Rotation values are relative to the panel's natural orientation.
         return if (height >= width) 0 else 1
-    }
-
-    private fun restoreNormalRotation() {
-        stopPortraitAppWatcher()
-        restoreAndroid13FallbackTasksBestEffort()
-        restoreAndroid13SupportSettingsBestEffort()
-        val commands: List<Array<String>> = when (wmApi) {
-            WmApi.MODERN -> buildList<Array<String>> {
-                if (supportsIgnoreOrientationRequest) {
-                    add(arrayOf("set-ignore-orientation-request", "false"))
-                }
-                add(arrayOf("fixed-to-user-rotation", "default"))
-                add(arrayOf("user-rotation", "free"))
-            }
-
-            WmApi.LEGACY -> listOf(
-                arrayOf("set-fix-to-user-rotation", "default"),
-                arrayOf("set-user-rotation", "free")
-            )
-
-            WmApi.UNSUPPORTED -> return
-        }
-
-        var failure: Throwable? = null
-        commands.forEach { command ->
-            try {
-                runWm(*command)
-            } catch (t: Throwable) {
-                if (failure == null) {
-                    failure = t
-                } else {
-                    failure!!.addSuppressed(t)
-                }
-            }
-        }
-        try {
-            restoreTargetPortraitCompat()
-        } catch (t: Throwable) {
-            if (failure == null) {
-                failure = t
-            } else {
-                failure!!.addSuppressed(t)
-            }
-        }
-
-        failure?.let { throw it }
     }
 
     private fun enableTargetPortraitCompat(): Set<String> {
@@ -803,7 +609,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             appendTargetCompatChange(changeId)
             try {
                 val output = runAm(
-                    "compat", mode, "--no-kill", changeId, TARGET_PACKAGE
+                    "compat", mode, "--no-kill", changeId, targetPackage
                 )
                 if (compatOutputSaysUnknown(output)) {
                     removeTargetCompatChange(changeId)
@@ -903,7 +709,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
         ids.forEach { changeId ->
             try {
-                runAm("compat", "reset", changeId, TARGET_PACKAGE)
+                runAm("compat", "reset", changeId, targetPackage)
             } catch (t: Throwable) {
                 if (!isIgnorableCompatResetFailure(t)) {
                     failedIds.add(changeId)
@@ -919,7 +725,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         targetCompatStateFile.writeText(failedIds.joinToString("\n"))
         throw IllegalStateException(
             "Could not restore ${failedIds.size} compatibility override(s) for " +
-                TARGET_PACKAGE + "; they were retained for retry."
+                targetPackage + "; they were retained for retry."
         )
     }
 
@@ -950,7 +756,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                         firstSeenAt = 0L
                         configured = false
                         targetPortraitStatus =
-                            "Target game: waiting for " + TARGET_PACKAGE +
+                            "Target app: waiting for " + targetPackage +
                                 " to become foreground"
                     } else {
                         if (activeTaskId != taskId) {
@@ -963,7 +769,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                         if (geometry?.hasPortraitBounds == true) {
                             configured = true
                             targetPortraitStatus =
-                                "Target game: portrait-shaped app bounds active; " +
+                                "Target app: portrait-shaped app bounds active; " +
                                     geometry.describe() + "; " +
                                     describeTargetTask(taskId)
                         } else if (!configured) {
@@ -973,7 +779,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
                             if (elapsed < graceMs) {
                                 targetPortraitStatus =
-                                    "Target game: orientation override accepted; " +
+                                    "Target app: orientation override accepted; " +
                                         "waiting for activity recreation; " +
                                         (geometry?.describe()
                                             ?: "activity geometry unavailable")
@@ -1045,8 +851,8 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                         val basePackage = info.baseActivity?.packageName
 
                         if (
-                            topPackage == TARGET_PACKAGE ||
-                            basePackage == TARGET_PACKAGE
+                            topPackage == targetPackage ||
+                            basePackage == targetPackage
                         ) {
                             return info.taskId
                         }
@@ -1063,7 +869,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         val lines = dump.lineSequence().toList()
 
         val prioritized = lines.firstOrNull { line ->
-            line.contains(TARGET_PACKAGE) &&
+            line.contains(targetPackage) &&
                 (
                     line.contains("topResumedActivity") ||
                     line.contains("mResumedActivity") ||
@@ -1072,7 +878,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         }
 
         val candidate = prioritized ?: lines.firstOrNull { line ->
-            line.contains(TARGET_PACKAGE) && Regex("""\bt\d+\b""").containsMatchIn(line)
+            line.contains(targetPackage) && Regex("""\bt\d+\b""").containsMatchIn(line)
         } ?: return null
 
         return Regex("""\bt(\d+)\b""")
@@ -1086,13 +892,13 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         if (findTargetTaskId() != null) return true
 
         return try {
-            runCommand("/system/bin/pidof", TARGET_PACKAGE).trim().isNotEmpty()
+            runCommand("/system/bin/pidof", targetPackage).trim().isNotEmpty()
         } catch (_: Throwable) {
             false
         }
     }
 
-    private fun resolveTargetLauncherComponent(): String? {
+    private fun resolveTargetLauncherComponent(packageName: String = targetPackage): String? {
         return try {
             runCommand(
                 "/system/bin/cmd",
@@ -1103,12 +909,12 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 "android.intent.action.MAIN",
                 "-c",
                 "android.intent.category.LAUNCHER",
-                TARGET_PACKAGE
+                packageName
             )
                 .lineSequence()
                 .map { it.trim() }
                 .lastOrNull {
-                    it.contains('/') && !it.startsWith("No activity")
+                    it.startsWith("$packageName/")
                 }
         } catch (_: Throwable) {
             null
@@ -1145,7 +951,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                                 ?: info.baseActivity?.packageName
 
                         if (
-                            packageName == TARGET_PACKAGE &&
+                            packageName == targetPackage &&
                             getRunningTaskDisplayId(info) == displayId
                         ) {
                             return info.taskId
@@ -1211,7 +1017,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                     mode,
                     "--no-kill",
                     changeId,
-                    TARGET_PACKAGE
+                    targetPackage
                 )
                 if (compatOutputSaysUnknown(output)) {
                     removeTargetCompatChange(changeId)
@@ -1232,10 +1038,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
     private fun restartTargetGameBestEffort(preferFreeform: Boolean) {
         targetPortraitStatus =
-            "Target game: restarting once to apply Android 13 portrait compatibility"
+            "Target app: restarting once to apply Android 13 portrait compatibility"
 
         try {
-            runAm("force-stop", TARGET_PACKAGE)
+            runAm("force-stop", targetPackage)
         } catch (_: Throwable) {
             return
         }
@@ -1255,7 +1061,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 "android.intent.action.MAIN",
                 "-c",
                 "android.intent.category.LAUNCHER",
-                TARGET_PACKAGE
+                targetPackage
             )
                 .lineSequence()
                 .map { it.trim() }
@@ -1303,14 +1109,14 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             runCommand(
                 "/system/bin/monkey",
                 "-p",
-                TARGET_PACKAGE,
+                targetPackage,
                 "-c",
                 "android.intent.category.LAUNCHER",
                 "1"
             )
         } catch (_: Throwable) {
             targetPortraitStatus =
-                "Target game: compatibility applied; reopen the game manually"
+                "Target app: compatibility applied; reopen the game manually"
         }
     }
 
@@ -1320,13 +1126,13 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         val before = getTargetActivityGeometry(taskId)
         if (before?.hasPortraitBounds == true) {
             targetPortraitStatus =
-                "Target game: portrait activity already active; " +
+                "Target app: portrait activity already active; " +
                     before.describe() + "; " + describeTargetTask(taskId)
             return true
         }
 
         targetPortraitStatus =
-            "Target game: app bounds are still landscape-shaped; applying Android 13 fallback; " +
+            "Target app: app bounds are still landscape-shaped; applying Android 13 fallback; " +
                 (before?.describe() ?: "activity geometry unavailable")
 
         // Record before the first resize/windowing mutation. Even if every attempt
@@ -1341,7 +1147,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         if (hasTargetPortraitBounds(taskId)) {
             val geometry = getTargetActivityGeometry(taskId)
             targetPortraitStatus =
-                "Target game: portrait-shaped app bounds active after resize; " +
+                "Target app: portrait-shaped app bounds active after resize; " +
                     (geometry?.describe() ?: "activity geometry unavailable") +
                     "; " + describeTargetTask(taskId)
             return true
@@ -1361,7 +1167,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         if (hasTargetPortraitBounds(taskId)) {
             val geometry = getTargetActivityGeometry(taskId)
             targetPortraitStatus =
-                "Target game: portrait-shaped app bounds active in freeform; " +
+                "Target app: portrait-shaped app bounds active in freeform; " +
                     (geometry?.describe() ?: "activity geometry unavailable") +
                     "; " + describeTargetTask(taskId)
             return true
@@ -1373,7 +1179,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         if (hasTargetPortraitBounds(taskId)) {
             val geometry = getTargetActivityGeometry(taskId)
             targetPortraitStatus =
-                "Target game: portrait-shaped app bounds active after shell resize; " +
+                "Target app: portrait-shaped app bounds active after shell resize; " +
                     (geometry?.describe() ?: "activity geometry unavailable") +
                     "; " + describeTargetTask(taskId)
             return true
@@ -1394,10 +1200,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
         targetPortraitStatus =
             if (details.isBlank()) {
-                "Target game: task changed but activity remained landscape; " +
+                "Target app: task changed but activity remained landscape; " +
                     activityGeometry + "; " + taskGeometry
             } else {
-                "Target game: portrait-shaped app bounds failed: " + details + "; " +
+                "Target app: portrait-shaped app bounds failed: " + details + "; " +
                     activityGeometry + "; " + taskGeometry
             }
 
@@ -1506,7 +1312,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             return null
         }
 
-        val geometry = PortraitActivityGeometry.parse(dump, TARGET_PACKAGE, taskId) ?: return null
+        val geometry = PortraitActivityGeometry.parse(dump, targetPackage, taskId) ?: return null
         return TargetActivityGeometry(geometry.width, geometry.height, geometry.orientation)
     }
 
@@ -1710,7 +1516,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         fallbackTaskStateFile.readLines().map { it.trim().toInt() }.distinct().forEach { id ->
             val info = tasks.firstOrNull { it.taskId == id } ?: return@forEach
             val owner = info.baseActivity?.packageName ?: info.baseIntent.component?.packageName
-            if (owner != TARGET_PACKAGE) {
+            if (owner != targetPackage) {
                 if (owner == null) pending.add(id)
                 return@forEach
             }
@@ -1795,13 +1601,6 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         return runCommand("/system/bin/getprop", "ro.build.version.sdk")
             .trim()
             .toIntOrNull() ?: 0
-    }
-
-    private fun restoreNormalRotationBestEffort() {
-        try {
-            restoreNormalRotation()
-        } catch (_: Throwable) {
-        }
     }
 
     private fun runWmHelp(): String {
