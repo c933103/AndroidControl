@@ -7,6 +7,8 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.lifecycle.Observer
 import kotlinx.coroutines.Dispatchers
@@ -141,13 +143,15 @@ class AdbPairingService : Service() {
     }
 
     private fun onInput(code: String, port: Int): Notification {
-        GlobalScope.launch(Dispatchers.IO) {
+        // Post after onStartCommand has installed the working notification, so an
+        // immediate key error cannot be overwritten by startForeground afterward.
+        Handler(Looper.getMainLooper()).post { GlobalScope.launch(Dispatchers.IO) {
             val host = "127.0.0.1"
 
             val key = try {
                 AdbKey(PreferenceAdbKeyStore(ShizukuSettings.getPreferences()), "shizuku")
             } catch (e: Throwable) {
-                e.printStackTrace()
+                handleResult(false, AdbKeyException(e))
                 return@launch
             }
 
@@ -158,12 +162,13 @@ class AdbPairingService : Service() {
             }.onSuccess {
                 handleResult(it, null)
             }
-        }
+        } }
 
         return workingNotification
     }
 
     private fun handleResult(success: Boolean, exception: Throwable?) {
+        stopSearch()
         stopForeground(STOP_FOREGROUND_REMOVE)
 
         val title: String
@@ -175,7 +180,6 @@ class AdbPairingService : Service() {
             title = getString(R.string.notification_adb_pairing_succeed_title)
             text = getString(R.string.notification_adb_pairing_succeed_text)
 
-            stopSearch()
         } else {
             title = getString(R.string.notification_adb_pairing_failed_title)
 
@@ -208,6 +212,15 @@ class AdbPairingService : Service() {
                 .setSmallIcon(R.drawable.ic_system_icon)
                 .setContentTitle(title)
                 .setContentText(text)
+                .apply {
+                    if (exception is AdbKeyException) {
+                        val intent = Intent(this@AdbPairingService, AdbPairingTutorialActivity::class.java)
+                            .putExtra(AdbPairingTutorialActivity.EXTRA_KEY_ERROR, true)
+                        setContentIntent(PendingIntent.getActivity(this@AdbPairingService, 4, intent,
+                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+                        setAutoCancel(true)
+                    }
+                }
                 /*.apply {
                     if (!success) {
                         addAction(retryNotificationAction)

@@ -21,6 +21,10 @@ import rikka.compatibility.DeviceCompatibility
 @RequiresApi(Build.VERSION_CODES.R)
 class AdbPairingTutorialActivity : AppBarActivity() {
 
+    companion object {
+        const val EXTRA_KEY_ERROR = "wireless_debugging_key_error"
+    }
+
     private lateinit var binding: AdbPairingTutorialActivityBinding
 
     private var notificationEnabled: Boolean = false
@@ -35,8 +39,15 @@ class AdbPairingTutorialActivity : AppBarActivity() {
 
         notificationEnabled = isNotificationEnabled()
 
-        if (notificationEnabled) {
+        val keyError = intent.getBooleanExtra(EXTRA_KEY_ERROR, false)
+        if (notificationEnabled && !keyError) {
             startPairingService()
+        }
+        if (keyError) {
+            AdbKeyRecovery.show(this) {
+                intent.removeExtra(EXTRA_KEY_ERROR)
+                if (notificationEnabled) startPairingService()
+            }
         }
 
         binding.apply {

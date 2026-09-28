@@ -1,6 +1,9 @@
 package moe.shizuku.manager.regression
 
 import android.app.Instrumentation
+import android.app.Notification
+import android.app.NotificationManager
+import android.app.RemoteInput
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -10,11 +13,15 @@ import android.view.View
 import android.widget.TextView
 import moe.shizuku.manager.ShizukuSettings
 import moe.shizuku.manager.MainActivity
+import moe.shizuku.manager.R
+import moe.shizuku.manager.adb.AdbPairingService
+import moe.shizuku.manager.adb.AdbPairingTutorialActivity
 import moe.shizuku.manager.adb.AdbKey
 import moe.shizuku.manager.adb.AdbKeyStore
 import moe.shizuku.manager.adb.PreferenceAdbKeyStore
 import moe.shizuku.manager.control.TargetPortraitDisplayActivity
 import java.security.MessageDigest
+import java.security.KeyStore
 import java.util.concurrent.Executors
 import rikka.shizuku.Shizuku
 
@@ -42,6 +49,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
                 "fresh-reopen" -> check(fingerprint(freshStore()) == testPreferences().getString("freshFingerprint", null)) {
                     "New pairing identity was not durable before returning to the caller"
                 }
+                "key-recovery" -> checkKeyRecovery()
                 "display" -> checkDisplay()
                 else -> error("Unknown regression phase")
             }
@@ -120,6 +128,48 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         try { AdbKey(corruptStore, "test") } catch (_: IllegalStateException) { failed = true }
         check(failed && writes == 0) { "Unreadable ADB key was silently replaced" }
         checkPairingIdentity()
+    }
+
+    private fun checkKeyRecovery() {
+        val preferences = ShizukuSettings.getPreferences()
+        val encrypted = preferences.getString("adbkey", null)
+        val oldFingerprint = fingerprint()
+        check(preferences.edit().putInt("regression_sentinel", 42).commit())
+        // Simulate the permanent error in this isolated emulator app's namespace.
+        KeyStore.getInstance("AndroidKeyStore").apply {
+            load(null)
+            deleteEntry("_adbkey_encryption_key_")
+        }
+        check(runCatching { fingerprint() }.isFailure)
+        check(preferences.getString("adbkey", null) == encrypted)
+
+        startActivitySync(Intent(targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        val reply = Intent(targetContext, AdbPairingService::class.java)
+            .setAction("reply").putExtra("paring_code", 1)
+        RemoteInput.addResultsToIntent(arrayOf(RemoteInput.Builder("paring_code").build()), reply,
+            Bundle().apply { putCharSequence("paring_code", "123456") })
+        targetContext.startForegroundService(reply)
+        val notifications = targetContext.getSystemService(NotificationManager::class.java)
+        var failure: Notification? = null
+        val deadline = SystemClock.uptimeMillis() + 10000
+        while (SystemClock.uptimeMillis() < deadline) {
+            failure = notifications.activeNotifications.firstOrNull {
+                it.notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ==
+                    targetContext.getString(R.string.adb_error_key_store)
+            }?.notification
+            if (failure != null) break
+            SystemClock.sleep(100)
+        }
+        check(failure != null) { "Key failure left pairing stuck on working notification" }
+        check(failure!!.flags and Notification.FLAG_FOREGROUND_SERVICE == 0)
+        check(failure!!.contentIntent != null) { "No route to pairing-key recovery" }
+        check(preferences.getString("adbkey", null) == encrypted) { "Failure silently reset the pairing key" }
+
+        // Only an explicit user-confirmed reset invokes this operation.
+        AdbKey.resetPairing(preferences)
+        check(!preferences.contains("adbkey"))
+        check(preferences.getInt("regression_sentinel", 0) == 42)
+        check(fingerprint() != oldFingerprint) { "Explicit reset did not create a usable new identity" }
     }
 
     private fun checkDisplay() {

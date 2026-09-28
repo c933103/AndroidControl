@@ -49,6 +49,13 @@ class AdbKey(private val adbKeyStore: AdbKeyStore, name: String) {
         private const val TAG_SIZE_IN_BYTES = 16
         private val KEY_LOCK = Any()
 
+        /** Only called after the user explicitly confirms resetting wireless pairing. */
+        fun resetPairing(preferences: SharedPreferences) = synchronized(KEY_LOCK) {
+            val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+            check(preferences.edit().remove("adbkey").commit()) { "Could not reset wireless pairing" }
+            keyStore.deleteEntry(ENCRYPTION_KEY_ALIAS)
+        }
+
         private val PADDING = byteArrayOf(
                 0x00, 0x01, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
                 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,

@@ -35,10 +35,12 @@ run_phase seed || result=1
 run_phase reopen || result=1
 # A real package replacement, without clearing app data or Keystore.
 adb install -r manager/build/outputs/apk/debug/*.apk
+adb shell pm grant "$package" android.permission.POST_NOTIFICATIONS
 run_phase upgrade || result=1
 run_phase key-failure || result=1
 run_phase fresh || result=1
 run_phase fresh-reopen || result=1
+run_phase key-recovery || result=1
 
 adb install "$test_dir/aligned.apk"
 apk_path=$(adb shell pm path "$package" | sed 's/^package://' | tr -d '\r')
