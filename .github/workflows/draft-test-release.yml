@@ -1,0 +1,84 @@
+name: Draft test release
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Require stable signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_TEST_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: androidcontrol-test-v1
+          KEYSTORE_ALIAS: androidcontrol-test
+          KEYSTORE_ALIAS_PASSWORD: androidcontrol-test-v1
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::ANDROID_TEST_KEYSTORE_B64 is not configured. Refusing to create an APK with an ephemeral runner debug key."
+            exit 1
+          fi
+          {
+            echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+            echo "KEYSTORE_ALIAS=$KEYSTORE_ALIAS"
+            echo "KEYSTORE_ALIAS_PASSWORD=$KEYSTORE_ALIAS_PASSWORD"
+            echo "KEYSTORE_FILE=../key.jks"
+          } > signing.properties
+          echo "$KEYSTORE_B64" | base64 --decode > key.jks
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Accept Android SDK licenses
+        run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
+
+      - name: Build debug APK
+        run: ./gradlew :manager:assembleDebug
+
+      - name: Verify permanent signing identity
+        shell: bash
+        run: |
+          expected_cert=5f3ab2f36ce4a7856c12b1744b799ff775e6f74f05c0bd2c9d8db824674b7ef1
+          for apk in manager/build/outputs/apk/debug/*.apk; do
+            cert_info=$("$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk")
+            echo "$cert_info"
+            actual_cert=$(echo "$cert_info" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr '[:upper:]' '[:lower:]')
+            if [ "$actual_cert" != "$expected_cert" ]; then
+              echo "::error::APK does not match the established permanent signing certificate."
+              exit 1
+            fi
+          done
+
+      - name: Prepare release metadata
+        id: meta
+        shell: bash
+        run: |
+          short_sha="${GITHUB_SHA::7}"
+          echo "tag=androidcontrol-test-${short_sha}" >> "$GITHUB_OUTPUT"
+          echo "title=AndroidControl test ${short_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "${{ steps.meta.outputs.tag }}"             manager/build/outputs/apk/debug/*.apk             --repo "$GITHUB_REPOSITORY"             --target "$GITHUB_SHA"             --title "${{ steps.meta.outputs.title }}"             --notes "Private test build from merged master. Debug APK signed with the verified permanent test key. Portrait container and restoration changes require device validation. Not published."             --draft             --prerelease
