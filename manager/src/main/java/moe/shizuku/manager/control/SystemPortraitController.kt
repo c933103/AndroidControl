@@ -1,5 +1,6 @@
 package moe.shizuku.manager.control
 
+import android.os.SystemClock
 import android.util.AtomicFile
 import org.json.JSONObject
 import java.io.File
@@ -58,7 +59,9 @@ internal class SystemPortraitController(
             wm("user-rotation", "-d", "0", "lock", portraitRotation().toString())
             wm("fixed-to-user-rotation", "-d", "0", "enabled")
             wm("set-ignore-orientation-request", "-d", "0", "true")
-            check(isEnabled()) { "System-wide portrait policy did not apply" }
+            check(awaitPolicy { isEnabled() }) {
+                "System-wide portrait policy did not apply: " + snapshot().toString()
+            }
         } catch (t: Throwable) {
             try { restore() } catch (cleanup: Throwable) { t.addSuppressed(cleanup) }
             throw t
@@ -67,6 +70,15 @@ internal class SystemPortraitController(
     }
 
     @Synchronized fun toggle(): Boolean = setEnabled(!hasOverride())
+
+    private fun awaitPolicy(ready: () -> Boolean): Boolean {
+        val deadline = SystemClock.uptimeMillis() + 5000
+        do {
+            if (ready()) return true
+            SystemClock.sleep(100)
+        } while (SystemClock.uptimeMillis() < deadline)
+        return false
+    }
 
     private fun restore() {
         if (!hasOverride()) return
@@ -78,12 +90,23 @@ internal class SystemPortraitController(
         attempt("set-ignore-orientation-request", "-d", "0", previous.getBoolean("ignore").toString())
         attempt("fixed-to-user-rotation", "-d", "0", previous.getString("fixed"))
         attempt("user-rotation", "-d", "0", "lock", previous.getInt("rotation").toString())
-        if (previous.getBoolean("free")) attempt("user-rotation", "-d", "0", "free")
+        if (previous.getBoolean("free")) {
+            // Android updates its cached user angle asynchronously. Thawing before
+            // that observer runs would write the previous (forced) angle back.
+            try {
+                check(awaitPolicy { wm("user-rotation", "-d", "0") == "lock ${previous.getInt("rotation")}" }) {
+                    "Previous rotation angle is not ready"
+                }
+                attempt("user-rotation", "-d", "0", "free")
+            } catch (t: Throwable) { failures.add(t) }
+        }
         if (failures.isNotEmpty()) {
             throw IllegalStateException("System rotation restoration is incomplete; tap Restore to retry", failures.first())
         }
-        val restored = snapshot()
-        check(listOf("free", "rotation", "fixed", "ignore").all { restored.get(it) == previous.get(it) }) { "System rotation restoration did not verify; tap Restore to retry" }
+        check(awaitPolicy {
+            val restored = snapshot()
+            listOf("free", "rotation", "fixed", "ignore").all { restored.get(it) == previous.get(it) }
+        }) { "System rotation restoration did not verify; tap Restore to retry" }
         journal.delete()
     }
 }
