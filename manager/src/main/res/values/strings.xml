@@ -68,8 +68,8 @@
     <string name="adb_files_root_summary">Files accessible to the current Shizuku service identity</string>
 
     <!-- Home - Global orientation control -->
-    <string name="home_orientation_title">Target app portrait display</string>
-    <string name="home_orientation_description_normal">Run game.qualiarts.hololive.dreams.jp on a separate portrait-shaped logical display. The game remains landscape-only; AndroidControl forces its resizable task to fill a display whose height exceeds its width.</string>
+    <string name="home_orientation_title">Portrait controls</string>
+    <string name="home_orientation_description_normal">Run the selected app in a separate portrait display. Its own orientation policy is kept. Press Back to close the portrait session and reopen the app normally.</string>
     <string name="home_orientation_description_forced">The legacy global portrait mode is active.</string>
     <string name="home_orientation_description_connecting">Connecting to the privileged control service…</string>
     <string name="home_orientation_description_working">Applying display orientation…</string>
@@ -79,7 +79,7 @@
     <string name="home_orientation_open_display">Open portrait display</string>
     <string name="home_orientation_restore">Restore normal rotation</string>
     <string name="home_orientation_retry">Retry</string>
-    <string name="home_orientation_target_waiting">Target game: portrait display inactive.</string>
+    <string name="home_orientation_target_waiting">Target app: portrait display inactive.</string>
     <string name="target_portrait_display_starting">Preparing portrait display…</string>
     <string name="target_portrait_display_bad_size">Portrait display surface has invalid dimensions.</string>
     <string name="target_portrait_display_create_failed">Could not create the portrait logical display.</string>
@@ -197,4 +197,20 @@ With %1$s, in any terminal app, you can connect to and interact with the shell r
     <string name="dialog_requesting_legacy_message"><![CDATA[<b>%1$s</b> has modern Shizuku support, but it\'s requesting legacy Shizuku. This could because Shizuku is not running, please check in Shizuku app.<p>Legacy Shizuku has been deprecated since March 2019.]]></string>
     <string name="dialog_requesting_legacy_button_open_shizuku">Open Shizuku</string>
 
+    <string name="orientation_target_title">Target app portrait display</string>
+    <string name="orientation_change_target">Change target package</string>
+    <string name="orientation_target_package">Target package: %1$s</string>
+    <string name="orientation_target_hint">Android package name</string>
+    <string name="orientation_target_help">Choose an installed app by package name. This selection is saved for future launches; a running session keeps its original target.</string>
+    <string name="orientation_target_save">Save target</string>
+    <string name="orientation_system_title">System-wide portrait</string>
+    <string name="orientation_system_description">Apply Android’s orientation override to the phone’s main display across apps. Restore returns to the previous rotation settings. Availability and app compatibility depend on the Android build.</string>
+    <string name="orientation_system_enable">Enable system-wide portrait</string>
+    <string name="orientation_system_restore">Restore system rotation</string>
+    <string name="orientation_system_inactive">System-wide override is off.</string>
+    <string name="orientation_system_active">System-wide portrait is enabled.</string>
+    <string name="orientation_system_pending">Saved rotation settings are waiting to be restored.</string>
+    <string name="orientation_system_unsupported">This Android build does not expose the required system-wide orientation controls.</string>
+    <string name="orientation_system_clear_existing">Clear existing system portrait lock</string>
+    <string name="orientation_system_existing">Portrait is already forced, with no saved earlier settings. Clear returns to Android’s default rotation policy with auto-rotate enabled.</string>
 </resources>

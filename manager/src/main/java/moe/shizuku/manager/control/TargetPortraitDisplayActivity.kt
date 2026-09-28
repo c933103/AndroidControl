@@ -33,6 +33,9 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
     private var launched = false
     private var startAttempted = false
     private val hostToken = Binder()
+    private val packageNameForSession by lazy {
+        PortraitTarget.validate(intent.getStringExtra("portrait_target_package") ?: PortraitTarget.get())
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -111,7 +114,7 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION
 
         virtualDisplay = try { displayManager.createVirtualDisplay(
-            "AndroidControl-TargetApp-Portrait",
+            "AndroidControl-Target-Portrait",
             virtualWidth,
             virtualHeight,
             resources.displayMetrics.densityDpi,
@@ -141,7 +144,8 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
             displayId,
             virtualWidth,
             virtualHeight,
-            hostToken
+            hostToken,
+            packageNameForSession
         ) { ok, status ->
             if (stopping || isDestroyed) return@start
             launched = ok

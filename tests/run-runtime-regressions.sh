@@ -6,7 +6,8 @@ trap 'rm -rf "$test_dir"' EXIT
 build_tools="$ANDROID_HOME/build-tools/36.0.0"
 android_jar="$ANDROID_HOME/platforms/android-36/android.jar"
 test "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" = 1
-test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = 33
+sdk=$(adb shell getprop ro.build.version.sdk | tr -d '\r')
+[[ "$sdk" = 33 || "$sdk" = 35 ]]
 mkdir -p "$test_dir/classes" "$test_dir/dex" runtime-results
 
 javac --release 8 -cp "$android_jar" -d "$test_dir/classes" tests/portrait-fixture/RegressionGame.java
@@ -19,6 +20,15 @@ jar --create --file "$test_dir/classes.jar" -C "$test_dir/classes" .
 keytool -genkeypair -keystore "$test_dir/fixture.jks" -storepass android -keypass android \
     -alias fixture -keyalg RSA -keysize 2048 -validity 2 -dname 'CN=Runtime Test Fixture' >/dev/null 2>&1
 "$build_tools/apksigner" sign --ks "$test_dir/fixture.jks" --ks-pass pass:android "$test_dir/aligned.apk"
+
+# A different installed package exercises selection rather than the old hard-coded target.
+sed -e 's/package="game.qualiarts.hololive.dreams.jp"/package="org.androidcontrol.regression.other"/' \
+    -e 's/android:name=".RegressionGame"/android:name="game.qualiarts.hololive.dreams.jp.RegressionGame"/' \
+    tests/portrait-fixture/AndroidManifest.xml > "$test_dir/AndroidManifest.xml"
+"$build_tools/aapt2" link -I "$android_jar" --manifest "$test_dir/AndroidManifest.xml" -o "$test_dir/other.apk"
+(cd "$test_dir/dex" && zip -q "$test_dir/other.apk" classes.dex)
+"$build_tools/zipalign" -p 4 "$test_dir/other.apk" "$test_dir/other-aligned.apk"
+"$build_tools/apksigner" sign --ks "$test_dir/fixture.jks" --ks-pass pass:android "$test_dir/other-aligned.apk"
 
 package=moe.shizuku.privileged.api
 runner="$package.test/moe.shizuku.manager.regression.RuntimeRegressionInstrumentation"
@@ -43,6 +53,7 @@ run_phase fresh-reopen || result=1
 run_phase key-recovery || result=1
 
 adb install "$test_dir/aligned.apk"
+adb install "$test_dir/other-aligned.apk"
 apk_path=$(adb shell pm path "$package" | sed 's/^package://' | tr -d '\r')
 adb shell "${apk_path%/*}/lib/x86_64/libshizuku.so --apk=$apk_path"
 adb logcat -c
@@ -53,4 +64,7 @@ adb logcat -d -s AndroidRuntime ShizukuServer AndroidControlService > runtime-re
 adb exec-out screencap -p > runtime-results/screen.png
 adb shell run-as game.qualiarts.hololive.dreams.jp cat files/touches | tee runtime-results/touches.txt || result=1
 grep -q touch runtime-results/touches.txt || result=1
+run_phase select-target || result=1
+run_phase separate-controls || result=1
+adb logcat -d -s AndroidRuntime ShizukuServer AndroidControlService > runtime-results/final-log.txt
 exit "$result"

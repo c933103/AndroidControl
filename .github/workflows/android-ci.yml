@@ -11,7 +11,11 @@ on:
   workflow_dispatch:
 
 jobs:
-  android-13-runtime:
+  android-runtime:
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [33, 35]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -42,7 +46,7 @@ jobs:
       - name: Check APK update, key preservation, display host and forwarded touches
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 33
+          api-level: ${{ matrix.api }}
           target: google_apis
           arch: x86_64
           disable-animations: true
@@ -50,7 +54,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: android-13-runtime-results
+          name: android-${{ matrix.api }}-runtime-results
           path: runtime-results
 
   android-13-parser:

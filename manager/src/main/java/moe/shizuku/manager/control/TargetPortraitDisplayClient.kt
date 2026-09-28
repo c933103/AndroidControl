@@ -115,6 +115,7 @@ object TargetPortraitDisplayClient {
         width: Int,
         height: Int,
         hostToken: IBinder,
+        packageName: String,
         callback: (Boolean, String?) -> Unit
     ) {
         withService({ service ->
@@ -124,7 +125,8 @@ object TargetPortraitDisplayClient {
                         displayId,
                         width,
                         height,
-                        hostToken
+                        hostToken,
+                        packageName
                     )
                     val status = try {
                         service.targetPortraitStatus
