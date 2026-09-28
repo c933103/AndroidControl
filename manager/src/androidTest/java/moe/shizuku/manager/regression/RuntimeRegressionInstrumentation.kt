@@ -193,8 +193,21 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
     private fun controlRecordExists(name: String): Boolean = shell("ls /data/local/tmp")
         .lineSequence().any { it.trim() == name }
 
+    private fun openManager() {
+        // NEW_TASK can reuse the current activity, so startActivitySync would
+        // wait forever for an onCreate callback that Android will not send.
+        runOnMainSync {
+            targetContext.startActivity(Intent(targetContext, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+    }
+
+    private fun checkpoint(message: String) {
+        sendStatus(0, Bundle().apply { putString("checkpoint", message) })
+    }
+
     private fun controlService(): IAndroidControlService {
-        startActivitySync(Intent(targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        openManager()
         val deadline = SystemClock.uptimeMillis() + 10000
         while (!Shizuku.pingBinder() && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(100)
         check(Shizuku.pingBinder())
@@ -252,18 +265,21 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         check(!controlRecordExists("androidcontrol-hololive-dreams-compat")) {
             "System-wide mode applied target compatibility flags"
         }
+        checkpoint("system enabled; restarting daemon")
         runCatching { service.destroy() }
         val restartDeadline = SystemClock.uptimeMillis() + 5000
         while (service.asBinder().pingBinder() && SystemClock.uptimeMillis() < restartDeadline) SystemClock.sleep(100)
         check(!service.asBinder().pingBinder())
         service = controlService()
         check(service.hasSystemPortraitOverride() && service.isForcePortraitEnabled)
+        checkpoint("snapshot retained after daemon restart; launching selected target")
         val activity = checkDisplay()
         check(rotationSnapshot() == forced) { "Target launch changed the system-wide override" }
         check(shell("cat /data/local/tmp/androidcontrol-portrait-target-package") == otherPackage)
         check(shell("run-as $otherPackage cat files/touches").contains("touch"))
         // Changing the next selection must not retarget this session's cleanup.
         PortraitTarget.save(PortraitTarget.DEFAULT_PACKAGE)
+        checkpoint("selected target received touch; closing session")
         closeDisplay(activity)
         check(rotationSnapshot() == forced) { "Target restoration disabled the global mode" }
         check(!controlRecordExists("androidcontrol-portrait-target-package"))
@@ -271,12 +287,14 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         service.setForcePortrait(false)
         check(!service.hasSystemPortraitOverride())
         check(rotationSnapshot() == previous) { "Previous manual rotation policy was not restored" }
+        checkpoint("manual rotation restored")
         // Also verify an automatically rotating display restores its remembered angle.
         shell("wm user-rotation -d 0 free")
         val automatic = rotationSnapshot()
         service.setForcePortrait(true)
         service.setForcePortrait(false)
         check(rotationSnapshot() == automatic) { "Automatic rotation was not restored" }
+        checkpoint("automatic rotation restored")
         // Upgrade from a pre-journal version must still offer an explicit way out.
         shell("wm user-rotation -d 0 lock 0")
         shell("wm fixed-to-user-rotation -d 0 enabled")
@@ -301,8 +319,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
     }
 
     private fun checkDisplay(): TargetPortraitDisplayActivity {
-        startActivitySync(Intent(targetContext, MainActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        openManager()
         val binderDeadline = SystemClock.uptimeMillis() + 10000
         while (!Shizuku.pingBinder() && SystemClock.uptimeMillis() < binderDeadline) {
             SystemClock.sleep(100)
