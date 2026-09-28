@@ -46,15 +46,16 @@ internal class SystemPortraitController(
     @Synchronized fun setEnabled(enabled: Boolean): Boolean {
         check(isSupported()) { "This Android build does not support system-wide portrait controls" }
         if (!enabled) {
+            if (!hasOverride() && isEnabled()) {
+                // Explicitly clearing a pre-journal policy: its original settings
+                // are unknown, so the UI offers normal Android defaults.
+                saveSnapshot(JSONObject().put("free", true).put("rotation", portraitRotation())
+                    .put("fixed", "default").put("ignore", false))
+            }
             restore()
             return isEnabled()
         }
-        if (!hasOverride()) {
-            val bytes = snapshot().toString().toByteArray(Charsets.UTF_8)
-            val stream = journal.startWrite()
-            try { stream.write(bytes); journal.finishWrite(stream) }
-            catch (t: Throwable) { journal.failWrite(stream); throw t }
-        }
+        if (!hasOverride()) saveSnapshot(snapshot())
         try {
             wm("user-rotation", "-d", "0", "lock", portraitRotation().toString())
             wm("fixed-to-user-rotation", "-d", "0", "enabled")
@@ -69,7 +70,13 @@ internal class SystemPortraitController(
         return true
     }
 
-    @Synchronized fun toggle(): Boolean = setEnabled(!hasOverride())
+    private fun saveSnapshot(previous: JSONObject) {
+        val stream = journal.startWrite()
+        try { stream.write(previous.toString().toByteArray(Charsets.UTF_8)); journal.finishWrite(stream) }
+        catch (t: Throwable) { journal.failWrite(stream); throw t }
+    }
+
+    @Synchronized fun toggle(): Boolean = setEnabled(!hasOverride() && !isEnabled())
 
     private fun awaitPolicy(ready: () -> Boolean): Boolean {
         val deadline = SystemClock.uptimeMillis() + 5000
