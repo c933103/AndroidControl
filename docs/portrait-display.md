@@ -2,7 +2,7 @@
 
 ## Required behavior
 
-Only `game.qualiarts.hololive.dreams.jp` is targeted. The game retains its landscape-only orientation policy. AndroidControl supplies a separate logical display with width less than height, puts the game in a resizable/freeform task filling that display, and presents the display in a fullscreen portrait host with touch forwarding.
+The target is configurable in the app; `game.qualiarts.hololive.dreams.jp` is the initial default. Only the selected package is targeted. The game retains its landscape-only orientation policy. AndroidControl supplies a separate logical display with width less than height, puts the game in a resizable/freeform task filling that display, and presents the display in a fullscreen portrait host with touch forwarding.
 
 The one-time, device-wide legacy recovery has already completed. Keep its UI retired and do not repeat its package scan as part of normal launch or restore. Normal changes to compatibility flags are confined to the target package. Temporary global freeform support settings must retain and restore their previous values.
 
@@ -55,3 +55,13 @@ That test reproduced the delayed failure: task bounds filled the portrait displa
 Pairing key loading now preserves existing ciphertext on read/decryption failure, serializes first-key creation and commits the encrypted key before returning it. The previous `apply()` could leave a just-created identity unsaved when the process was killed; the upgrade fixture explicitly flushes that old baseline to establish a valid saved identity, and separate fresh-key tests check the new production write without such a flush. A passing identity test does not establish why the user's specific update required pairing again.
 
 For a permanently missing or invalid encryption key, the error UI offers a separately confirmed reset of wireless pairing only. Ordinary failures never reset credentials. Notification pairing routes key errors through its failure handler and provides a link to that recovery UI. Native tests cover the missing-alias error, error notification, retained ciphertext before reset and preservation of other settings after explicit reset.
+
+## Configurable target and independent system control
+
+The home screen has separate target-display and system-wide sections. Change target package validates package syntax, rejects AndroidControl itself and packages without a launcher, and saves the choice in the existing app preferences. The host captures the selection at launch. The privileged daemon persists that session’s package before changing compatibility/task state, and restores the previous session before accepting another package. Ledgers from older builds without a package owner belong to the original Hololive Dreams default. Editing the selection during a session affects the next launch; Back still restores and reopens the session’s original app.
+
+The system-wide button only changes display 0 user rotation, fixed-to-user rotation and ignore-orientation-request. It does not launch apps or apply per-package overrides. The button is enabled when the build advertises the modern query/set commands; a blanket Android-version threshold would misidentify OEM capabilities. A durable snapshot retains the previous rotation mode, remembered angle, fixed rotation policy and ignore-orientation policy. Restore replays and verifies that snapshot, retaining it if anything fails. This mode does not promise to reflow every app’s internal UI.
+
+Target display launch no longer runs the historical display-0 auto-cleanup. Target and system-wide settings can therefore coexist; closing a target session does not disable the independent system-wide setting. The retired legacy recovery UI and broad package scan stay retired.
+
+Native regression coverage includes a second installed landscape-only package, validation and saved selection across manager restart, target launch and touch forwarding while system-wide mode is enabled, editing the next target before Back, and restoring both locked and automatic main-display rotation. These run on Android 13 and Android 15 alongside the existing pairing and portrait-parser regressions.

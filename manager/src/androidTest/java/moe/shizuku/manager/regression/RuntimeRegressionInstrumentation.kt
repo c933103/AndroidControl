@@ -4,6 +4,10 @@ import android.app.Instrumentation
 import android.app.Notification
 import android.app.NotificationManager
 import android.app.RemoteInput
+import android.content.ComponentName
+import android.content.ServiceConnection
+import android.os.IBinder
+import android.os.ParcelFileDescriptor
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -13,6 +17,11 @@ import android.view.View
 import android.widget.TextView
 import moe.shizuku.manager.ShizukuSettings
 import moe.shizuku.manager.MainActivity
+import moe.shizuku.manager.BuildConfig
+import moe.shizuku.manager.control.AndroidControlService
+import moe.shizuku.manager.control.IAndroidControlService
+import moe.shizuku.manager.control.OrientationControlClient
+import moe.shizuku.manager.control.PortraitTarget
 import moe.shizuku.manager.R
 import moe.shizuku.manager.adb.AdbPairingService
 import moe.shizuku.manager.adb.AdbPairingTutorialActivity
@@ -23,6 +32,8 @@ import moe.shizuku.manager.control.TargetPortraitDisplayActivity
 import java.security.MessageDigest
 import java.security.KeyStore
 import java.util.concurrent.Executors
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import rikka.shizuku.Shizuku
 
 /** Runs in the installed app UID, with the real Android Keystore and display host. */
@@ -51,6 +62,8 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
                 }
                 "key-recovery" -> checkKeyRecovery()
                 "display" -> checkDisplay()
+                "select-target" -> selectTarget()
+                "separate-controls" -> checkSeparateControls()
                 else -> error("Unknown regression phase")
             }
             finish(-1, Bundle().apply { putString("regression", "PASS ${args.getString("phase")}") })
@@ -172,7 +185,101 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         check(fingerprint() != oldFingerprint) { "Explicit reset did not create a usable new identity" }
     }
 
-    private fun checkDisplay() {
+    private val otherPackage = "org.androidcontrol.regression.other"
+
+    private fun shell(command: String): String = ParcelFileDescriptor.AutoCloseInputStream(
+        uiAutomation.executeShellCommand(command)).bufferedReader().use { it.readText().trim() }
+
+    private fun controlService(): IAndroidControlService {
+        startActivitySync(Intent(targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        val deadline = SystemClock.uptimeMillis() + 10000
+        while (!Shizuku.pingBinder() && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(100)
+        check(Shizuku.pingBinder())
+        var service: IAndroidControlService? = null
+        val ready = CountDownLatch(1)
+        val connection = object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+                service = IAndroidControlService.Stub.asInterface(binder)
+                ready.countDown()
+            }
+            override fun onServiceDisconnected(name: ComponentName) {}
+        }
+        runOnMainSync {
+            Shizuku.bindUserService(Shizuku.UserServiceArgs(ComponentName(BuildConfig.APPLICATION_ID,
+                AndroidControlService::class.java.name)).daemon(true).processNameSuffix("android_control")
+                .debuggable(BuildConfig.DEBUG).version(BuildConfig.VERSION_CODE), connection)
+        }
+        check(ready.await(15, TimeUnit.SECONDS)) { "Control service bind timed out" }
+        return service!!
+    }
+
+    private fun selectTarget() {
+        val service = controlService()
+        check(runCatching { service.validateTargetPackage("bad;package") }.isFailure)
+        check(runCatching { service.validateTargetPackage(BuildConfig.APPLICATION_ID) }.isFailure)
+        check(runCatching { service.validateTargetPackage("org.androidcontrol.missing.app") }.isFailure)
+        runOnMainSync { OrientationControlClient.connect() }
+        val deadline = SystemClock.uptimeMillis() + 15000
+        while (!OrientationControlClient.state.available && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(100)
+        val saved = CountDownLatch(1)
+        var failure: String? = "No callback"
+        OrientationControlClient.saveTargetPackage(otherPackage) { error -> failure = error; saved.countDown() }
+        check(saved.await(10, TimeUnit.SECONDS))
+        check(failure == null) { "Target selection failed: $failure" }
+        check(PortraitTarget.get() == otherPackage)
+    }
+
+    private fun rotationSnapshot(): String = listOf(
+        "wm user-rotation -d 0", "wm fixed-to-user-rotation -d 0",
+        "wm get-ignore-orientation-request -d 0", "settings get system user_rotation"
+    ).joinToString("\n") { shell(it) }
+
+    private fun checkSeparateControls() {
+        // This phase runs in a fresh manager process after selection was saved.
+        check(PortraitTarget.get() == otherPackage) { "Target selection did not survive a restart" }
+        var service = controlService()
+        check(service.isSystemPortraitSupported)
+        shell("wm user-rotation -d 0 lock 1")
+        shell("wm fixed-to-user-rotation -d 0 disabled")
+        shell("wm set-ignore-orientation-request -d 0 false")
+        val previous = rotationSnapshot()
+        check(service.setForcePortrait(true))
+        val forced = rotationSnapshot()
+        check(service.hasSystemPortraitOverride())
+        check(shell("test ! -e /data/local/tmp/androidcontrol-hololive-dreams-compat && echo clean") == "clean") {
+            "System-wide mode applied target compatibility flags"
+        }
+        runCatching { service.destroy() }
+        val restartDeadline = SystemClock.uptimeMillis() + 5000
+        while (service.asBinder().pingBinder() && SystemClock.uptimeMillis() < restartDeadline) SystemClock.sleep(100)
+        check(!service.asBinder().pingBinder())
+        service = controlService()
+        check(service.hasSystemPortraitOverride() && service.isForcePortraitEnabled)
+        val activity = checkDisplay()
+        check(rotationSnapshot() == forced) { "Target launch changed the system-wide override" }
+        check(shell("cat /data/local/tmp/androidcontrol-portrait-target-package") == otherPackage)
+        check(shell("run-as $otherPackage cat files/touches").contains("touch"))
+        // Changing the next selection must not retarget this session's cleanup.
+        PortraitTarget.save(PortraitTarget.DEFAULT_PACKAGE)
+        runOnMainSync { activity.onBackPressed() }
+        val deadline = SystemClock.uptimeMillis() + 20000
+        while (!activity.isFinishing && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(100)
+        check(activity.isFinishing) { "Target session did not finish restoration" }
+        check(rotationSnapshot() == forced) { "Target restoration disabled the global mode" }
+        check(shell("test ! -e /data/local/tmp/androidcontrol-portrait-target-package && echo clean") == "clean")
+        check(shell("dumpsys activity activities").contains(otherPackage)) { "Back did not reopen the session's original target" }
+        service.setForcePortrait(false)
+        check(!service.hasSystemPortraitOverride())
+        check(rotationSnapshot() == previous) { "Previous manual rotation policy was not restored" }
+        // Also verify an automatically rotating display restores its remembered angle.
+        shell("wm user-rotation -d 0 free")
+        val automatic = rotationSnapshot()
+        service.setForcePortrait(true)
+        service.setForcePortrait(false)
+        check(rotationSnapshot() == automatic) { "Automatic rotation was not restored" }
+    }
+
+    private fun checkDisplay(): TargetPortraitDisplayActivity {
         startActivitySync(Intent(targetContext, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val binderDeadline = SystemClock.uptimeMillis() + 10000
@@ -215,5 +322,6 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         try { sendPointerSync(down); sendPointerSync(up) } finally { down.recycle(); up.recycle() }
         SystemClock.sleep(500)
         // The shell harness checks the fixture's persistent touch counter before cleanup.
+        return activity
     }
 }
