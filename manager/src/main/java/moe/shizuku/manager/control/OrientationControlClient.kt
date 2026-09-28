@@ -15,6 +15,9 @@ object OrientationControlClient {
     data class State(
         val available: Boolean = false,
         val forcedPortrait: Boolean? = null,
+        val systemSupported: Boolean = false,
+        val systemOverride: Boolean = false,
+        val busy: Boolean = false,
         val targetStatus: String? = null,
         val error: String? = null
     )
@@ -122,16 +125,17 @@ object OrientationControlClient {
 
         executor.execute {
             try {
-                val forced = service.isForcePortraitEnabled()
                 val targetStatus = service.targetPortraitStatus
-                publish(
-                    state.copy(
-                        available = true,
-                        forcedPortrait = forced,
-                        targetStatus = targetStatus,
-                        error = null
-                    )
-                )
+                var systemError: String? = null
+                val supported = service.isSystemPortraitSupported
+                val saved = service.hasSystemPortraitOverride()
+                val forced = try { service.isForcePortraitEnabled() } catch (t: Throwable) {
+                    systemError = t.message ?: t.javaClass.simpleName
+                    null
+                }
+                publish(State(available = true, forcedPortrait = forced,
+                    systemSupported = supported, systemOverride = saved,
+                    targetStatus = targetStatus, error = systemError))
             } catch (t: Throwable) {
                 remote = null
                 publish(State(error = t.message ?: t.javaClass.simpleName))
@@ -140,6 +144,7 @@ object OrientationControlClient {
     }
 
     fun toggle() {
+        if (state.busy) return
         val service = remote
         if (service == null || !service.asBinder().pingBinder()) {
             pendingToggle = true
@@ -147,6 +152,7 @@ object OrientationControlClient {
             return
         }
 
+        publish(state.copy(busy = true, error = null))
         executor.execute {
             try {
                 val forced = service.toggleForcePortrait()
@@ -155,6 +161,9 @@ object OrientationControlClient {
                     state.copy(
                         available = true,
                         forcedPortrait = forced,
+                        systemSupported = service.isSystemPortraitSupported,
+                        systemOverride = service.hasSystemPortraitOverride(),
+                        busy = false,
                         targetStatus = targetStatus,
                         error = null
                     )
@@ -164,10 +173,28 @@ object OrientationControlClient {
                     state.copy(
                         available = true,
                         forcedPortrait = state.forcedPortrait,
+                        systemOverride = runCatching { service.hasSystemPortraitOverride() }.getOrDefault(state.systemOverride),
+                        busy = false,
                         error = t.message ?: t.javaClass.simpleName
                     )
                 )
             }
+        }
+    }
+
+    fun saveTargetPackage(value: String, callback: (String?) -> Unit) {
+        val service = remote
+        if (service == null) {
+            mainHandler.post { callback("Start the privileged service first") }
+            return
+        }
+        executor.execute {
+            val failure = runCatching {
+                val name = PortraitTarget.validate(value)
+                service.validateTargetPackage(name)
+                PortraitTarget.save(name)
+            }.exceptionOrNull()
+            mainHandler.post { callback(failure?.message) }
         }
     }
 

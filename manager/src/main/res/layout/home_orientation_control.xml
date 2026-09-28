@@ -31,18 +31,38 @@
     </LinearLayout>
 
     <TextView
+        style="@style/CardContent"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="20dp"
+        android:textStyle="bold"
+        android:text="@string/orientation_target_title" />
+
+    <TextView
         android:id="@android:id/text1"
         style="@style/CardContent"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="24dp"
-        android:layout_marginBottom="24dp"
-        tools:text="@string/home_orientation_description_normal" />
+        android:layout_marginTop="8dp"
+        android:text="@string/home_orientation_description_normal" />
+
+    <TextView
+        android:id="@+id/target_package"
+        style="@style/CardSummary"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:textIsSelectable="true" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/change_target"
+        style="@style/CardButton"
+        android:text="@string/orientation_change_target" />
 
     <com.google.android.material.button.MaterialButton
         android:id="@android:id/button1"
         style="@style/CardButton"
-        android:text="@string/home_orientation_force"
+        android:text="@string/home_orientation_open_display"
         app:icon="@drawable/ic_screen_rotation_24dp" />
 
     <TextView
@@ -50,10 +70,34 @@
         style="@style/CardSummary"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="20dp"
-        android:layout_marginBottom="12dp"
-        tools:text="@string/home_orientation_target_waiting" />
+        android:layout_marginTop="12dp"
+        android:layout_marginBottom="20dp" />
 
+    <TextView
+        style="@style/CardContent"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textStyle="bold"
+        android:text="@string/orientation_system_title" />
 
+    <TextView
+        style="@style/CardContent"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="@string/orientation_system_description" />
 
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/system_portrait"
+        style="@style/CardButton"
+        android:text="@string/orientation_system_enable"
+        app:icon="@drawable/ic_screen_rotation_24dp" />
+
+    <TextView
+        android:id="@+id/system_status"
+        style="@style/CardSummary"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:layout_marginBottom="12dp" />
 </LinearLayout>
