@@ -145,23 +145,15 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
         ) { ok, status ->
             if (stopping || isDestroyed) return@start
             launched = ok
-            statusView.text =
-                status ?: if (ok) {
-                    getString(R.string.target_portrait_display_running)
-                } else {
-                    getString(R.string.target_portrait_display_launch_failed)
-                }
-
-            if (!ok) {
+            if (ok) {
+                // The detailed verification result remains available on the home
+                // screen; it must not cover the game when input becomes ready.
+                statusView.visibility = View.GONE
+            } else {
+                statusView.text = status ?: getString(R.string.target_portrait_display_launch_failed)
                 virtualDisplay?.release()
                 virtualDisplay = null
                 displayId = -1
-            }
-            if (ok) {
-                statusView.postDelayed(
-                    { statusView.visibility = View.GONE },
-                    1500
-                )
             }
         }
     }

@@ -5,7 +5,8 @@ import java.util.regex.Pattern;
 
 /** Reads only the current configuration of an exact activity/task, never a neighbour. */
 final class PortraitActivityGeometry {
-    private static final Pattern HEADER = Pattern.compile("^\\s*\\* Hist #\\d+: ActivityRecord\\{.*");
+    // Android 13 prints "Hist  #" (two spaces), unlike older dump formats.
+    private static final Pattern HEADER = Pattern.compile("^\\s*\\*\\s+Hist\\s+#\\d+:\\s+ActivityRecord\\{.*");
     private static final Pattern BOUNDS = Pattern.compile(
             "mAppBounds=Rect\\((-?\\d+),\\s*(-?\\d+)\\s*-\\s*(-?\\d+),\\s*(-?\\d+)\\)");
     final int width;

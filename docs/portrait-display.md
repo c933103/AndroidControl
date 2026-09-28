@@ -39,3 +39,19 @@ On-device acceptance is still required on the Sony Android 13 device:
 3. Exercise failed launch, immediate Back, host destruction and repeated start/stop. Verify no temporary portrait resize mode survives normal launch.
 
 CI proves compilation and the parser regression cases. It cannot prove Unity rendering or OEM display/input behavior without the device.
+
+## Broader requirements retained from the original discussion
+
+AndroidControl is a self-contained Shizuku-derived control toolbox, including its own pairing, server, terminal, root support and app authorization. There is no separate LADB installation in the user's setup. A stable APK signing certificate and the stored ADB pairing key are distinct identities; verifying the first does not test preservation of the second.
+
+The original discussion repeatedly identified the need for AndroidControl's own app identity while retaining its Shizuku functionality. The portrait-only audit missed this outstanding requirement. The user explicitly deferred that change on 2026-09-28 (Asia/Taipei); do not rename the package or disturb the installed pairing as part of the current fixes.
+
+Current device reports: pairing must be repeated after updates, and the game appears vertically before technical text covers it and interaction stops about two seconds later. Do not treat an earlier parser fix or successful APK compilation as verification of either behavior. The precise new on-device error text has not yet been obtained.
+
+The Android 13 runtime regression job installs the previous APK, creates its ADB identity, updates in place, and compares the identity using real app storage/Keystore. It also exercises the production portrait host against a landscape-only fixture and checks touch forwarding. The fixture is only installed in a fresh CI emulator and is never bundled into AndroidControl. It does not reproduce Unity or Sony-specific behavior.
+
+That test reproduced the delayed failure: task bounds filled the portrait display, but the parser rejected every real Android 13 activity header (`Hist  #`, with two spaces). It consequently reported geometry unavailable and tore the game down. The earlier parser tests had used invented headers with one space and missed this. The parser now accepts whitespace between header tokens, and the regression cases include the observed Android 13 format. Successful launch hides the host status immediately instead of briefly covering the game with technical diagnostics.
+
+Pairing key loading now preserves existing ciphertext on read/decryption failure, serializes first-key creation and commits the encrypted key before returning it. The previous `apply()` could leave a just-created identity unsaved when the process was killed; the upgrade fixture explicitly flushes that old baseline to establish a valid saved identity, and separate fresh-key tests check the new production write without such a flush. A passing identity test does not establish why the user's specific update required pairing again.
+
+For a permanently missing or invalid encryption key, the error UI offers a separately confirmed reset of wireless pairing only. Ordinary failures never reset credentials. Notification pairing routes key errors through its failure handler and provides a link to that recovery UI. Native tests cover the missing-alias error, error notification, retained ciphertext before reset and preservation of other settings after explicit reset.
