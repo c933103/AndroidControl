@@ -66,6 +66,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
                 "select-target" -> selectTarget()
                 "separate-controls" -> checkSeparateControls()
                 "external-dialog" -> checkExternalDialog()
+                "interrupted-handoff" -> checkInterruptedHandoff()
                 "lock-unlock" -> checkLockUnlock()
                 "shutdown-control" -> runCatching { controlService().destroy() }
                 "root-display" -> {
@@ -326,6 +327,8 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         check(rotationSnapshot() == automatic) { "Automatic rotation was not restored; expected=$automatic; actual=${rotationSnapshot()}" }
         checkpoint("automatic rotation restored")
         // Upgrade from a pre-journal version must still offer an explicit way out.
+        shell("wm user-rotation -d 0 lock")
+        awaitState("Pre-journal rotation baseline did not lock") { shell("wm user-rotation -d 0").startsWith("lock ") }
         shell("wm user-rotation -d 0 lock 0")
         awaitUserRotation("lock 0", 0)
         shell("wm fixed-to-user-rotation -d 0 enabled")
@@ -407,6 +410,14 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
             ready.contains("display=0;") && ready.contains("buttonVisible=true")
         }
         awaitState("Portrait host remained over the native transaction screen") { activity.isFinishing }
+        // Moving to display 0 can rotate it. A laid-out button is not yet
+        // tappable while WindowManager is freezing input for that transition.
+        awaitState("Native transaction window did not finish its display transition") {
+            val ready = shell("run-as org.androidcontrol.regression.checkout cat files/ready")
+            ready.contains("display=0;") && ready.contains("buttonVisible=true") &&
+                ready.contains("focused=true") &&
+                Regex("DispatchFrozen:\\s*(?:false|0)\\b").containsMatchIn(shell("dumpsys input"))
+        }
         checkpoint("secure external dialog and its bottom button are visible on the phone display")
         // Exercise the actual bottom control instead of invoking host Back, which
         // must not own/destroy this external activity or its result callback.
@@ -427,6 +438,30 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         awaitState("Target no longer receives input after dialog dismissal") { fixtureFile("touches").length > before.length }
         check(!controlRecordExists("androidcontrol-portrait-target-package"))
         check(!controlRecordExists("androidcontrol-portrait-native-handoff"))
+    }
+
+    private fun checkInterruptedHandoff() {
+        PortraitTarget.save(PortraitTarget.DEFAULT_PACKAGE)
+        val service = controlService()
+        val activity = checkDisplay()
+        val id = activity.javaClass.getDeclaredField("displayId").apply { isAccessible = true }.getInt(activity)
+        val pid = shell("pidof ${PortraitTarget.DEFAULT_PACKAGE}")
+        check(pid.isNotEmpty())
+        // Fault injection: a handoff record that cannot be read must fail closed,
+        // retaining the live process even when the host is then closed.
+        shell("sh -c 'printf interrupted > /data/local/tmp/androidcontrol-portrait-native-handoff'")
+        check(runCatching { service.stopTargetPortraitDisplay(id, false) }.isFailure)
+        runOnMainSync { activity.finish() }
+        SystemClock.sleep(1500)
+        check(shell("pidof ${PortraitTarget.DEFAULT_PACKAGE}") == pid) {
+            "Interrupted handoff cleanup killed the preserved game"
+        }
+        check(controlRecordExists("androidcontrol-portrait-native-handoff")) {
+            "Interrupted handoff discarded its retry record"
+        }
+        // Remove only this test's injected record. The next fixture launch owns
+        // normal restoration of the remaining target/task journal.
+        shell("rm /data/local/tmp/androidcontrol-portrait-native-handoff")
     }
 
     private fun checkLockUnlock() {

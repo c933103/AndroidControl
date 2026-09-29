@@ -741,7 +741,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             }
             restore { restoreAndroid13FallbackTasksBestEffort() }
             restore { restoreAndroid13SupportSettingsBestEffort() }
-            restore { restoreTargetPortraitCompat() }
+            restore { restoreTargetPortraitCompat(preserveProcess = preservingNativeTask) }
             targetPortraitDisplayId = -1
             portraitSurfaceAttached = false
             ownedPortraitDisplay?.release()

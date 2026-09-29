@@ -85,6 +85,7 @@ grep -q touch runtime-results/touches.txt || result=1
 run_phase select-target || result=1
 run_phase separate-controls || result=1
 run_phase external-dialog || result=1
+run_phase interrupted-handoff || result=1
 run_phase lock-unlock || result=1
 adb shell dumpsys activity activities > runtime-results/final-activities.txt
 adb shell dumpsys window > runtime-results/final-windows.txt
