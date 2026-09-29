@@ -53,6 +53,7 @@ run_phase() {
     timeout 90s adb shell am instrument -w -e phase "$1" "$runner" | tee "runtime-results/$1.txt"
     if ! grep -q "regression=PASS $1" "runtime-results/$1.txt"; then
         adb shell run-as "$package" cat cache/regression-failure-windows.txt > "runtime-results/$1-before-finish-windows.txt" || true
+        adb shell run-as "$package" cat cache/regression-failure-input.txt > "runtime-results/$1-before-finish-input.txt" || true
         adb shell run-as "$package" cat cache/regression-failure-activities.txt > "runtime-results/$1-before-finish-activities.txt" || true
         adb shell run-as "$package" cat cache/regression-failure-surfaces.txt > "runtime-results/$1-before-finish-surfaces.txt" || true
         adb exec-out run-as "$package" cat cache/regression-failure-screen.png > "runtime-results/$1-before-finish-screen.png" || true

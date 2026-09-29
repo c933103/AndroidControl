@@ -123,6 +123,20 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
         super.onStop()
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && Build.VERSION.SDK_INT < 35) {
+            // WindowManager may assign physical focus after ATM has already
+            // resumed the game (wake, browser/IME removal). Reconcile only if
+            // that assignment persists, not during our brief focus bounce.
+            main.postDelayed({
+                if (!isDestroyed && !stopping && foreground && webPanel == null && hasWindowFocus()) {
+                    attachSurface()
+                }
+            }, 200)
+        }
+    }
+
     override fun surfaceCreated(holder: SurfaceHolder) {
         if (displayId >= 0) attachSurface()
         else startWhenSized(holder, surfaceView.width, surfaceView.height)

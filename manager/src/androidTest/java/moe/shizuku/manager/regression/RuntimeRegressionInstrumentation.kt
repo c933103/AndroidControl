@@ -82,6 +82,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
             // Capture BEFORE instrumentation finish removes the manager's windows.
             runCatching {
                 java.io.File(targetContext.cacheDir, "regression-failure-windows.txt").writeText(shell("dumpsys window"))
+                java.io.File(targetContext.cacheDir, "regression-failure-input.txt").writeText(shell("dumpsys input"))
                 java.io.File(targetContext.cacheDir, "regression-failure-activities.txt").writeText(shell("dumpsys activity activities"))
                 java.io.File(targetContext.cacheDir, "regression-failure-surfaces.txt").writeText(shell("dumpsys SurfaceFlinger"))
                 uiAutomation.takeScreenshot()?.let { screenshot ->
@@ -470,6 +471,11 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
                         }
                     }
                     check(script("document.body.dataset.survived") == "\"yes\"") { "Unlock recreated the web page" }
+                    awaitState("Wake animation still blocks web input") {
+                        val input = shell("dumpsys input")
+                        !input.contains("ColorFade") &&
+                            Regex("DispatchFrozen:\\s*(?:false|0)\\b").containsMatchIn(input)
+                    }
                     // A real tap supplies the gesture needed for target=_blank.
                     tapLink("popup")
                     awaitState("New-window web link escaped the panel") { url()?.endsWith("/popup") == true }
