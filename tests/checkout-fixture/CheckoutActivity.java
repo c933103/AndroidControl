@@ -40,10 +40,16 @@ public final class CheckoutActivity extends Activity {
           @Override public void run() {
             Rect visible = new Rect();
             boolean complete = cancel.getGlobalVisibleRect(visible) && visible.height() == cancel.getHeight();
+            int[] position = new int[2];
+            cancel.getLocationOnScreen(position);
+            Rect screen = new Rect();
+            cancel.getWindowVisibleDisplayFrame(screen);
+            complete = complete && screen.contains(position[0], position[1])
+                && screen.contains(position[0] + cancel.getWidth() - 1, position[1] + cancel.getHeight() - 1);
             try (FileOutputStream out = new FileOutputStream(new File(getFilesDir(), "ready"))) {
                 out.write(("display=" + getWindowManager().getDefaultDisplay().getDisplayId()
-                    + ";buttonVisible=" + complete + ";x=" + visible.centerX()
-                    + ";y=" + visible.centerY()).getBytes(StandardCharsets.UTF_8));
+                    + ";buttonVisible=" + complete + ";x=" + (position[0] + cancel.getWidth() / 2)
+                    + ";y=" + (position[1] + cancel.getHeight() / 2)).getBytes(StandardCharsets.UTF_8));
             } catch (Exception error) { throw new RuntimeException(error); }
             handler.postDelayed(this, 250);
           }

@@ -268,9 +268,13 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         check(PortraitTarget.get() == otherPackage) { "Target selection did not survive a restart" }
         var service = controlService()
         check(service.isSystemPortraitSupported)
-        shell("wm user-rotation -d 0 lock 1")
         shell("wm fixed-to-user-rotation -d 0 disabled")
         shell("wm set-ignore-orientation-request -d 0 false")
+        // Establish the locked mode before changing its angle. Android writes
+        // accelerometer mode and user angle separately, with asynchronous observers.
+        shell("wm user-rotation -d 0 lock")
+        awaitState("Manual rotation baseline did not lock") { shell("wm user-rotation -d 0").startsWith("lock ") }
+        shell("wm user-rotation -d 0 lock 1")
         awaitUserRotation("lock 1", 1)
         val previous = rotationSnapshot()
         check(service.setForcePortrait(true))
