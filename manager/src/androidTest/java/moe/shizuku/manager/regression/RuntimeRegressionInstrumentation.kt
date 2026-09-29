@@ -13,6 +13,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.MotionEvent
+import android.view.SurfaceView
 import android.view.View
 import android.widget.TextView
 import moe.shizuku.manager.ShizukuSettings
@@ -64,10 +65,31 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
                 "display" -> closeDisplay(checkDisplay())
                 "select-target" -> selectTarget()
                 "separate-controls" -> checkSeparateControls()
+                "external-dialog" -> checkExternalDialog()
+                "interrupted-handoff" -> checkInterruptedHandoff()
+                "lock-unlock" -> checkLockUnlock()
+                "shutdown-control" -> runCatching { controlService().destroy() }
+                "root-display" -> {
+                    controlService()
+                    check(Shizuku.getUid() == 0) { "Root regression did not start a root server" }
+                    closeDisplay(checkDisplay())
+                }
                 else -> error("Unknown regression phase")
             }
             finish(-1, Bundle().apply { putString("regression", "PASS ${args.getString("phase")}") })
         } catch (t: Throwable) {
+            // Capture BEFORE instrumentation finish removes the manager's windows.
+            runCatching {
+                java.io.File(targetContext.cacheDir, "regression-failure-windows.txt").writeText(shell("dumpsys window"))
+                java.io.File(targetContext.cacheDir, "regression-failure-activities.txt").writeText(shell("dumpsys activity activities"))
+                java.io.File(targetContext.cacheDir, "regression-failure-surfaces.txt").writeText(shell("dumpsys SurfaceFlinger"))
+                uiAutomation.takeScreenshot()?.let { screenshot ->
+                    java.io.File(targetContext.cacheDir, "regression-failure-screen.png").outputStream().use {
+                        screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+                    }
+                    screenshot.recycle()
+                }
+            }
             finish(0, Bundle().apply { putString("regression", "FAIL ${args.getString("phase")}: ${t.stackTraceToString()}") })
         }
     }
@@ -265,9 +287,13 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         check(PortraitTarget.get() == otherPackage) { "Target selection did not survive a restart" }
         var service = controlService()
         check(service.isSystemPortraitSupported)
-        shell("wm user-rotation -d 0 lock 1")
         shell("wm fixed-to-user-rotation -d 0 disabled")
         shell("wm set-ignore-orientation-request -d 0 false")
+        // Establish the locked mode before changing its angle. Android writes
+        // accelerometer mode and user angle separately, with asynchronous observers.
+        shell("wm user-rotation -d 0 lock")
+        awaitState("Manual rotation baseline did not lock") { shell("wm user-rotation -d 0").startsWith("lock ") }
+        shell("wm user-rotation -d 0 lock 1")
         awaitUserRotation("lock 1", 1)
         val previous = rotationSnapshot()
         check(service.setForcePortrait(true))
@@ -277,7 +303,12 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
             "System-wide mode applied target compatibility flags"
         }
         checkpoint("system enabled; restarting daemon")
-        runCatching { service.destroy() }
+        // Remove the server's service record as well as the process. Binding
+        // during asynchronous death cleanup can otherwise attach to a dead record.
+        runOnMainSync {
+            Shizuku.unbindUserService(Shizuku.UserServiceArgs(ComponentName(BuildConfig.APPLICATION_ID,
+                AndroidControlService::class.java.name)), null, true)
+        }
         val restartDeadline = SystemClock.uptimeMillis() + 5000
         while (service.asBinder().pingBinder() && SystemClock.uptimeMillis() < restartDeadline) SystemClock.sleep(100)
         check(!service.asBinder().pingBinder())
@@ -308,6 +339,8 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         check(rotationSnapshot() == automatic) { "Automatic rotation was not restored; expected=$automatic; actual=${rotationSnapshot()}" }
         checkpoint("automatic rotation restored")
         // Upgrade from a pre-journal version must still offer an explicit way out.
+        shell("wm user-rotation -d 0 lock")
+        awaitState("Pre-journal rotation baseline did not lock") { shell("wm user-rotation -d 0").startsWith("lock ") }
         shell("wm user-rotation -d 0 lock 0")
         awaitUserRotation("lock 0", 0)
         shell("wm fixed-to-user-rotation -d 0 enabled")
@@ -324,13 +357,190 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         check(shell("wm fixed-to-user-rotation -d 0") == "default") { "Cleared fixed policy is not default: ${rotationSnapshot()}" }
     }
 
+    private fun awaitState(message: String, ready: () -> Boolean) {
+        val deadline = SystemClock.uptimeMillis() + 15000
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (ready()) return
+            SystemClock.sleep(250)
+        }
+        error(message)
+    }
+
+    private fun fixtureFile(name: String): String =
+        shell("run-as ${PortraitTarget.DEFAULT_PACKAGE} cat files/$name")
+
+    private fun tapScene(activity: TargetPortraitDisplayActivity) {
+        val field = activity.javaClass.getDeclaredField("surfaceView").apply { isAccessible = true }
+        val point = IntArray(2)
+        runOnMainSync {
+            val surface = field.get(activity) as SurfaceView
+            surface.getLocationOnScreen(point)
+            point[0] += surface.width / 2
+            point[1] += surface.height / 2
+        }
+        val now = SystemClock.uptimeMillis()
+        val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, point[0].toFloat(), point[1].toFloat(), 0)
+        val up = MotionEvent.obtain(now, now + 50, MotionEvent.ACTION_UP, point[0].toFloat(), point[1].toFloat(), 0)
+        try { sendPointerSync(down); sendPointerSync(up) } finally { down.recycle(); up.recycle() }
+    }
+
+    private fun checkExternalDialog() {
+        PortraitTarget.save(PortraitTarget.DEFAULT_PACKAGE)
+        val activity = checkDisplay()
+        val pid = shell("pidof ${PortraitTarget.DEFAULT_PACKAGE}")
+        shell("run-as ${PortraitTarget.DEFAULT_PACKAGE} rm -f files/dialog-dismissed")
+        shell("am broadcast -a org.androidcontrol.regression.DIALOG -p ${PortraitTarget.DEFAULT_PACKAGE}")
+        SystemClock.sleep(500)
+        if (android.os.Build.VERSION.SDK_INT >= 35) {
+            shell("input -d 0 keyevent KEYCODE_BACK")
+        } else {
+            // One global focus on older Android: exercise the always-visible
+            // host Back button while the target retains rendering focus.
+            val point = IntArray(2)
+            runOnMainSync {
+                fun find(view: View): android.widget.Button? {
+                    if (view is android.widget.Button && view.text == targetContext.getString(R.string.target_portrait_back)) return view
+                    if (view is android.view.ViewGroup) for (i in 0 until view.childCount) {
+                        find(view.getChildAt(i))?.let { return it }
+                    }
+                    return null
+                }
+                val button = checkNotNull(find(activity.window.decorView))
+                button.getLocationOnScreen(point)
+                point[0] += button.width / 2
+                point[1] += button.height / 2
+            }
+            shell("input -d 0 tap ${point[0]} ${point[1]}")
+        }
+        awaitState("Back did not dismiss the target's own dialog") { fixtureFile("dialog-dismissed").contains("dismissed") }
+        check(!activity.isFinishing) { "Back closed the portrait host while dismissing a dialog" }
+        shell("run-as ${PortraitTarget.DEFAULT_PACKAGE} rm -f files/checkout-returned")
+        shell("run-as org.androidcontrol.regression.checkout rm -f files/ready")
+        shell("am broadcast -a org.androidcontrol.regression.CHECKOUT -p ${PortraitTarget.DEFAULT_PACKAGE}")
+        awaitState("External dialog did not reach the native display with its button visible") {
+            val ready = shell("run-as org.androidcontrol.regression.checkout cat files/ready")
+            ready.contains("display=0;") && ready.contains("buttonVisible=true")
+        }
+        awaitState("Portrait host remained over the native transaction screen") { activity.isFinishing }
+        // Moving to display 0 can rotate it. A laid-out button is not yet
+        // tappable while WindowManager is freezing input for that transition.
+        awaitState("Native transaction window did not finish its display transition") {
+            val ready = shell("run-as org.androidcontrol.regression.checkout cat files/ready")
+            ready.contains("display=0;") && ready.contains("buttonVisible=true") &&
+                ready.contains("focused=true") &&
+                Regex("DispatchFrozen:\\s*(?:false|0)\\b").containsMatchIn(shell("dumpsys input"))
+        }
+        checkpoint("secure external dialog and its bottom button are visible on the phone display")
+        // Exercise the actual bottom control instead of invoking host Back, which
+        // must not own/destroy this external activity or its result callback.
+        val ready = shell("run-as org.androidcontrol.regression.checkout cat files/ready")
+        val x = ready.substringAfter(";x=").substringBefore(';').toInt()
+        val y = ready.substringAfter(";y=").toInt()
+        shell("input -d 0 tap $x $y")
+        awaitState("Dismissing the external dialog did not return its result to the target") {
+            fixtureFile("checkout-returned").contains("returned")
+        }
+        check(shell("pidof ${PortraitTarget.DEFAULT_PACKAGE}") == pid) { "Native handoff restarted the game process" }
+        val before = fixtureFile("touches")
+        awaitState("Returned game did not finish its display transition") {
+            fixtureFile("window-focus").trim() == "true" &&
+                Regex("DispatchFrozen:\\s*(?:false|0)\\b").containsMatchIn(shell("dumpsys input"))
+        }
+        val screenshot = uiAutomation.takeScreenshot()
+        val width = screenshot.width
+        val height = screenshot.height
+        screenshot.recycle()
+        shell("input -d 0 tap ${width / 2} ${height / 2}")
+        awaitState("Target no longer receives input after dialog dismissal") { fixtureFile("touches").length > before.length }
+        check(!controlRecordExists("androidcontrol-portrait-target-package"))
+        check(!controlRecordExists("androidcontrol-portrait-native-handoff"))
+    }
+
+    private fun checkInterruptedHandoff() {
+        PortraitTarget.save(PortraitTarget.DEFAULT_PACKAGE)
+        val service = controlService()
+        val activity = checkDisplay()
+        val id = activity.javaClass.getDeclaredField("displayId").apply { isAccessible = true }.getInt(activity)
+        val pid = shell("pidof ${PortraitTarget.DEFAULT_PACKAGE}")
+        check(pid.isNotEmpty())
+        // Fault injection: a handoff record that cannot be read must fail closed,
+        // retaining the live process even when the host is then closed.
+        shell("cp /proc/version /data/local/tmp/androidcontrol-portrait-native-handoff")
+        check(controlRecordExists("androidcontrol-portrait-native-handoff")) { "Fault injection failed" }
+        try {
+            check(runCatching { service.stopTargetPortraitDisplay(id, false) }.isFailure) {
+                "Invalid handoff did not report restoration failure"
+            }
+            runOnMainSync { activity.finish() }
+            SystemClock.sleep(1500)
+            check(shell("pidof ${PortraitTarget.DEFAULT_PACKAGE}") == pid) {
+                "Interrupted handoff cleanup killed the preserved game"
+            }
+            check(controlRecordExists("androidcontrol-portrait-native-handoff")) {
+                "Interrupted handoff discarded its retry record"
+            }
+        } finally {
+            // Remove only this test's injected record. The next fixture launch
+            // owns normal restoration of the remaining target/task journal.
+            shell("rm /data/local/tmp/androidcontrol-portrait-native-handoff")
+        }
+    }
+
+    private fun checkLockUnlock() {
+        PortraitTarget.save(PortraitTarget.DEFAULT_PACKAGE)
+        val activity = checkDisplay()
+        val before = fixtureFile("frame").trim().toLong()
+        shell("input keyevent KEYCODE_SLEEP")
+        SystemClock.sleep(700)
+        shell("input keyevent KEYCODE_WAKEUP")
+        shell("wm dismiss-keyguard")
+        awaitState("Target did not resume after unlocking") {
+            (fixtureFile("frame").trim().toLongOrNull() ?: 0) > before + 700
+        }
+        val field = activity.javaClass.getDeclaredField("surfaceView").apply { isAccessible = true }
+        val sample = IntArray(2)
+        awaitState("Portrait surface was not reattached after unlocking") {
+            var valid = false
+            runOnMainSync {
+                val surface = field.get(activity) as SurfaceView
+                valid = surface.holder.surface.isValid
+                surface.getLocationOnScreen(sample)
+                sample[0] += surface.width / 4
+                sample[1] += surface.height / 4
+            }
+            valid
+        }
+        awaitState("Target host is blank or obscured after unlocking") {
+            val screenshot = uiAutomation.takeScreenshot()
+            try { screenshot.getPixel(sample[0], sample[1]) == 0xff164f37.toInt() }
+            finally { screenshot.recycle() }
+        }
+        val touches = fixtureFile("touches")
+        tapScene(activity)
+        awaitState("Target input froze after unlocking") { fixtureFile("touches").length > touches.length }
+        awaitState("Target lost rendering focus after unlocking") { fixtureFile("window-focus").trim() == "true" }
+        val home = shell("cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME")
+            .lineSequence().last { it.contains('/') }.substringBefore('/')
+        // System navigation on the physical phone supplies display 0. An
+        // unspecified CLI display routes Home to the focused virtual display on 13.
+        shell("input -d 0 keyevent KEYCODE_HOME")
+        awaitState("Home cannot leave the portrait host after unlocking") {
+            shell("dumpsys window").lineSequence().any { it.contains("mCurrentFocus=") && it.contains("$home/") }
+        }
+        checkpoint("lock/unlock restored frames and input; Home remained usable")
+        // Cleanup through the retained host instance, without waiting for another Activity onCreate.
+        closeDisplay(activity)
+    }
+
     private fun closeDisplay(activity: TargetPortraitDisplayActivity) {
-        runOnMainSync { activity.onBackPressed() }
+        runOnMainSync {
+            activity.javaClass.getDeclaredMethod("stopAndFinish").apply { isAccessible = true }.invoke(activity)
+        }
         val deadline = SystemClock.uptimeMillis() + 30000
         while (!activity.isFinishing && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(100)
         check(activity.isFinishing) { "Target session did not finish restoration" }
-        check(!controlRecordExists("androidcontrol-portrait-target-package")) {
-            "Target cleanup did not finish: " + shell("cat /data/local/tmp/androidcontrol-hololive-dreams-compat")
+        awaitState("Target cleanup did not finish") {
+            !controlRecordExists("androidcontrol-portrait-target-package")
         }
     }
 

@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.androidcontrol.regression.checkout">
+    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="33" />
+    <application android:debuggable="true" android:theme="@android:style/Theme.Material.Light.Dialog.NoActionBar" android:label="External dialog regression fixture">
+        <activity android:name=".CheckoutActivity" android:exported="true" android:resizeableActivity="true" />
+    </application>
+</manifest>

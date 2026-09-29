@@ -187,7 +187,7 @@ class AdbDocumentsProvider : DocumentsProvider() {
         return try {
             AdbFileClient.requireService()
         } catch (t: Throwable) {
-            throw FileNotFoundException(t.message ?: "Shizuku is not running")
+            throw FileNotFoundException(t.message ?: "AndroidControl is not running")
         }
     }
 

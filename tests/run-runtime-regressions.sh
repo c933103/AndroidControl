@@ -30,11 +30,30 @@ sed -e 's/package="game.qualiarts.hololive.dreams.jp"/package="org.androidcontro
 "$build_tools/zipalign" -p 4 "$test_dir/other.apk" "$test_dir/other-aligned.apk"
 "$build_tools/apksigner" sign --ks "$test_dir/fixture.jks" --ks-pass pass:android "$test_dir/other-aligned.apk"
 
+mkdir -p "$test_dir/checkout-classes" "$test_dir/checkout-dex"
+javac --release 8 -cp "$android_jar" -d "$test_dir/checkout-classes" tests/checkout-fixture/CheckoutActivity.java
+jar --create --file "$test_dir/checkout.jar" -C "$test_dir/checkout-classes" .
+"$build_tools/d8" --min-api 24 --lib "$android_jar" --output "$test_dir/checkout-dex" "$test_dir/checkout.jar"
+"$build_tools/aapt2" link -I "$android_jar" --manifest tests/checkout-fixture/AndroidManifest.xml -o "$test_dir/checkout.apk"
+(cd "$test_dir/checkout-dex" && zip -q "$test_dir/checkout.apk" classes.dex)
+"$build_tools/zipalign" -p 4 "$test_dir/checkout.apk" "$test_dir/checkout-aligned.apk"
+"$build_tools/apksigner" sign --ks "$test_dir/fixture.jks" --ks-pass pass:android "$test_dir/checkout-aligned.apk"
+
 package=moe.shizuku.privileged.api
 runner="$package.test/moe.shizuku.manager.regression.RuntimeRegressionInstrumentation"
 run_phase() {
     timeout 90s adb shell am instrument -w -e phase "$1" "$runner" | tee "runtime-results/$1.txt"
-    grep -q "regression=PASS $1" "runtime-results/$1.txt"
+    if ! grep -q "regression=PASS $1" "runtime-results/$1.txt"; then
+        adb shell run-as "$package" cat cache/regression-failure-windows.txt > "runtime-results/$1-before-finish-windows.txt" || true
+        adb shell run-as "$package" cat cache/regression-failure-activities.txt > "runtime-results/$1-before-finish-activities.txt" || true
+        adb shell run-as "$package" cat cache/regression-failure-surfaces.txt > "runtime-results/$1-before-finish-surfaces.txt" || true
+        adb exec-out run-as "$package" cat cache/regression-failure-screen.png > "runtime-results/$1-before-finish-screen.png" || true
+        adb shell dumpsys activity activities > "runtime-results/$1-activities.txt"
+        adb shell dumpsys window > "runtime-results/$1-windows.txt"
+        adb logcat -d > "runtime-results/$1-log.txt"
+        adb exec-out screencap -p > "runtime-results/$1-screen.png" || true
+        return 1
+    fi
 }
 
 result=0
@@ -46,6 +65,9 @@ run_phase reopen || result=1
 # A real package replacement, without clearing app data or Keystore.
 adb install -r manager/build/outputs/apk/debug/*.apk
 adb shell pm grant "$package" android.permission.POST_NOTIFICATIONS
+# Package replacement broadcasts can still be starting/killing a process after
+# install returns. Wait before instrumentation takes ownership of that same UID.
+timeout 60s adb shell am wait-for-broadcast-idle
 run_phase upgrade || result=1
 run_phase key-failure || result=1
 run_phase fresh || result=1
@@ -54,6 +76,7 @@ run_phase key-recovery || result=1
 
 adb install "$test_dir/aligned.apk"
 adb install "$test_dir/other-aligned.apk"
+adb install "$test_dir/checkout-aligned.apk"
 apk_path=$(adb shell pm path "$package" | sed 's/^package://' | tr -d '\r')
 adb shell "${apk_path%/*}/lib/x86_64/libshizuku.so --apk=$apk_path"
 adb logcat -c
@@ -66,5 +89,30 @@ adb shell run-as game.qualiarts.hololive.dreams.jp cat files/touches | tee runti
 grep -q touch runtime-results/touches.txt || result=1
 run_phase select-target || result=1
 run_phase separate-controls || result=1
+run_phase external-dialog || result=1
+run_phase interrupted-handoff || result=1
+run_phase lock-unlock || result=1
+adb shell dumpsys activity activities > runtime-results/final-activities.txt
+adb shell dumpsys window > runtime-results/final-windows.txt
+adb shell dumpsys display > runtime-results/final-displays.txt
+adb exec-out screencap -p > runtime-results/final-screen.png
 adb logcat -d -s AndroidRuntime ShizukuServer AndroidControlService > runtime-results/final-log.txt
+# The trusted display also needs a valid package attribution when the parent
+# toolbox is started with root. Exercise that path on these debuggable emulators.
+run_phase shutdown-control || result=1
+adb root
+timeout 30s adb wait-for-device
+root_uid=""
+for attempt in {1..30}; do
+    root_uid=$(adb shell id -u | tr -d '\r') || true
+    [[ "$root_uid" = 0 ]] && break
+    sleep 0.2
+done
+test "$root_uid" = 0
+# Restarting adbd can already have terminated the previous shell server.
+server_pid=$(adb shell pidof shizuku_server | tr -d '\r') || true
+if [[ -n "$server_pid" ]]; then adb shell kill "$server_pid"; fi
+adb shell am force-stop "$package"
+adb shell "${apk_path%/*}/lib/x86_64/libshizuku.so --apk=$apk_path"
+run_phase root-display || result=1
 exit "$result"
