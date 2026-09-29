@@ -71,7 +71,8 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     private var portraitPendingLink: String? = null
     private var portraitInitialTaskIds = emptySet<Int>()
     private var closingBrowser: BrowserClose? = null
-    private data class BrowserClose(val taskId: Int, val launch: PortraitWebLaunch, val deadline: Long)
+    private data class BrowserClose(val taskId: Int, val component: android.content.ComponentName,
+        val launch: PortraitWebLaunch, val deadline: Long, val backPending: Boolean)
 
     private enum class WmApi {
         MODERN,
@@ -730,6 +731,15 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 portraitBrowserVisible = true
                 return true
             }
+            if (closing.backPending && isActivityInputFocused(displayId, closing.component)) {
+                // Task metadata changes before the new activity has a window.
+                // Sending Back earlier can finish the game underneath it.
+                val now = SystemClock.uptimeMillis()
+                injectEvent(displayId, KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, 0))
+                injectEvent(displayId, KeyEvent(now, now + 1, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK, 0))
+                closingBrowser = closing.copy(backPending = false, deadline = now + 2500)
+                return true
+            }
             if (SystemClock.uptimeMillis() < closing.deadline) return true
             closingBrowser = null
             return false
@@ -754,14 +764,18 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             // This browser task was created during this session. Do not remove
             // pre-existing browser tasks, tabs, or a task containing the game.
             if (invokeActivityTaskManager(atm, "removeTask", task.taskId) != true) return false
-        } else if (task.baseActivity?.packageName == targetPackage) {
-            val now = SystemClock.uptimeMillis()
-            injectEvent(displayId, KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, 0))
-            injectEvent(displayId, KeyEvent(now, now + 1, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK, 0))
-        } else return false
-        closingBrowser = BrowserClose(task.taskId, launch, SystemClock.uptimeMillis() + 2500)
+        } else if (task.baseActivity?.packageName != targetPackage) return false
+        closingBrowser = BrowserClose(task.taskId, top, launch, SystemClock.uptimeMillis() + 5000,
+            task.baseActivity?.packageName == targetPackage)
         return true
     }
+
+    private fun isActivityInputFocused(displayId: Int, component: android.content.ComponentName): Boolean =
+        runCommand("/system/bin/dumpsys", "input").lineSequence().any {
+            val line = it.trim()
+            line.startsWith("displayId=$displayId, name='") &&
+                line.endsWith(" ${component.flattenToString()}'")
+        }
 
     override fun injectTargetMotionEvent(displayId: Int, event: MotionEvent) {
         if (displayId <= 0 || displayId != targetPortraitDisplayId || !portraitSurfaceAttached ||
