@@ -43,7 +43,13 @@ package=moe.shizuku.privileged.api
 runner="$package.test/moe.shizuku.manager.regression.RuntimeRegressionInstrumentation"
 run_phase() {
     timeout 90s adb shell am instrument -w -e phase "$1" "$runner" | tee "runtime-results/$1.txt"
-    grep -q "regression=PASS $1" "runtime-results/$1.txt"
+    if ! grep -q "regression=PASS $1" "runtime-results/$1.txt"; then
+        adb shell dumpsys activity activities > "runtime-results/$1-activities.txt"
+        adb shell dumpsys window > "runtime-results/$1-windows.txt"
+        adb logcat -d > "runtime-results/$1-log.txt"
+        adb exec-out screencap -p > "runtime-results/$1-screen.png" || true
+        return 1
+    fi
 }
 
 result=0
