@@ -62,7 +62,7 @@ object AdbFileClient {
         }
 
         if (!Shizuku.pingBinder()) {
-            throw IOException("Shizuku is not running")
+            throw IOException("AndroidControl is not running")
         }
 
         if (Looper.myLooper() == Looper.getMainLooper()) {
