@@ -60,7 +60,9 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
                 // targetSdk 36 enforces edge-to-edge on newer Android. Reserve
                 // navigation/cutout space explicitly so the controls stay usable.
                 if (Build.VERSION.SDK_INT >= 30) {
-                    val safe = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                    val types = WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout() or
+                        (if (webPanel != null) WindowInsets.Type.ime() else 0)
+                    val safe = insets.getInsets(types)
                     view.setPadding(safe.left, safe.top, safe.right, safe.bottom)
                     WindowInsets.CONSUMED
                 } else {
@@ -204,6 +206,7 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
             val panel = PortraitWebPanel(this) { closeWebLink() }
             webPanel = panel
             scene.addView(panel, FrameLayout.LayoutParams(-1, -1))
+            (scene.parent as View).requestApplyInsets()
             panel.open(url)
             if (!foreground) panel.pause()
             TargetPortraitDisplayClient.browser(displayId, hostToken, true) { error ->
@@ -216,8 +219,14 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
     }
 
     private fun closeWebLink() {
-        webPanel?.let { scene.removeView(it); it.destroy() }
+        webPanel?.let {
+            getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+                .hideSoftInputFromWindow(it.windowToken, 0)
+            scene.removeView(it)
+            it.destroy()
+        }
         webPanel = null
+        (scene.parent as View).requestApplyInsets()
         if (!stopping && displayId >= 0) {
             TargetPortraitDisplayClient.browser(displayId, hostToken, false) { error ->
                 if (error != null) showFailure(error)
