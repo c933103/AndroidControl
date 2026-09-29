@@ -1,7 +1,15 @@
 package game.qualiarts.hololive.dreams.jp;
 
 import android.app.Activity;
+import android.content.BroadcastReceiver;
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.widget.TextView;
@@ -11,6 +19,28 @@ import java.nio.charset.StandardCharsets;
 
 /** Only installed in a fresh CI emulator; never packaged with AndroidControl. */
 public final class RegressionGame extends Activity {
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private boolean resumed;
+    private final Runnable frame = new Runnable() {
+        @Override public void run() {
+            if (!resumed) return;
+            record("frame", Long.toString(SystemClock.uptimeMillis()), false);
+            handler.postDelayed(this, 250);
+        }
+    };
+    private final BroadcastReceiver checkout = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            startActivityForResult(new Intent().setComponent(new ComponentName(
+                    "org.androidcontrol.regression.checkout", "org.androidcontrol.regression.checkout.CheckoutActivity")), 41);
+        }
+    };
+
+    private void record(String name, String value, boolean append) {
+        try (FileOutputStream out = new FileOutputStream(new File(getFilesDir(), name), append)) {
+            out.write((value + "\n").getBytes(StandardCharsets.UTF_8));
+        } catch (Exception failure) { throw new RuntimeException(failure); }
+    }
+
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         TextView scene = new TextView(this);
@@ -28,5 +58,29 @@ public final class RegressionGame extends Activity {
             return true;
         });
         setContentView(scene);
+        registerReceiver(checkout, new IntentFilter("org.androidcontrol.regression.CHECKOUT"), Context.RECEIVER_EXPORTED);
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        resumed = true;
+        handler.post(frame);
+    }
+
+    @Override protected void onPause() {
+        resumed = false;
+        handler.removeCallbacks(frame);
+        super.onPause();
+    }
+
+    @Override protected void onActivityResult(int request, int result, Intent data) {
+        super.onActivityResult(request, result, data);
+        if (request == 41) record("checkout-returned", "returned", true);
+    }
+
+    @Override protected void onDestroy() {
+        unregisterReceiver(checkout);
+        handler.removeCallbacks(frame);
+        super.onDestroy();
     }
 }

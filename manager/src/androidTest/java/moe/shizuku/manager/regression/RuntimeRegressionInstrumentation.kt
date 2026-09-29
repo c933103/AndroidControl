@@ -13,6 +13,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.MotionEvent
+import android.view.SurfaceView
 import android.view.View
 import android.widget.TextView
 import moe.shizuku.manager.ShizukuSettings
@@ -64,6 +65,8 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
                 "display" -> closeDisplay(checkDisplay())
                 "select-target" -> selectTarget()
                 "separate-controls" -> checkSeparateControls()
+                "external-dialog" -> checkExternalDialog()
+                "lock-unlock" -> checkLockUnlock()
                 else -> error("Unknown regression phase")
             }
             finish(-1, Bundle().apply { putString("regression", "PASS ${args.getString("phase")}") })
@@ -322,6 +325,99 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         check(!service.hasSystemPortraitOverride())
         check(shell("wm user-rotation -d 0") == "free") { "Cleared policy is not free: ${rotationSnapshot()}" }
         check(shell("wm fixed-to-user-rotation -d 0") == "default") { "Cleared fixed policy is not default: ${rotationSnapshot()}" }
+    }
+
+    private fun awaitState(message: String, ready: () -> Boolean) {
+        val deadline = SystemClock.uptimeMillis() + 15000
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (ready()) return
+            SystemClock.sleep(250)
+        }
+        error(message)
+    }
+
+    private fun fixtureFile(name: String): String =
+        shell("run-as ${PortraitTarget.DEFAULT_PACKAGE} cat files/$name")
+
+    private fun tapScene(activity: TargetPortraitDisplayActivity) {
+        val field = activity.javaClass.getDeclaredField("surfaceView").apply { isAccessible = true }
+        val point = IntArray(2)
+        runOnMainSync {
+            val surface = field.get(activity) as SurfaceView
+            surface.getLocationOnScreen(point)
+            point[0] += surface.width / 2
+            point[1] += surface.height / 2
+        }
+        val now = SystemClock.uptimeMillis()
+        val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, point[0].toFloat(), point[1].toFloat(), 0)
+        val up = MotionEvent.obtain(now, now + 50, MotionEvent.ACTION_UP, point[0].toFloat(), point[1].toFloat(), 0)
+        try { sendPointerSync(down); sendPointerSync(up) } finally { down.recycle(); up.recycle() }
+    }
+
+    private fun checkExternalDialog() {
+        PortraitTarget.save(PortraitTarget.DEFAULT_PACKAGE)
+        val activity = checkDisplay()
+        shell("run-as ${PortraitTarget.DEFAULT_PACKAGE} rm -f files/checkout-returned")
+        shell("run-as org.androidcontrol.regression.checkout rm -f files/ready")
+        shell("am broadcast -a org.androidcontrol.regression.CHECKOUT -p ${PortraitTarget.DEFAULT_PACKAGE}")
+        awaitState("External dialog did not become visible") {
+            shell("run-as org.androidcontrol.regression.checkout cat files/ready").contains("buttonVisible=true")
+        }
+        checkpoint("external dialog and its bottom button are visible")
+        runOnMainSync { activity.onBackPressed() }
+        awaitState("Dismissing the external dialog did not return its result to the target") {
+            check(!activity.isFinishing) { "Back stopped the portrait host instead of dismissing the external dialog" }
+            fixtureFile("checkout-returned").contains("returned")
+        }
+        val before = fixtureFile("touches")
+        tapScene(activity)
+        awaitState("Target no longer receives input after dialog dismissal") { fixtureFile("touches").length > before.length }
+        closeDisplay(activity)
+    }
+
+    private fun checkLockUnlock() {
+        PortraitTarget.save(PortraitTarget.DEFAULT_PACKAGE)
+        val activity = checkDisplay()
+        val before = fixtureFile("frame").trim().toLong()
+        shell("input keyevent KEYCODE_SLEEP")
+        SystemClock.sleep(700)
+        shell("input keyevent KEYCODE_WAKEUP")
+        shell("wm dismiss-keyguard")
+        awaitState("Target did not resume after unlocking") {
+            (fixtureFile("frame").trim().toLongOrNull() ?: 0) > before + 700
+        }
+        val field = activity.javaClass.getDeclaredField("surfaceView").apply { isAccessible = true }
+        val sample = IntArray(2)
+        awaitState("Portrait surface was not reattached after unlocking") {
+            var valid = false
+            runOnMainSync {
+                val surface = field.get(activity) as SurfaceView
+                valid = surface.holder.surface.isValid
+                surface.getLocationOnScreen(sample)
+                sample[0] += surface.width / 4
+                sample[1] += surface.height / 4
+            }
+            valid
+        }
+        SystemClock.sleep(500)
+        val screenshot = uiAutomation.takeScreenshot()
+        try {
+            check(screenshot.getPixel(sample[0], sample[1]) == 0xff164f37.toInt()) {
+                "Target host is blank or obscured after unlocking"
+            }
+        } finally { screenshot.recycle() }
+        val touches = fixtureFile("touches")
+        tapScene(activity)
+        awaitState("Target input froze after unlocking") { fixtureFile("touches").length > touches.length }
+        val home = shell("cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME")
+            .lineSequence().last { it.contains('/') }.substringBefore('/')
+        shell("input keyevent KEYCODE_HOME")
+        awaitState("Home cannot leave the portrait host after unlocking") {
+            shell("dumpsys window").lineSequence().any { it.contains("mCurrentFocus=") && it.contains("$home/") }
+        }
+        checkpoint("lock/unlock restored frames and input; Home remained usable")
+        // Cleanup through the retained host instance, without waiting for another Activity onCreate.
+        closeDisplay(activity)
     }
 
     private fun closeDisplay(activity: TargetPortraitDisplayActivity) {

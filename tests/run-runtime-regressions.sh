@@ -30,6 +30,15 @@ sed -e 's/package="game.qualiarts.hololive.dreams.jp"/package="org.androidcontro
 "$build_tools/zipalign" -p 4 "$test_dir/other.apk" "$test_dir/other-aligned.apk"
 "$build_tools/apksigner" sign --ks "$test_dir/fixture.jks" --ks-pass pass:android "$test_dir/other-aligned.apk"
 
+mkdir -p "$test_dir/checkout-classes" "$test_dir/checkout-dex"
+javac --release 8 -cp "$android_jar" -d "$test_dir/checkout-classes" tests/checkout-fixture/CheckoutActivity.java
+jar --create --file "$test_dir/checkout.jar" -C "$test_dir/checkout-classes" .
+"$build_tools/d8" --min-api 24 --lib "$android_jar" --output "$test_dir/checkout-dex" "$test_dir/checkout.jar"
+"$build_tools/aapt2" link -I "$android_jar" --manifest tests/checkout-fixture/AndroidManifest.xml -o "$test_dir/checkout.apk"
+(cd "$test_dir/checkout-dex" && zip -q "$test_dir/checkout.apk" classes.dex)
+"$build_tools/zipalign" -p 4 "$test_dir/checkout.apk" "$test_dir/checkout-aligned.apk"
+"$build_tools/apksigner" sign --ks "$test_dir/fixture.jks" --ks-pass pass:android "$test_dir/checkout-aligned.apk"
+
 package=moe.shizuku.privileged.api
 runner="$package.test/moe.shizuku.manager.regression.RuntimeRegressionInstrumentation"
 run_phase() {
@@ -54,6 +63,7 @@ run_phase key-recovery || result=1
 
 adb install "$test_dir/aligned.apk"
 adb install "$test_dir/other-aligned.apk"
+adb install "$test_dir/checkout-aligned.apk"
 apk_path=$(adb shell pm path "$package" | sed 's/^package://' | tr -d '\r')
 adb shell "${apk_path%/*}/lib/x86_64/libshizuku.so --apk=$apk_path"
 adb logcat -c
@@ -66,5 +76,11 @@ adb shell run-as game.qualiarts.hololive.dreams.jp cat files/touches | tee runti
 grep -q touch runtime-results/touches.txt || result=1
 run_phase select-target || result=1
 run_phase separate-controls || result=1
+run_phase external-dialog || result=1
+run_phase lock-unlock || result=1
+adb shell dumpsys activity activities > runtime-results/final-activities.txt
+adb shell dumpsys window > runtime-results/final-windows.txt
+adb shell dumpsys display > runtime-results/final-displays.txt
+adb exec-out screencap -p > runtime-results/final-screen.png
 adb logcat -d -s AndroidRuntime ShizukuServer AndroidControlService > runtime-results/final-log.txt
 exit "$result"
