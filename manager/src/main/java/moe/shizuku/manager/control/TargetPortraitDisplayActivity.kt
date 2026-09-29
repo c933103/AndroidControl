@@ -15,6 +15,7 @@ import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
 import android.view.WindowInsets
+import android.view.WindowManager
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -123,18 +124,14 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
         super.onStop()
     }
 
-    override fun onWindowFocusChanged(hasFocus: Boolean) {
-        super.onWindowFocusChanged(hasFocus)
-        if (hasFocus && Build.VERSION.SDK_INT < 35) {
-            // WindowManager may assign physical focus after ATM has already
-            // resumed the game (wake, browser/IME removal). Reconcile only if
-            // that assignment persists, not during our brief focus bounce.
-            main.postDelayed({
-                if (!isDestroyed && !stopping && foreground && webPanel == null && hasWindowFocus()) {
-                    attachSurface()
-                }
-            }, 200)
-        }
+    private fun updateHostFocusability() {
+        if (Build.VERSION.SDK_INT >= 35) return
+        // Android 13/14 share one focused window. A late host relayout or touch
+        // must not reclaim focus from a game that suspends rendering on blur.
+        // NOT_FOCUSABLE still permits touch on the surface and exit controls.
+        // Web content needs physical-display focus and the IME while it is open.
+        if (launched && webPanel == null) window.addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
@@ -159,6 +156,7 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
                 return@start
             }
             launched = id >= 0
+            updateHostFocusability()
             if (launched) {
                 attachSurface()
                 main.post(poll)
@@ -219,6 +217,7 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
         try {
             val panel = PortraitWebPanel(this) { closeWebLink() }
             webPanel = panel
+            updateHostFocusability()
             scene.addView(panel, FrameLayout.LayoutParams(-1, -1))
             (scene.parent as View).requestApplyInsets()
             panel.open(url)
@@ -240,6 +239,7 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
             it.destroy()
         }
         webPanel = null
+        updateHostFocusability()
         (scene.parent as View).requestApplyInsets()
         if (!stopping && displayId >= 0) {
             TargetPortraitDisplayClient.browser(displayId, hostToken, false) { error ->
