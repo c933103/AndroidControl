@@ -142,7 +142,7 @@ object TargetPortraitDisplayClient {
             }
         }, {
             mainHandler.post {
-                callback(false, "Shizuku service unavailable")
+                callback(false, "AndroidControl service unavailable")
             }
         })
     }
@@ -180,7 +180,7 @@ object TargetPortraitDisplayClient {
                 }
             }
         }, {
-            mainHandler.post { callback?.invoke("Shizuku unavailable; restoration will retry next launch") }
+            mainHandler.post { callback?.invoke("AndroidControl unavailable; restoration will retry next launch") }
         })
     }
 }

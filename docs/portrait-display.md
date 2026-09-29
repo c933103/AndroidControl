@@ -44,7 +44,7 @@ CI proves compilation and the parser regression cases. It cannot prove Unity ren
 
 AndroidControl is a self-contained Shizuku-derived control toolbox, including its own pairing, server, terminal, root support and app authorization. There is no separate LADB installation in the user's setup. A stable APK signing certificate and the stored ADB pairing key are distinct identities; verifying the first does not test preservation of the second.
 
-The original discussion repeatedly identified the need for AndroidControl's own app identity while retaining its Shizuku functionality. The portrait-only audit missed this outstanding requirement. The user explicitly deferred that change on 2026-09-28 (Asia/Taipei); do not rename the package or disturb the installed pairing as part of the current fixes.
+The original discussion repeatedly identified the need for AndroidControl's own app identity while retaining its Shizuku functionality. The portrait-only audit missed this outstanding requirement. The user deferred identity changes on 2026-09-28, then authorized AndroidControl display-name and icon branding on 2026-09-29 while explicitly retaining the existing package. Keep applicationId, protocol identifiers, signing identity and pairing storage unchanged.
 
 Current device reports: pairing must be repeated after updates, and the game appears vertically before technical text covers it and interaction stops about two seconds later. Do not treat an earlier parser fix or successful APK compilation as verification of either behavior. The precise new on-device error text has not yet been obtained.
 
