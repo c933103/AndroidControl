@@ -62,6 +62,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     private var portraitHostTaskId = -1
     private var lastPhoneFocusState = ""
     @Volatile private var portraitSurfaceAttached = false
+    private var portraitFocusNeedsRefresh = true
     private var portraitOriginalResizeMode = 0
     private var handedOffToken: IBinder? = null
     private var handedOffDisplayId = -1
@@ -267,6 +268,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             val valid = surface?.takeIf { it.isValid }
             ownedPortraitDisplay?.surface = valid
             portraitSurfaceAttached = valid != null
+            portraitFocusNeedsRefresh = true
             if (valid != null) restoreSessionFocus()
         }
     }
@@ -408,8 +410,17 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 val virtualTop = virtualRoots.filterNotNull().firstOrNull {
                     it.javaClass.getField("visible").getBoolean(it)
                 } ?: return
+                if (portraitFocusNeedsRefresh) {
+                    // After wake, WindowManager can focus display 0 while ATM
+                    // still calls the virtual activity top-resumed. Focusing
+                    // that same task is then a no-op. Reconcile the physical
+                    // task first, once per surface attachment, before restoring
+                    // the game's focus. Never do this while another app is on top.
+                    invokeActivityTaskManager(atm, "setFocusedRootTask", rootId)
+                }
                 invokeActivityTaskManager(atm, "setFocusedRootTask",
                     virtualTop.javaClass.getField("taskId").getInt(virtualTop))
+                portraitFocusNeedsRefresh = false
             }
         }
     }
