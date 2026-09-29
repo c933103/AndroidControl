@@ -82,6 +82,13 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
             runCatching {
                 java.io.File(targetContext.cacheDir, "regression-failure-windows.txt").writeText(shell("dumpsys window"))
                 java.io.File(targetContext.cacheDir, "regression-failure-activities.txt").writeText(shell("dumpsys activity activities"))
+                java.io.File(targetContext.cacheDir, "regression-failure-surfaces.txt").writeText(shell("dumpsys SurfaceFlinger"))
+                uiAutomation.takeScreenshot()?.let { screenshot ->
+                    java.io.File(targetContext.cacheDir, "regression-failure-screen.png").outputStream().use {
+                        screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+                    }
+                    screenshot.recycle()
+                }
             }
             finish(0, Bundle().apply { putString("regression", "FAIL ${args.getString("phase")}: ${t.stackTraceToString()}") })
         }
