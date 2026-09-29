@@ -357,22 +357,41 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
     private fun checkExternalDialog() {
         PortraitTarget.save(PortraitTarget.DEFAULT_PACKAGE)
         val activity = checkDisplay()
+        val pid = shell("pidof ${PortraitTarget.DEFAULT_PACKAGE}")
+        shell("run-as ${PortraitTarget.DEFAULT_PACKAGE} rm -f files/dialog-dismissed")
+        shell("am broadcast -a org.androidcontrol.regression.DIALOG -p ${PortraitTarget.DEFAULT_PACKAGE}")
+        SystemClock.sleep(500)
+        runOnMainSync { activity.onBackPressed() }
+        awaitState("Back did not dismiss the target's own dialog") { fixtureFile("dialog-dismissed").contains("dismissed") }
+        check(!activity.isFinishing) { "Back closed the portrait host while dismissing a dialog" }
         shell("run-as ${PortraitTarget.DEFAULT_PACKAGE} rm -f files/checkout-returned")
         shell("run-as org.androidcontrol.regression.checkout rm -f files/ready")
         shell("am broadcast -a org.androidcontrol.regression.CHECKOUT -p ${PortraitTarget.DEFAULT_PACKAGE}")
-        awaitState("External dialog did not become visible") {
-            shell("run-as org.androidcontrol.regression.checkout cat files/ready").contains("buttonVisible=true")
+        awaitState("External dialog did not reach the native display with its button visible") {
+            val ready = shell("run-as org.androidcontrol.regression.checkout cat files/ready")
+            ready.contains("display=0;") && ready.contains("buttonVisible=true")
         }
-        checkpoint("external dialog and its bottom button are visible")
-        runOnMainSync { activity.onBackPressed() }
+        awaitState("Portrait host remained over the native transaction screen") { activity.isFinishing }
+        checkpoint("secure external dialog and its bottom button are visible on the phone display")
+        // Exercise the actual bottom control instead of invoking host Back, which
+        // must not own/destroy this external activity or its result callback.
+        val ready = shell("run-as org.androidcontrol.regression.checkout cat files/ready")
+        val x = ready.substringAfter(";x=").substringBefore(';').toInt()
+        val y = ready.substringAfter(";y=").toInt()
+        shell("input -d 0 tap $x $y")
         awaitState("Dismissing the external dialog did not return its result to the target") {
-            check(!activity.isFinishing) { "Back stopped the portrait host instead of dismissing the external dialog" }
             fixtureFile("checkout-returned").contains("returned")
         }
+        check(shell("pidof ${PortraitTarget.DEFAULT_PACKAGE}") == pid) { "Native handoff restarted the game process" }
         val before = fixtureFile("touches")
-        tapScene(activity)
+        val screenshot = uiAutomation.takeScreenshot()
+        val width = screenshot.width
+        val height = screenshot.height
+        screenshot.recycle()
+        shell("input -d 0 tap ${width / 2} ${height / 2}")
         awaitState("Target no longer receives input after dialog dismissal") { fixtureFile("touches").length > before.length }
-        closeDisplay(activity)
+        check(!controlRecordExists("androidcontrol-portrait-target-package"))
+        check(!controlRecordExists("androidcontrol-portrait-native-handoff"))
     }
 
     private fun checkLockUnlock() {
@@ -421,12 +440,14 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
     }
 
     private fun closeDisplay(activity: TargetPortraitDisplayActivity) {
-        runOnMainSync { activity.onBackPressed() }
+        runOnMainSync {
+            activity.javaClass.getDeclaredMethod("stopAndFinish").apply { isAccessible = true }.invoke(activity)
+        }
         val deadline = SystemClock.uptimeMillis() + 30000
         while (!activity.isFinishing && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(100)
         check(activity.isFinishing) { "Target session did not finish restoration" }
-        check(!controlRecordExists("androidcontrol-portrait-target-package")) {
-            "Target cleanup did not finish: " + shell("cat /data/local/tmp/androidcontrol-hololive-dreams-compat")
+        awaitState("Target cleanup did not finish") {
+            !controlRecordExists("androidcontrol-portrait-target-package")
         }
     }
 

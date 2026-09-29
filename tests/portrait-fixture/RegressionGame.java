@@ -30,6 +30,12 @@ public final class RegressionGame extends Activity {
     };
     private final BroadcastReceiver checkout = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
+            if ("org.androidcontrol.regression.DIALOG".equals(intent.getAction())) {
+                new android.app.AlertDialog.Builder(RegressionGame.this)
+                    .setMessage("Target app dialog").setPositiveButton("Dismiss", null)
+                    .setOnDismissListener(dialog -> record("dialog-dismissed", "dismissed", false)).show();
+                return;
+            }
             startActivityForResult(new Intent().setComponent(new ComponentName(
                     "org.androidcontrol.regression.checkout", "org.androidcontrol.regression.checkout.CheckoutActivity")), 41);
         }
@@ -58,7 +64,9 @@ public final class RegressionGame extends Activity {
             return true;
         });
         setContentView(scene);
-        registerReceiver(checkout, new IntentFilter("org.androidcontrol.regression.CHECKOUT"), Context.RECEIVER_EXPORTED);
+        IntentFilter filter = new IntentFilter("org.androidcontrol.regression.CHECKOUT");
+        filter.addAction("org.androidcontrol.regression.DIALOG");
+        registerReceiver(checkout, filter, Context.RECEIVER_EXPORTED);
     }
 
     @Override protected void onResume() {
