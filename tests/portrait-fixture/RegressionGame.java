@@ -22,9 +22,13 @@ public final class RegressionGame extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean resumed;
     private boolean focused;
+    private TextView scene;
     private final Runnable frame = new Runnable() {
         @Override public void run() {
             if (!resumed || !focused) return;
+            // Draw a changing frame, like a game engine. A file heartbeat alone
+            // does not exercise the virtual display's rendering after reattachment.
+            scene.setText("Frame " + SystemClock.uptimeMillis());
             record("frame", Long.toString(SystemClock.uptimeMillis()), false);
             handler.postDelayed(this, 250);
         }
@@ -50,7 +54,7 @@ public final class RegressionGame extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        TextView scene = new TextView(this);
+        scene = new TextView(this);
         scene.setGravity(Gravity.CENTER);
         scene.setTextColor(0xffffffff);
         scene.setBackgroundColor(0xff164f37);

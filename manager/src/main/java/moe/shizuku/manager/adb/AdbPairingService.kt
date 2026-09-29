@@ -169,7 +169,10 @@ class AdbPairingService : Service() {
 
     private fun handleResult(success: Boolean, exception: Throwable?) {
         stopSearch()
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        // The result replaces this notification ID. Removing the foreground
+        // notification can queue a cancellation that also removes that replacement.
+        // Detach it first so service shutdown cannot cancel the result notification.
+        stopForeground(STOP_FOREGROUND_DETACH)
 
         val title: String
         val text: String?

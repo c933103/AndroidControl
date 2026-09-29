@@ -362,14 +362,18 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     }
 
     private fun setTaskFullscreen(task: ActivityManager.RunningTaskInfo) {
+        configureTaskWindow(task, WINDOWING_MODE_FULLSCREEN, Rect())
+    }
+
+    private fun configureTaskWindow(task: ActivityManager.RunningTaskInfo, mode: Int, bounds: Rect) {
         HiddenApiBypass.addHiddenApiExemptions("Landroid/window/", "Landroid/app/TaskInfo;")
         val token = task.javaClass.getField("token").get(task)
         val tokenClass = Class.forName("android.window.WindowContainerToken")
         val transactionClass = Class.forName("android.window.WindowContainerTransaction")
         val transaction = transactionClass.getConstructor().newInstance()
         transactionClass.getMethod("setWindowingMode", tokenClass, Int::class.javaPrimitiveType)
-            .invoke(transaction, token, WINDOWING_MODE_FULLSCREEN)
-        transactionClass.getMethod("setBounds", tokenClass, Rect::class.java).invoke(transaction, token, Rect())
+            .invoke(transaction, token, mode)
+        transactionClass.getMethod("setBounds", tokenClass, Rect::class.java).invoke(transaction, token, bounds)
         val organizerClass = Class.forName("android.window.WindowOrganizer")
         organizerClass.getMethod("applyTransaction", transactionClass)
             .invoke(organizerClass.getConstructor().newInstance(), transaction)
@@ -570,16 +574,16 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             check(findTargetTaskIdOnDisplay(displayId) == id) { "Target task left portrait display" }
             if (atm != null) {
                 try {
-                    invokeActivityTaskManager(
-                        atm,
-                        "setTaskWindowingMode",
-                        id,
-                        WINDOWING_MODE_FREEFORM,
-                        true
-                    )
+                    // The old setTaskWindowingMode Binder method is absent on
+                    // current Android. A launch may initially fall back to
+                    // fullscreen before freeform support settings are observed;
+                    // resizeTask alone cannot change that mode. Apply both
+                    // mode and bounds in one window-container transaction.
+                    val task = getRunningTasks(atm).first { it.taskId == id }
+                    configureTaskWindow(task, WINDOWING_MODE_FREEFORM, Rect(0, 0, width, height))
                 } catch (t: Throwable) {
                     if (attempt == 0) {
-                        errors.add("freeform=" + (t.message ?: t.javaClass.simpleName))
+                        errors.add("freeform=" + (t.cause?.message ?: t.message ?: t.javaClass.simpleName))
                     }
                 }
 

@@ -46,6 +46,8 @@ run_phase() {
     if ! grep -q "regression=PASS $1" "runtime-results/$1.txt"; then
         adb shell run-as "$package" cat cache/regression-failure-windows.txt > "runtime-results/$1-before-finish-windows.txt" || true
         adb shell run-as "$package" cat cache/regression-failure-activities.txt > "runtime-results/$1-before-finish-activities.txt" || true
+        adb shell run-as "$package" cat cache/regression-failure-surfaces.txt > "runtime-results/$1-before-finish-surfaces.txt" || true
+        adb exec-out run-as "$package" cat cache/regression-failure-screen.png > "runtime-results/$1-before-finish-screen.png" || true
         adb shell dumpsys activity activities > "runtime-results/$1-activities.txt"
         adb shell dumpsys window > "runtime-results/$1-windows.txt"
         adb logcat -d > "runtime-results/$1-log.txt"
