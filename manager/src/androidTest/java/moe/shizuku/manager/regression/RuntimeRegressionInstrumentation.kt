@@ -66,6 +66,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
                 "select-target" -> selectTarget()
                 "separate-controls" -> checkSeparateControls()
                 "external-dialog" -> checkExternalDialog()
+                "web-links" -> checkWebLinks()
                 "interrupted-handoff" -> checkInterruptedHandoff()
                 "lock-unlock" -> checkLockUnlock()
                 "shutdown-control" -> runCatching { controlService().destroy() }
@@ -382,6 +383,109 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, point[0].toFloat(), point[1].toFloat(), 0)
         val up = MotionEvent.obtain(now, now + 50, MotionEvent.ACTION_UP, point[0].toFloat(), point[1].toFloat(), 0)
         try { sendPointerSync(down); sendPointerSync(up) } finally { down.recycle(); up.recycle() }
+    }
+
+    private fun checkWebLinks() {
+        PortraitTarget.save(PortraitTarget.DEFAULT_PACKAGE)
+        val server = java.net.ServerSocket(0, 8, java.net.InetAddress.getByName("127.0.0.1"))
+        val serving = Thread {
+            while (!server.isClosed) {
+                try { server.accept().use { socket ->
+                    socket.soTimeout = 3000
+                    val reader = socket.getInputStream().bufferedReader()
+                    val path = reader.readLine()?.split(' ')?.getOrNull(1) ?: "/"
+                    while (!reader.readLine().isNullOrEmpty()) { }
+                    val body = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'>" +
+                        "<title>$path</title></head><body><h1>$path</h1>" +
+                        "<a id='next' href='/two'>Next</a><br><br>" +
+                        "<a id='popup' target='_blank' href='/popup'>Popup</a></body></html>"
+                    val response = if (path == "/redirect") "HTTP/1.1 302 Found\r\nLocation: /one\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        else "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: ${body.toByteArray().size}\r\nConnection: close\r\n\r\n$body"
+                    socket.getOutputStream().write(response.toByteArray())
+                } } catch (_: java.io.IOException) { }
+            }
+        }.apply { isDaemon = true; start() }
+        val activity = checkDisplay()
+        val pid = shell("pidof ${PortraitTarget.DEFAULT_PACKAGE}")
+        val displayField = activity.javaClass.getDeclaredField("displayId").apply { isAccessible = true }
+        val originalDisplay = displayField.getInt(activity)
+        val panelField = activity.javaClass.getDeclaredField("webPanel").apply { isAccessible = true }
+        fun page(): android.webkit.WebView? {
+            fun find(view: View): android.webkit.WebView? {
+                if (view.visibility != View.VISIBLE) return null
+                if (view is android.webkit.WebView) return view
+                if (view is android.view.ViewGroup) for (i in 0 until view.childCount) {
+                    find(view.getChildAt(i))?.let { return it }
+                }
+                return null
+            }
+            var web: android.webkit.WebView? = null
+            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+                web = (panelField.get(activity) as? View)?.let { find(it) }
+            } else runOnMainSync { web = (panelField.get(activity) as? View)?.let { find(it) } }
+            return web
+        }
+        fun url(): String? {
+            var value: String? = null
+            runOnMainSync { value = page()?.takeIf { it.progress == 100 }?.url }
+            return value
+        }
+        fun script(js: String): String {
+            val latch = CountDownLatch(1)
+            var result = ""
+            val web = checkNotNull(page())
+            runOnMainSync { web.evaluateJavascript(js) { result = it; latch.countDown() } }
+            check(latch.await(5, TimeUnit.SECONDS)) { "WebView script did not complete" }
+            return result
+        }
+        try {
+            for (newTask in listOf(true, false)) {
+                shell("am broadcast -a org.androidcontrol.regression.WEB_LINK -p ${PortraitTarget.DEFAULT_PACKAGE} --es url http://127.0.0.1:${server.localPort}/redirect --ez new_task $newTask")
+                awaitState("Target web link did not open in the portrait WebView (newTask=$newTask)") {
+                    url()?.endsWith("/one") == true
+                }
+                script("document.getElementById('next').click()")
+                awaitState("Web link escaped the embedded view") { url()?.endsWith("/two") == true }
+                runOnMainSync { activity.onBackPressed() }
+                awaitState("Web Back did not retain page history") { url()?.endsWith("/one") == true }
+                if (newTask) {
+                    script("document.body.dataset.survived='yes'")
+                    shell("input keyevent KEYCODE_SLEEP")
+                    SystemClock.sleep(700)
+                    shell("input keyevent KEYCODE_WAKEUP")
+                    shell("wm dismiss-keyguard")
+                    awaitState("Web page did not regain focus after unlocking") {
+                        shell("dumpsys window").lineSequence().any {
+                            it.contains("mCurrentFocus=") && it.contains("TargetPortraitDisplayActivity")
+                        }
+                    }
+                    check(script("document.body.dataset.survived") == "\"yes\"") { "Unlock recreated the web page" }
+                    // A real tap supplies the gesture needed for target=_blank.
+                    val xy = script("(function(){var r=document.getElementById('popup').getBoundingClientRect();return [Math.round((r.x+r.width/2)*devicePixelRatio),Math.round((r.y+r.height/2)*devicePixelRatio)];})()")
+                        .removeSurrounding("[", "]").split(',').map { it.toInt() }
+                    val location = IntArray(2)
+                    runOnMainSync { page()!!.getLocationOnScreen(location) }
+                    shell("input -d 0 tap ${location[0] + xy[0]} ${location[1] + xy[1]}")
+                    awaitState("New-window web link escaped the panel") { url()?.endsWith("/popup") == true }
+                    runOnMainSync { activity.onBackPressed() }
+                    awaitState("Closing web popup did not return to its parent") { url()?.endsWith("/one") == true }
+                }
+                runOnMainSync { (panelField.get(activity) as moe.shizuku.manager.control.PortraitWebPanel).back() }
+                awaitState("Closing the web page did not restore the game's focus") {
+                    fixtureFile("window-focus").trim() == "true" && panelField.get(activity) == null
+                }
+                check(!activity.isFinishing && displayField.getInt(activity) == originalDisplay)
+                check(shell("pidof ${PortraitTarget.DEFAULT_PACKAGE}") == pid) { "Opening a link restarted the game" }
+                val before = fixtureFile("touches")
+                tapScene(activity)
+                awaitState("Game input failed after returning from WebView") { fixtureFile("touches").length > before.length }
+            }
+            checkpoint("WebView kept redirects, history, popups and lock/unlock; both browser launch modes returned to the same live game")
+        } finally {
+            server.close()
+            serving.join(1000)
+            closeDisplay(activity)
+        }
     }
 
     private fun checkExternalDialog() {

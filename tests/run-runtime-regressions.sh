@@ -40,6 +40,14 @@ jar --create --file "$test_dir/checkout.jar" -C "$test_dir/checkout-classes" .
 "$build_tools/apksigner" sign --ks "$test_dir/fixture.jks" --ks-pass pass:android "$test_dir/checkout-aligned.apk"
 
 package=moe.shizuku.privileged.api
+mkdir -p "$test_dir/browser-classes" "$test_dir/browser-dex"
+javac --release 8 -cp "$android_jar" -d "$test_dir/browser-classes" tests/browser-fixture/BrowserActivity.java
+jar --create --file "$test_dir/browser.jar" -C "$test_dir/browser-classes" .
+"$build_tools/d8" --min-api 24 --lib "$android_jar" --output "$test_dir/browser-dex" "$test_dir/browser.jar"
+"$build_tools/aapt2" link -I "$android_jar" --manifest tests/browser-fixture/AndroidManifest.xml -o "$test_dir/browser.apk"
+(cd "$test_dir/browser-dex" && zip -q "$test_dir/browser.apk" classes.dex)
+"$build_tools/zipalign" -p 4 "$test_dir/browser.apk" "$test_dir/browser-aligned.apk"
+"$build_tools/apksigner" sign --ks "$test_dir/fixture.jks" --ks-pass pass:android "$test_dir/browser-aligned.apk"
 runner="$package.test/moe.shizuku.manager.regression.RuntimeRegressionInstrumentation"
 run_phase() {
     timeout 90s adb shell am instrument -w -e phase "$1" "$runner" | tee "runtime-results/$1.txt"
@@ -77,6 +85,7 @@ run_phase key-recovery || result=1
 adb install "$test_dir/aligned.apk"
 adb install "$test_dir/other-aligned.apk"
 adb install "$test_dir/checkout-aligned.apk"
+adb install "$test_dir/browser-aligned.apk"
 apk_path=$(adb shell pm path "$package" | sed 's/^package://' | tr -d '\r')
 adb shell "${apk_path%/*}/lib/x86_64/libshizuku.so --apk=$apk_path"
 adb logcat -c
@@ -89,6 +98,7 @@ adb shell run-as game.qualiarts.hololive.dreams.jp cat files/touches | tee runti
 grep -q touch runtime-results/touches.txt || result=1
 run_phase select-target || result=1
 run_phase separate-controls || result=1
+run_phase web-links || result=1
 run_phase external-dialog || result=1
 run_phase interrupted-handoff || result=1
 run_phase lock-unlock || result=1

@@ -9,10 +9,12 @@ test "$device_sdk" = 33
 mkdir "$test_dir/classes"
 javac --release 8 -d "$test_dir/classes" \
   manager/src/main/java/moe/shizuku/manager/control/PortraitActivityGeometry.java \
-  tests/PortraitActivityGeometryTest.java tests/AndroidPortraitRegexTest.java
+  tests/PortraitActivityGeometryTest.java tests/AndroidPortraitRegexTest.java \
+  manager/src/main/java/moe/shizuku/manager/control/PortraitWebLaunch.java tests/PortraitWebLaunchTest.java
 jar --create --file "$test_dir/classes.jar" -C "$test_dir/classes" .
 "$ANDROID_HOME/build-tools/36.0.0/d8" --min-api 33 \
   --lib "$ANDROID_HOME/platforms/android-33/android.jar" \
   --output "$test_dir/portrait-tests.zip" "$test_dir/classes.jar"
 adb push "$test_dir/portrait-tests.zip" "$remote_jar"
 adb shell CLASSPATH="$remote_jar" app_process / moe.shizuku.manager.control.AndroidPortraitRegexTest
+adb shell CLASSPATH="$remote_jar" app_process / moe.shizuku.manager.control.PortraitWebLaunchTest

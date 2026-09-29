@@ -218,4 +218,9 @@ With %1$s, in any terminal app, you can connect to and interact with the shell r
     <string name="orientation_system_clear_existing">Clear existing system portrait lock</string>
     <string name="orientation_system_existing">Portrait is already forced, with no saved earlier settings. Clear returns to Android’s default rotation policy with auto-rotate enabled.</string>
     <string name="about_upstream" translatable="false">Shizuku · Apache-2.0</string>
+    <string name="target_web_return">Return to app</string>
+    <string name="target_web_reload">Reload</string>
+    <string name="target_web_unsupported_link">This link needs another app. Web links stay in this window; return to the app to continue.</string>
+    <string name="target_web_renderer_stopped">The web page stopped. Reload to try again, or return to the app.</string>
+    <string name="target_web_unavailable">Could not open WebView. Your app is still running; try the link again.</string>
 </resources>
