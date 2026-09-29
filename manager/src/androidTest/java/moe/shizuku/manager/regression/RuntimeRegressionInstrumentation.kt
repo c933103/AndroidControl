@@ -418,13 +418,11 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
             }
             valid
         }
-        SystemClock.sleep(500)
-        val screenshot = uiAutomation.takeScreenshot()
-        try {
-            check(screenshot.getPixel(sample[0], sample[1]) == 0xff164f37.toInt()) {
-                "Target host is blank or obscured after unlocking"
-            }
-        } finally { screenshot.recycle() }
+        awaitState("Target host is blank or obscured after unlocking") {
+            val screenshot = uiAutomation.takeScreenshot()
+            try { screenshot.getPixel(sample[0], sample[1]) == 0xff164f37.toInt() }
+            finally { screenshot.recycle() }
+        }
         val touches = fixtureFile("touches")
         tapScene(activity)
         awaitState("Target input froze after unlocking") { fixtureFile("touches").length > touches.length }
