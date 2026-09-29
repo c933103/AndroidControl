@@ -29,6 +29,7 @@ class AdbPairingService : Service() {
         private const val tag = "AdbPairingService"
 
         private const val notificationId = 1
+        private const val resultNotificationTag = "adb_pairing_result"
         private const val replyRequestId = 1
         private const val stopRequestId = 2
         private const val retryRequestId = 3
@@ -82,6 +83,9 @@ class AdbPairingService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == startAction || intent?.action == replyAction) {
+            getSystemService(NotificationManager::class.java).cancel(resultNotificationTag, notificationId)
+        }
         val notification = when (intent?.action) {
             startAction -> {
                 onStart()
@@ -169,10 +173,9 @@ class AdbPairingService : Service() {
 
     private fun handleResult(success: Boolean, exception: Throwable?) {
         stopSearch()
-        // The result replaces this notification ID. Removing the foreground
-        // notification can queue a cancellation that also removes that replacement.
-        // Detach it first so service shutdown cannot cancel the result notification.
-        stopForeground(STOP_FOREGROUND_DETACH)
+        // Use a separate notification key for the result. Delayed foreground
+        // updates/cancellation must not overwrite or remove the recovery message.
+        stopForeground(STOP_FOREGROUND_REMOVE)
 
         val title: String
         val text: String?
@@ -209,6 +212,7 @@ class AdbPairingService : Service() {
         }
 
         getSystemService(NotificationManager::class.java).notify(
+            resultNotificationTag,
             notificationId,
             Notification.Builder(this, notificationChannel)
                 .setColor(getColor(R.color.notification))

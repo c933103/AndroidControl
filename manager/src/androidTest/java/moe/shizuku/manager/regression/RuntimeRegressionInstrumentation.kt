@@ -303,7 +303,12 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
             "System-wide mode applied target compatibility flags"
         }
         checkpoint("system enabled; restarting daemon")
-        runCatching { service.destroy() }
+        // Remove the server's service record as well as the process. Binding
+        // during asynchronous death cleanup can otherwise attach to a dead record.
+        runOnMainSync {
+            Shizuku.unbindUserService(Shizuku.UserServiceArgs(ComponentName(BuildConfig.APPLICATION_ID,
+                AndroidControlService::class.java.name)), null, true)
+        }
         val restartDeadline = SystemClock.uptimeMillis() + 5000
         while (service.asBinder().pingBinder() && SystemClock.uptimeMillis() < restartDeadline) SystemClock.sleep(100)
         check(!service.asBinder().pingBinder())
@@ -437,6 +442,10 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         }
         check(shell("pidof ${PortraitTarget.DEFAULT_PACKAGE}") == pid) { "Native handoff restarted the game process" }
         val before = fixtureFile("touches")
+        awaitState("Returned game did not finish its display transition") {
+            fixtureFile("window-focus").trim() == "true" &&
+                Regex("DispatchFrozen:\\s*(?:false|0)\\b").containsMatchIn(shell("dumpsys input"))
+        }
         val screenshot = uiAutomation.takeScreenshot()
         val width = screenshot.width
         val height = screenshot.height
