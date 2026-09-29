@@ -24,6 +24,29 @@ import java.io.InputStreamReader
 @Keep
 class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() {
 
+    init {
+        // Only this dedicated control daemon needs a package-backed UID for
+        // DisplayManager attribution. Keep the parent/root server and other tools
+        // untouched. Shell already has every permission used by these controls.
+        if (android.os.Process.myUid() == 0) {
+            val names = listOf("hololive-dreams-compat", "hololive-dreams-tasks",
+                "portrait-display-session", "freeform-support-prev", "multiwindow-config-prev",
+                "portrait-target-package", "system-rotation-prev", "portrait-native-handoff")
+            for (name in names) for (suffix in listOf("", ".bak", ".new")) {
+                val path = "/data/local/tmp/androidcontrol-$name$suffix"
+                try {
+                    val stat = android.system.Os.lstat(path)
+                    check(android.system.OsConstants.S_ISREG(stat.st_mode)) { "Invalid control state file: $path" }
+                    if (stat.st_uid == 0) android.system.Os.lchown(path, 2000, 2000)
+                } catch (error: android.system.ErrnoException) {
+                    if (error.errno != android.system.OsConstants.ENOENT) throw error
+                }
+            }
+            android.system.Os.setgid(2000)
+            android.system.Os.setuid(2000)
+        }
+    }
+
     @Keep
     constructor(context: Context) : this() {
         serviceContext = context
