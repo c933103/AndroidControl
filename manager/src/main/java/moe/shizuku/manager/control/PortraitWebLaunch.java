@@ -37,7 +37,11 @@ public final class PortraitWebLaunch {
             Matcher h = header.matcher(line);
             if (h.matches()) {
                 if (id != null) break;
-                if (h.group(2).equals(component) && h.group(3).equals(Integer.toString(taskId))) {
+                // Android 13 closes ActivityRecord before its task suffix:
+                // ActivityRecord{... browser/.Browser} t19}; newer builds do not.
+                String actualComponent = h.group(2);
+                if (actualComponent.endsWith("}")) actualComponent = actualComponent.substring(0, actualComponent.length() - 1);
+                if (actualComponent.equals(component) && h.group(3).equals(Integer.toString(taskId))) {
                     id = h.group(1);
                     headerIndent = indent;
                 }
