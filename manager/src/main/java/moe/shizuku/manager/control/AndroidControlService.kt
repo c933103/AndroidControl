@@ -14,7 +14,6 @@ import android.view.InputEvent
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.Surface
-import moe.shizuku.manager.BuildConfig
 import androidx.annotation.Keep
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.io.BufferedReader
@@ -61,6 +60,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     }
     private var ownedPortraitDisplay: VirtualDisplay? = null
     private var portraitHostTaskId = -1
+    private var lastPhoneFocusState = ""
     @Volatile private var portraitSurfaceAttached = false
     private var portraitOriginalResizeMode = 0
     private var handedOffToken: IBinder? = null
@@ -375,10 +375,26 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     private fun restorePhoneFocus() {
         if (!portraitSurfaceAttached || portraitHostTaskId < 0 || !isPhoneUnlocked()) return
         val atm = getActivityTaskManagerService()
-        val top = getRunningTasks(atm).firstOrNull { getRunningTaskDisplayId(it) == 0 }
+        // getTasks is ordered by last-active time on Android 13, NOT window
+        // stacking order. It can pick another app and leave global focus on the
+        // virtual display, which sends an unqualified Home key to that display.
+        val roots = invokeActivityTaskManager(atm, "getAllRootTaskInfosOnDisplay", 0) as? List<*>
+            ?: return
+        val top = roots.filterNotNull().firstOrNull { it.javaClass.getField("visible").getBoolean(it) }
+            ?: return
+        val rootId = top.javaClass.getField("taskId").getInt(top)
+        val children = top.javaClass.getField("childTaskIds").get(top) as? IntArray
+        val activity = top.javaClass.getField("topActivity").get(top) as? android.content.ComponentName
+        val ownsTop = (rootId == portraitHostTaskId || children?.contains(portraitHostTaskId) == true) &&
+            activity?.className == TargetPortraitDisplayActivity::class.java.name
+        val focusState = "host=$portraitHostTaskId; physicalRoot=$rootId; hostOnTop=$ownsTop"
+        if (focusState != lastPhoneFocusState) {
+            android.util.Log.d("AndroidControlService", "Portrait focus: $focusState")
+            lastPhoneFocusState = focusState
+        }
         // Never bring the host in front of Home, the lock screen or a native dialog.
-        if (top?.taskId == portraitHostTaskId && top.topActivity?.packageName == BuildConfig.APPLICATION_ID) {
-            invokeActivityTaskManager(atm, "setFocusedTask", portraitHostTaskId)
+        if (ownsTop) {
+            invokeActivityTaskManager(atm, "setFocusedRootTask", rootId)
         }
     }
 
@@ -607,8 +623,11 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                             stopTargetPortraitDisplay(displayId, false)
                         } else {
                             val tasks = getRunningTasks(getActivityTaskManagerService())
-                            val external = tasks.firstOrNull { getRunningTaskDisplayId(it) == displayId }
-                                ?.topActivity?.packageName?.let { it != targetPackage } == true
+                            val roots = invokeActivityTaskManager(getActivityTaskManagerService(),
+                                "getAllRootTaskInfosOnDisplay", displayId) as? List<*>
+                            val top = roots?.filterNotNull()?.firstOrNull { it.javaClass.getField("visible").getBoolean(it) }
+                            val external = (top?.javaClass?.getField("topActivity")?.get(top) as? android.content.ComponentName)
+                                ?.packageName?.let { it != targetPackage } == true
                             // Billing/identity/permission screens may be secure or sized for
                             // the native display. Preserve their live result chain there.
                             if ((external || handoffFile.baseFile.exists()) && isPhoneUnlocked()) {

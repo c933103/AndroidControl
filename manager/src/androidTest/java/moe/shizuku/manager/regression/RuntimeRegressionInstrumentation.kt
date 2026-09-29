@@ -77,6 +77,11 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
             }
             finish(-1, Bundle().apply { putString("regression", "PASS ${args.getString("phase")}") })
         } catch (t: Throwable) {
+            // Capture BEFORE instrumentation finish removes the manager's windows.
+            runCatching {
+                java.io.File(targetContext.cacheDir, "regression-failure-windows.txt").writeText(shell("dumpsys window"))
+                java.io.File(targetContext.cacheDir, "regression-failure-activities.txt").writeText(shell("dumpsys activity activities"))
+            }
             finish(0, Bundle().apply { putString("regression", "FAIL ${args.getString("phase")}: ${t.stackTraceToString()}") })
         }
     }

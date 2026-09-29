@@ -44,6 +44,8 @@ runner="$package.test/moe.shizuku.manager.regression.RuntimeRegressionInstrument
 run_phase() {
     timeout 90s adb shell am instrument -w -e phase "$1" "$runner" | tee "runtime-results/$1.txt"
     if ! grep -q "regression=PASS $1" "runtime-results/$1.txt"; then
+        adb shell run-as "$package" cat cache/regression-failure-windows.txt > "runtime-results/$1-before-finish-windows.txt" || true
+        adb shell run-as "$package" cat cache/regression-failure-activities.txt > "runtime-results/$1-before-finish-activities.txt" || true
         adb shell dumpsys activity activities > "runtime-results/$1-activities.txt"
         adb shell dumpsys window > "runtime-results/$1-windows.txt"
         adb logcat -d > "runtime-results/$1-log.txt"
@@ -93,10 +95,17 @@ adb logcat -d -s AndroidRuntime ShizukuServer AndroidControlService > runtime-re
 # toolbox is started with root. Exercise that path on these debuggable emulators.
 run_phase shutdown-control || result=1
 adb root
-adb wait-for-device
-test "$(adb shell id -u | tr -d '\r')" = 0
-server_pid=$(adb shell pidof shizuku_server | tr -d '\r')
-adb shell kill "$server_pid"
+timeout 30s adb wait-for-device
+root_uid=""
+for attempt in {1..30}; do
+    root_uid=$(adb shell id -u | tr -d '\r') || true
+    [[ "$root_uid" = 0 ]] && break
+    sleep 0.2
+done
+test "$root_uid" = 0
+# Restarting adbd can already have terminated the previous shell server.
+server_pid=$(adb shell pidof shizuku_server | tr -d '\r') || true
+if [[ -n "$server_pid" ]]; then adb shell kill "$server_pid"; fi
 adb shell am force-stop "$package"
 adb shell "${apk_path%/*}/lib/x86_64/libshizuku.so --apk=$apk_path"
 run_phase root-display || result=1
