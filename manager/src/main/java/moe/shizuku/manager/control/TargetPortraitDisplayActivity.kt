@@ -44,6 +44,11 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        if (Build.VERSION.SDK_INT >= 33) {
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(
+                android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT
+            ) { onBackPressed() }
+        }
         // System navigation and the explicit controls remain outside the rendered
         // app. A lost surface must never strand the user behind a black screen.
         val root = LinearLayout(this).apply {
