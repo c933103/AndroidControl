@@ -387,7 +387,6 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
     }
 
     private fun checkWebLinks() {
-        shell("wm logging enable-text WM_DEBUG_FOCUS WM_DEBUG_FOCUS_LIGHT")
         PortraitTarget.save(PortraitTarget.DEFAULT_PACKAGE)
         val server = java.net.ServerSocket(0, 8, java.net.InetAddress.getByName("127.0.0.1"))
         val serving = Thread {
