@@ -57,9 +57,9 @@ internal class SystemPortraitController(
         }
         if (!hasOverride()) saveSnapshot(snapshot())
         try {
-            wm("user-rotation", "-d", "0", "lock", portraitRotation().toString())
             wm("fixed-to-user-rotation", "-d", "0", "enabled")
             wm("set-ignore-orientation-request", "-d", "0", "true")
+            lockUserRotation(portraitRotation())
             check(awaitPolicy { isEnabled() }) {
                 "System-wide portrait policy did not apply: " + snapshot().toString()
             }
@@ -80,11 +80,29 @@ internal class SystemPortraitController(
 
     private fun awaitPolicy(ready: () -> Boolean): Boolean {
         val deadline = SystemClock.uptimeMillis() + 5000
+        var matchingSince = 0L
         do {
-            if (ready()) return true
+            val now = SystemClock.uptimeMillis()
+            if (ready()) {
+                if (matchingSince == 0L) matchingSince = now
+                if (now - matchingSince >= 500) return true
+            } else matchingSince = 0L
             SystemClock.sleep(100)
         } while (SystemClock.uptimeMillis() < deadline)
         return false
+    }
+
+    private fun lockUserRotation(rotation: Int) {
+        // Mode and angle are separate settings observed asynchronously by Android.
+        // Finish the free-to-locked transition before writing a different angle.
+        wm("user-rotation", "-d", "0", "lock")
+        check(awaitPolicy { wm("user-rotation", "-d", "0").startsWith("lock ") }) {
+            "User rotation did not lock"
+        }
+        wm("user-rotation", "-d", "0", "lock", rotation.toString())
+        check(awaitPolicy { wm("user-rotation", "-d", "0") == "lock $rotation" }) {
+            "User rotation angle did not settle"
+        }
     }
 
     private fun restore() {
@@ -96,7 +114,8 @@ internal class SystemPortraitController(
         }
         attempt("set-ignore-orientation-request", "-d", "0", previous.getBoolean("ignore").toString())
         attempt("fixed-to-user-rotation", "-d", "0", previous.getString("fixed"))
-        attempt("user-rotation", "-d", "0", "lock", previous.getInt("rotation").toString())
+        try { lockUserRotation(previous.getInt("rotation")) }
+        catch (t: Throwable) { failures.add(t) }
         if (previous.getBoolean("free")) {
             // Android updates its cached user angle asynchronously. Thawing before
             // that observer runs would write the previous (forced) angle back.

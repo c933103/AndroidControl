@@ -48,7 +48,8 @@ public final class CheckoutActivity extends Activity {
                 && screen.contains(position[0] + cancel.getWidth() - 1, position[1] + cancel.getHeight() - 1);
             try (FileOutputStream out = new FileOutputStream(new File(getFilesDir(), "ready"))) {
                 out.write(("display=" + getWindowManager().getDefaultDisplay().getDisplayId()
-                    + ";buttonVisible=" + complete + ";x=" + (position[0] + cancel.getWidth() / 2)
+                    + ";buttonVisible=" + complete + ";focused=" + hasWindowFocus()
+                    + ";x=" + (position[0] + cancel.getWidth() / 2)
                     + ";y=" + (position[1] + cancel.getHeight() / 2)).getBytes(StandardCharsets.UTF_8));
             } catch (Exception error) { throw new RuntimeException(error); }
             handler.postDelayed(this, 250);
