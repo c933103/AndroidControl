@@ -35,6 +35,15 @@ public final class RegressionGame extends Activity {
     };
     private final BroadcastReceiver checkout = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
+            if ("org.androidcontrol.regression.WEB_LINK".equals(intent.getAction())) {
+                Intent link = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(intent.getStringExtra("url")))
+                    .addCategory(Intent.CATEGORY_BROWSABLE)
+                    .setComponent(new ComponentName("org.androidcontrol.regression.browser",
+                        "org.androidcontrol.regression.browser.BrowserActivity"));
+                if (intent.getBooleanExtra("new_task", false)) link.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(link);
+                return;
+            }
             if ("org.androidcontrol.regression.DIALOG".equals(intent.getAction())) {
                 new android.app.AlertDialog.Builder(RegressionGame.this)
                     .setMessage("Target app dialog").setPositiveButton("Dismiss", null)
@@ -71,6 +80,7 @@ public final class RegressionGame extends Activity {
         setContentView(scene);
         IntentFilter filter = new IntentFilter("org.androidcontrol.regression.CHECKOUT");
         filter.addAction("org.androidcontrol.regression.DIALOG");
+        filter.addAction("org.androidcontrol.regression.WEB_LINK");
         registerReceiver(checkout, filter, Context.RECEIVER_EXPORTED);
     }
 
