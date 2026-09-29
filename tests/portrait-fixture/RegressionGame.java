@@ -21,9 +21,10 @@ import java.nio.charset.StandardCharsets;
 public final class RegressionGame extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean resumed;
+    private boolean focused;
     private final Runnable frame = new Runnable() {
         @Override public void run() {
-            if (!resumed) return;
+            if (!resumed || !focused) return;
             record("frame", Long.toString(SystemClock.uptimeMillis()), false);
             handler.postDelayed(this, 250);
         }
@@ -79,6 +80,14 @@ public final class RegressionGame extends Activity {
         resumed = false;
         handler.removeCallbacks(frame);
         super.onPause();
+    }
+
+    @Override public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        focused = hasFocus;
+        record("window-focus", Boolean.toString(hasFocus), false);
+        handler.removeCallbacks(frame);
+        if (resumed && focused) handler.post(frame);
     }
 
     @Override protected void onActivityResult(int request, int result, Intent data) {

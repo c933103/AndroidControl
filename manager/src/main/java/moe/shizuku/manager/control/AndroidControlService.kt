@@ -267,7 +267,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             val valid = surface?.takeIf { it.isValid }
             ownedPortraitDisplay?.surface = valid
             portraitSurfaceAttached = valid != null
-            if (valid != null) restorePhoneFocus()
+            if (valid != null) restoreSessionFocus()
         }
     }
 
@@ -284,10 +284,11 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         synchronized(targetPortraitSessionLock) {
             if (displayId != targetPortraitDisplayId || targetPortraitHostToken !== hostToken ||
                 !portraitSurfaceAttached) return
+            restoreSessionFocus()
             val now = SystemClock.uptimeMillis()
             injectEvent(displayId, KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, 0))
             injectEvent(displayId, KeyEvent(now, now + 1, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK, 0))
-            restorePhoneFocus()
+            restoreSessionFocus()
         }
     }
 
@@ -372,7 +373,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             .invoke(organizerClass.getConstructor().newInstance(), transaction)
     }
 
-    private fun restorePhoneFocus() {
+    private fun restoreSessionFocus() {
         if (!portraitSurfaceAttached || portraitHostTaskId < 0 || !isPhoneUnlocked()) return
         val atm = getActivityTaskManagerService()
         // getTasks is ordered by last-active time on Android 13, NOT window
@@ -394,7 +395,22 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         }
         // Never bring the host in front of Home, the lock screen or a native dialog.
         if (ownsTop) {
-            invokeActivityTaskManager(atm, "setFocusedRootTask", rootId)
+            if (android.os.Build.VERSION.SDK_INT >= 35) {
+                // OWN_FOCUS keeps the game focused while global keys go to the host.
+                invokeActivityTaskManager(atm, "setFocusedRootTask", rootId)
+            } else {
+                // Older phones have one global focused window. Taking it away
+                // from a Unity/game surface can suspend rendering. Keep the live
+                // virtual task focused; host buttons still accept touch, and Home
+                // from the phone's navigation bar explicitly targets display 0.
+                val virtualRoots = invokeActivityTaskManager(atm, "getAllRootTaskInfosOnDisplay",
+                    targetPortraitDisplayId) as? List<*> ?: return
+                val virtualTop = virtualRoots.filterNotNull().firstOrNull {
+                    it.javaClass.getField("visible").getBoolean(it)
+                } ?: return
+                invokeActivityTaskManager(atm, "setFocusedRootTask",
+                    virtualTop.javaClass.getField("taskId").getInt(virtualTop))
+            }
         }
     }
 
@@ -635,7 +651,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                             } else if (tasks.none { getRunningTaskDisplayId(it) == displayId }) {
                                 stopTargetPortraitDisplay(displayId, false)
                             } else {
-                                restorePhoneFocus()
+                                restoreSessionFocus()
                             }
                         }
                     }
@@ -655,7 +671,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         try {
             injectEvent(displayId, event)
             if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
-                restorePhoneFocus()
+                restoreSessionFocus()
             }
         } catch (t: Throwable) {
             targetPortraitStatus = "Portrait input: ${t.cause?.message ?: t.message}"

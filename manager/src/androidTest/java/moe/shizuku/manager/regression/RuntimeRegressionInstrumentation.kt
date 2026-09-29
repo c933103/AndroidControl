@@ -376,7 +376,27 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         shell("run-as ${PortraitTarget.DEFAULT_PACKAGE} rm -f files/dialog-dismissed")
         shell("am broadcast -a org.androidcontrol.regression.DIALOG -p ${PortraitTarget.DEFAULT_PACKAGE}")
         SystemClock.sleep(500)
-        shell("input -d 0 keyevent KEYCODE_BACK")
+        if (android.os.Build.VERSION.SDK_INT >= 35) {
+            shell("input -d 0 keyevent KEYCODE_BACK")
+        } else {
+            // One global focus on older Android: exercise the always-visible
+            // host Back button while the target retains rendering focus.
+            val point = IntArray(2)
+            runOnMainSync {
+                fun find(view: View): android.widget.Button? {
+                    if (view is android.widget.Button && view.text == targetContext.getString(R.string.target_portrait_back)) return view
+                    if (view is android.view.ViewGroup) for (i in 0 until view.childCount) {
+                        find(view.getChildAt(i))?.let { return it }
+                    }
+                    return null
+                }
+                val button = checkNotNull(find(activity.window.decorView))
+                button.getLocationOnScreen(point)
+                point[0] += button.width / 2
+                point[1] += button.height / 2
+            }
+            shell("input -d 0 tap ${point[0]} ${point[1]}")
+        }
         awaitState("Back did not dismiss the target's own dialog") { fixtureFile("dialog-dismissed").contains("dismissed") }
         check(!activity.isFinishing) { "Back closed the portrait host while dismissing a dialog" }
         shell("run-as ${PortraitTarget.DEFAULT_PACKAGE} rm -f files/checkout-returned")
@@ -441,9 +461,12 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         val touches = fixtureFile("touches")
         tapScene(activity)
         awaitState("Target input froze after unlocking") { fixtureFile("touches").length > touches.length }
+        awaitState("Target lost rendering focus after unlocking") { fixtureFile("window-focus").trim() == "true" }
         val home = shell("cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME")
             .lineSequence().last { it.contains('/') }.substringBefore('/')
-        shell("input keyevent KEYCODE_HOME")
+        // System navigation on the physical phone supplies display 0. An
+        // unspecified CLI display routes Home to the focused virtual display on 13.
+        shell("input -d 0 keyevent KEYCODE_HOME")
         awaitState("Home cannot leave the portrait host after unlocking") {
             shell("dumpsys window").lineSequence().any { it.contains("mCurrentFocus=") && it.contains("$home/") }
         }
