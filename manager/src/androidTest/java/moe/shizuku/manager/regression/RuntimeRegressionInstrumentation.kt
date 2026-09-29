@@ -449,19 +449,25 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         check(pid.isNotEmpty())
         // Fault injection: a handoff record that cannot be read must fail closed,
         // retaining the live process even when the host is then closed.
-        shell("sh -c 'printf interrupted > /data/local/tmp/androidcontrol-portrait-native-handoff'")
-        check(runCatching { service.stopTargetPortraitDisplay(id, false) }.isFailure)
-        runOnMainSync { activity.finish() }
-        SystemClock.sleep(1500)
-        check(shell("pidof ${PortraitTarget.DEFAULT_PACKAGE}") == pid) {
-            "Interrupted handoff cleanup killed the preserved game"
+        shell("cp /proc/version /data/local/tmp/androidcontrol-portrait-native-handoff")
+        check(controlRecordExists("androidcontrol-portrait-native-handoff")) { "Fault injection failed" }
+        try {
+            check(runCatching { service.stopTargetPortraitDisplay(id, false) }.isFailure) {
+                "Invalid handoff did not report restoration failure"
+            }
+            runOnMainSync { activity.finish() }
+            SystemClock.sleep(1500)
+            check(shell("pidof ${PortraitTarget.DEFAULT_PACKAGE}") == pid) {
+                "Interrupted handoff cleanup killed the preserved game"
+            }
+            check(controlRecordExists("androidcontrol-portrait-native-handoff")) {
+                "Interrupted handoff discarded its retry record"
+            }
+        } finally {
+            // Remove only this test's injected record. The next fixture launch
+            // owns normal restoration of the remaining target/task journal.
+            shell("rm /data/local/tmp/androidcontrol-portrait-native-handoff")
         }
-        check(controlRecordExists("androidcontrol-portrait-native-handoff")) {
-            "Interrupted handoff discarded its retry record"
-        }
-        // Remove only this test's injected record. The next fixture launch owns
-        // normal restoration of the remaining target/task journal.
-        shell("rm /data/local/tmp/androidcontrol-portrait-native-handoff")
     }
 
     private fun checkLockUnlock() {
