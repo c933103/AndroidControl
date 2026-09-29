@@ -3,9 +3,16 @@ package moe.shizuku.manager.control
 import android.app.ActivityManager
 import android.content.Context
 import android.graphics.Rect
+import android.hardware.display.DisplayManager
+import android.hardware.display.VirtualDisplay
 import android.os.IBinder
+import android.os.SystemClock
 import android.util.AtomicFile
+import android.view.InputEvent
+import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.Surface
+import moe.shizuku.manager.BuildConfig
 import androidx.annotation.Keep
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.io.BufferedReader
@@ -16,7 +23,24 @@ import java.io.InputStreamReader
 class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() {
 
     @Keep
-    constructor(context: Context) : this()
+    constructor(context: Context) : this() {
+        serviceContext = context
+    }
+
+    private var serviceContext: Context? = null
+    private val shellContext: Context by lazy {
+        val context = serviceContext ?: error("AndroidControl service context unavailable")
+        // UserService runs as shell. DisplayManager validates its attribution
+        // package against that UID; the manager's package would be rejected.
+        context.createPackageContext("com.android.shell", Context.CONTEXT_IGNORE_SECURITY)
+    }
+    private var ownedPortraitDisplay: VirtualDisplay? = null
+    private var portraitHostTaskId = -1
+    @Volatile private var portraitSurfaceAttached = false
+    private var portraitOriginalResizeMode = 0
+    private var handedOffToken: IBinder? = null
+    private var handedOffDisplayId = -1
+    private val handoffFile = AtomicFile(File("/data/local/tmp/androidcontrol-portrait-native-handoff"))
 
     private enum class WmApi {
         MODERN,
@@ -173,6 +197,166 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         return targetPortraitStatus
     }
 
+    override fun createTargetPortraitSession(
+        surface: Surface, width: Int, height: Int, densityDpi: Int,
+        hostToken: IBinder, packageName: String, hostTaskId: Int
+    ): Int = synchronized(targetPortraitSessionLock) {
+        check(targetPortraitDisplayId < 0 && ownedPortraitDisplay == null) { "Portrait session already running" }
+        require(surface.isValid && width > 0 && height > width && densityDpi > 0)
+        validateTargetPackage(packageName)
+        val component = android.content.ComponentName.unflattenFromString(resolveTargetLauncherComponent(packageName)!!)
+            ?: error("Invalid launcher component")
+        val info = shellContext.packageManager.getActivityInfo(component, 0)
+        HiddenApiBypass.addHiddenApiExemptions("Landroid/content/pm/ActivityInfo;")
+        portraitOriginalResizeMode = info.javaClass.getField("resizeMode").getInt(info)
+        val manager = shellContext.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+        // A trusted display permits ordinary cross-UID activities. A separate display
+        // group prevents the physical keyguard leaving this offscreen display asleep.
+        // It is NOT secure: protected external UI is moved to the native phone display.
+        var flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC or
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY or
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION or (1 shl 6) or (1 shl 10)
+        if (android.os.Build.VERSION.SDK_INT >= 33) flags = flags or (1 shl 11) or (1 shl 12)
+        if (android.os.Build.VERSION.SDK_INT >= 35) flags = flags or (1 shl 14) or (1 shl 16)
+        val display = manager.createVirtualDisplay("AndroidControl-Target-Portrait", width, height,
+            densityDpi, surface, flags) ?: error("Could not create portrait display")
+        ownedPortraitDisplay = display
+        portraitHostTaskId = hostTaskId
+        portraitSurfaceAttached = true
+        handedOffToken = null
+        handedOffDisplayId = -1
+        try {
+            launchTargetOnPortraitDisplay(display.display.displayId, width, height, hostToken, packageName)
+            return@synchronized display.display.displayId
+        } catch (t: Throwable) {
+            ownedPortraitDisplay = null
+            portraitSurfaceAttached = false
+            display.release()
+            throw t
+        }
+    }
+
+    override fun attachTargetPortraitSurface(displayId: Int, hostToken: IBinder, surface: Surface?) {
+        synchronized(targetPortraitSessionLock) {
+            if (displayId != targetPortraitDisplayId || targetPortraitHostToken !== hostToken) return
+            val valid = surface?.takeIf { it.isValid }
+            ownedPortraitDisplay?.surface = valid
+            portraitSurfaceAttached = valid != null
+            if (valid != null) restorePhoneFocus()
+        }
+    }
+
+    override fun getTargetPortraitSessionState(displayId: Int, hostToken: IBinder): Int =
+        synchronized(targetPortraitSessionLock) {
+            when {
+                handedOffDisplayId == displayId && handedOffToken === hostToken -> 2
+                targetPortraitDisplayId == displayId && targetPortraitHostToken === hostToken -> 1
+                else -> 0
+            }
+        }
+
+    override fun sendTargetBack(displayId: Int, hostToken: IBinder) {
+        synchronized(targetPortraitSessionLock) {
+            if (displayId != targetPortraitDisplayId || targetPortraitHostToken !== hostToken ||
+                !portraitSurfaceAttached) return
+            val now = SystemClock.uptimeMillis()
+            injectEvent(displayId, KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, 0))
+            injectEvent(displayId, KeyEvent(now, now + 1, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK, 0))
+            restorePhoneFocus()
+        }
+    }
+
+    override fun handoffTargetToPhone(displayId: Int, hostToken: IBinder) {
+        synchronized(targetPortraitSessionLock) {
+            if (displayId != targetPortraitDisplayId || targetPortraitHostToken !== hostToken) return
+            if (!handoffFile.baseFile.exists()) {
+                val tasks = getRunningTasks(getActivityTaskManagerService())
+                    .filter { getRunningTaskDisplayId(it) == displayId }
+                    .map { "${it.taskId}|${it.baseActivity?.packageName ?: error("Task owner unavailable")}" }
+                val stream = handoffFile.startWrite()
+                try {
+                    stream.write((listOf(displayId.toString(), portraitOriginalResizeMode.toString()) + tasks)
+                        .joinToString("\n").toByteArray())
+                    handoffFile.finishWrite(stream)
+                } catch (t: Throwable) {
+                    handoffFile.failWrite(stream)
+                    throw t
+                }
+            }
+            completeNativeHandoff()
+            handedOffDisplayId = displayId
+            handedOffToken = hostToken
+            unregisterTargetPortraitHostLocked()
+            targetPortraitDisplayId = -1
+            portraitSurfaceAttached = false
+            ownedPortraitDisplay?.release()
+            ownedPortraitDisplay = null
+            targetPortraitStatus = "$targetPackage: continued on phone display; external screen preserved"
+        }
+    }
+
+    private fun completeNativeHandoff() {
+        if (!handoffFile.baseFile.exists()) return
+        val saved = handoffFile.openRead().bufferedReader().use { it.readLines() }
+        val displayId = saved[0].toInt()
+        val resizeMode = saved[1].toInt()
+        val preserved = saved.drop(2).associate { it.substringBefore('|').toInt() to it.substringAfter('|') }
+        val atm = getActivityTaskManagerService()
+        // Move entire roots, retaining the ActivityResult chain and external UI.
+        // No force-stop, relaunch, or edits to another package's compatibility flags.
+        val roots = if (getLogicalDisplaySize(displayId) == null) emptyList<Any>() else
+            invokeActivityTaskManager(atm, "getAllRootTaskInfosOnDisplay", displayId) as? List<*>
+                ?: error("Cannot inspect portrait tasks for native handoff")
+        for (root in roots.filterNotNull().asReversed()) {
+            val id = root.javaClass.getField("taskId").getInt(root)
+            invokeActivityTaskManager(atm, "moveRootTaskToDisplay", id, 0)
+        }
+        for (task in getRunningTasks(atm)) {
+            if (preserved[task.taskId] != null && task.baseActivity?.packageName == preserved[task.taskId]) {
+                check(getRunningTaskDisplayId(task) == 0) { "Task did not reach the phone display" }
+                setTaskFullscreen(task)
+                if (task.baseActivity?.packageName == targetPackage) {
+                    invokeActivityTaskManager(atm, "setTaskResizeable", task.taskId, resizeMode)
+                }
+            }
+        }
+        check(getRunningTasks(atm).none { getRunningTaskDisplayId(it) == displayId }) {
+            "Portrait display still has tasks; handoff will retry"
+        }
+        // Mark the task as preserved before restoring flags; interrupted cleanup
+        // must never remove a live checkout task on the next daemon start.
+        portraitDisplayStateFile.delete()
+        restoreAndroid13SupportSettingsBestEffort()
+        restoreTargetPortraitCompat(preserveProcess = true)
+        check(!hasTargetPortraitState()) { "Native handoff restoration is incomplete" }
+        targetOwnerFile.delete()
+        handoffFile.delete()
+    }
+
+    private fun setTaskFullscreen(task: ActivityManager.RunningTaskInfo) {
+        HiddenApiBypass.addHiddenApiExemptions("Landroid/window/", "Landroid/app/TaskInfo;")
+        val token = task.javaClass.getField("token").get(task)
+        val tokenClass = Class.forName("android.window.WindowContainerToken")
+        val transactionClass = Class.forName("android.window.WindowContainerTransaction")
+        val transaction = transactionClass.getConstructor().newInstance()
+        transactionClass.getMethod("setWindowingMode", tokenClass, Int::class.javaPrimitiveType)
+            .invoke(transaction, token, WINDOWING_MODE_FULLSCREEN)
+        transactionClass.getMethod("setBounds", tokenClass, Rect::class.java).invoke(transaction, token, Rect())
+        val organizerClass = Class.forName("android.window.WindowOrganizer")
+        organizerClass.getMethod("applyTransaction", transactionClass)
+            .invoke(organizerClass.getConstructor().newInstance(), transaction)
+    }
+
+    private fun restorePhoneFocus() {
+        if (!portraitSurfaceAttached || portraitHostTaskId < 0) return
+        val atm = getActivityTaskManagerService()
+        val top = getRunningTasks(atm).firstOrNull { getRunningTaskDisplayId(it) == 0 }
+        // Never bring the host in front of Home, the lock screen or a native dialog.
+        if (top?.taskId == portraitHostTaskId && top.topActivity?.packageName == BuildConfig.APPLICATION_ID) {
+            invokeActivityTaskManager(atm, "setFocusedTask", portraitHostTaskId)
+        }
+    }
+
     override fun launchTargetOnPortraitDisplay(
         displayId: Int,
         width: Int,
@@ -223,6 +407,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         validateTargetPackage(packageName)
         check(targetPortraitDisplayId < 0) { "A portrait display session is already running" }
         stopPortraitAppWatcher()
+        completeNativeHandoff()
         restoreTargetDisplayTasks()
         restoreAndroid13FallbackTasksBestEffort()
         restoreAndroid13SupportSettingsBestEffort()
@@ -386,25 +571,50 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         Thread({
             while (targetPortraitDisplayId == displayId && targetPortraitHostToken === hostToken) {
                 try {
-                    Thread.sleep(2000)
+                    Thread.sleep(500)
                     synchronized(targetPortraitSessionLock) {
-                        if (targetPortraitDisplayId == displayId && targetPortraitHostToken === hostToken &&
-                            (!hostToken.isBinderAlive || getLogicalDisplaySize(displayId) == null)) {
+                        if (targetPortraitDisplayId != displayId || targetPortraitHostToken !== hostToken) return@Thread
+                        if (!hostToken.isBinderAlive || getLogicalDisplaySize(displayId) == null) {
                             stopTargetPortraitDisplay(displayId, false)
+                        } else {
+                            val tasks = getRunningTasks(getActivityTaskManagerService())
+                            val external = tasks.firstOrNull { getRunningTaskDisplayId(it) == displayId }
+                                ?.topActivity?.packageName?.let { it != targetPackage } == true
+                            // Billing/identity/permission screens may be secure or sized for
+                            // the native display. Preserve their live result chain there.
+                            if (external || handoffFile.baseFile.exists()) {
+                                handoffTargetToPhone(displayId, hostToken)
+                            } else if (tasks.none { getRunningTaskDisplayId(it) == displayId }) {
+                                stopTargetPortraitDisplay(displayId, false)
+                            } else {
+                                restorePhoneFocus()
+                            }
                         }
                     }
                 } catch (_: InterruptedException) {
                     break
                 } catch (t: Throwable) {
                     targetPortraitStatus = "Portrait display monitor: ${t.message}"
-                    break
+                    // Keep lifecycle recovery retryable; never silently abandon a
+                    // live display because one task snapshot or handoff failed.
                 }
             }
         }, "androidcontrol-portrait-display-monitor").apply { isDaemon = true }.start()
     }
 
     override fun injectTargetMotionEvent(displayId: Int, event: MotionEvent) {
-        if (displayId <= 0 || displayId != targetPortraitDisplayId) return
+        if (displayId <= 0 || displayId != targetPortraitDisplayId || !portraitSurfaceAttached) return
+        try {
+            injectEvent(displayId, event)
+            if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                restorePhoneFocus()
+            }
+        } catch (t: Throwable) {
+            targetPortraitStatus = "Portrait input: ${t.cause?.message ?: t.message}"
+        }
+    }
+
+    private fun injectEvent(displayId: Int, event: InputEvent) {
         try {
             HiddenApiBypass.addHiddenApiExemptions(
                 "Landroid/view/InputEvent;",
@@ -436,8 +646,11 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             } ?: return
 
             inject.isAccessible = true
-            inject.invoke(inputManager, event, 0)
-        } catch (_: Throwable) {
+            // Wait for dispatch on the service's Binder thread, never the UI thread.
+            // Restoring host focus before dispatch can redirect or drop a Back event.
+            check(inject.invoke(inputManager, event, 2) == true) { "Input dispatch failed" }
+        } catch (t: Throwable) {
+            throw IllegalStateException("Could not forward input", t)
         }
     }
 
@@ -455,12 +668,20 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                     failures.add(t.cause?.message ?: t.message ?: t.javaClass.simpleName)
                 }
             }
-            restore { restoreTargetDisplayTasks() }
-            restore { runAm("force-stop", targetPackage) }
+            val preservingNativeTask = handoffFile.baseFile.exists()
+            if (preservingNativeTask) {
+                restore { completeNativeHandoff() }
+            } else {
+                restore { restoreTargetDisplayTasks() }
+                restore { runAm("force-stop", targetPackage) }
+            }
             restore { restoreAndroid13FallbackTasksBestEffort() }
             restore { restoreAndroid13SupportSettingsBestEffort() }
             restore { restoreTargetPortraitCompat() }
             targetPortraitDisplayId = -1
+            portraitSurfaceAttached = false
+            ownedPortraitDisplay?.release()
+            ownedPortraitDisplay = null
             if (hasTargetPortraitState() || portraitDisplayStateFile.exists()) {
                 failures.add("Restoration records retained for retry")
             }
@@ -470,7 +691,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             }
             targetOwnerFile.delete()
             targetPortraitStatus = "$targetPackage: portrait display inactive; session task removed"
-            if (relaunchOnDefaultDisplay) {
+            if (relaunchOnDefaultDisplay && !preservingNativeTask) {
                 val component = resolveTargetLauncherComponent()
                     ?: throw IllegalStateException("Cannot resolve the game's normal launcher")
                 runAm("start", "--display", "0", "-n", component)
@@ -694,7 +915,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         }
     }
 
-    private fun restoreTargetPortraitCompat() {
+    private fun restoreTargetPortraitCompat(preserveProcess: Boolean = false) {
         val ids =
             if (targetCompatStateFile.exists()) {
                 targetCompatStateFile.readLines()
@@ -709,7 +930,8 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
         ids.forEach { changeId ->
             try {
-                runAm("compat", "reset", changeId, targetPackage)
+                if (preserveProcess) runAm("compat", "reset", "--no-kill", changeId, targetPackage)
+                else runAm("compat", "reset", changeId, targetPackage)
             } catch (t: Throwable) {
                 if (!isIgnorableCompatResetFailure(t)) {
                     failedIds.add(changeId)

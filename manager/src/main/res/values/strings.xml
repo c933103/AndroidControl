@@ -1,4 +1,8 @@
 <resources>
+    <string name="target_portrait_back">Back</string>
+    <string name="target_portrait_phone">Phone display</string>
+    <string name="target_portrait_close">Close</string>
+    <string name="target_portrait_display_ended">Portrait session ended. You can close this screen.</string>
     <string name="app_name" translatable="false">AndroidControl</string>
 
     <!-- To translators: you can leave your here -->
