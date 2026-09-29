@@ -63,6 +63,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     private var lastPhoneFocusState = ""
     @Volatile private var portraitSurfaceAttached = false
     private var portraitFocusNeedsRefresh = true
+    private var lastFocusBridgeAt = 0L
     private var portraitOriginalResizeMode = 0
     private var handedOffToken: IBinder? = null
     private var handedOffDisplayId = -1
@@ -434,9 +435,12 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         }
         // Never bring the host in front of Home, the lock screen or a native dialog.
         if (ownsTop) {
+            val desiredDisplay: Int
+            val desiredRoot: Int
             if (portraitBrowserVisible || android.os.Build.VERSION.SDK_INT >= 35) {
                 // OWN_FOCUS keeps the game focused while global keys go to the host.
-                invokeActivityTaskManager(atm, "setFocusedRootTask", rootId)
+                desiredDisplay = 0
+                desiredRoot = rootId
             } else {
                 // Older phones have one global focused window. Taking it away
                 // from a Unity/game surface can suspend rendering. Keep the live
@@ -446,27 +450,30 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                     targetPortraitDisplayId) as? List<*> ?: return
                 val virtualTop = virtualRoots.filterNotNull().firstOrNull {
                     it.javaClass.getField("visible").getBoolean(it)
-                }
-                if (virtualTop == null) {
-                    android.util.Log.d("AndroidControlService", "Portrait focus: no visible root on display $targetPortraitDisplayId")
-                    return
-                }
-                if (portraitFocusNeedsRefresh) {
-                    // After wake, WindowManager can focus display 0 while ATM
-                    // still calls the virtual activity top-resumed. Focusing
-                    // that same task is then a no-op. Reconcile the physical
-                    // task first, once per surface attachment, before restoring
-                    // the game's focus. Never do this while another app is on top.
-                    invokeActivityTaskManager(atm, "setFocusedRootTask", rootId)
-                }
-                invokeActivityTaskManager(atm, "setFocusedRootTask",
-                    virtualTop.javaClass.getField("taskId").getInt(virtualTop))
-                if (portraitFocusNeedsRefresh) {
-                    val focused = invokeActivityTaskManager(atm, "getFocusedRootTaskInfo")
-                    android.util.Log.d("AndroidControlService", "Portrait focus requested=${virtualTop.javaClass.getField("taskId").getInt(virtualTop)}; actual=${focused?.javaClass?.getField("taskId")?.getInt(focused)}")
-                }
-                portraitFocusNeedsRefresh = false
+                } ?: return
+                desiredDisplay = targetPortraitDisplayId
+                desiredRoot = virtualTop.javaClass.getField("taskId").getInt(virtualTop)
             }
+            invokeActivityTaskManager(atm, "setFocusedRootTask", desiredRoot)
+            if (android.os.Build.VERSION.SDK_INT < 35) {
+                val focused = invokeActivityTaskManager(atm, "getFocusedRootTaskInfo")
+                val actualRoot = focused?.javaClass?.getField("taskId")?.getInt(focused)
+                if (portraitFocusNeedsRefresh) {
+                    android.util.Log.d("AndroidControlService", "Portrait focus requested=$desiredRoot; actual=$actualRoot")
+                }
+                if (actualRoot != desiredRoot && SystemClock.uptimeMillis() - lastFocusBridgeAt > 2000) {
+                    // Later Android 13 builds consider an activity focused within
+                    // its own display and skip moving that DISPLAY to the front.
+                    // A new transparent task takes the normal display-activation
+                    // path, then immediately finishes back to the existing app.
+                    // Do not send a new launch Intent to the game or change bounds.
+                    lastFocusBridgeAt = SystemClock.uptimeMillis()
+                    runAm("start", "--display", desiredDisplay.toString(),
+                        "-f", "0x18010000", // NEW_TASK | MULTIPLE_TASK | NO_ANIMATION
+                        "-n", "${moe.shizuku.manager.BuildConfig.APPLICATION_ID}/${PortraitFocusActivity::class.java.name}")
+                }
+            }
+            portraitFocusNeedsRefresh = false
         }
     }
 
@@ -699,6 +706,9 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                                 "getAllRootTaskInfosOnDisplay", displayId) as? List<*>
                             val top = roots?.filterNotNull()?.firstOrNull { it.javaClass.getField("visible").getBoolean(it) }
                             val topActivity = top?.javaClass?.getField("topActivity")?.get(top) as? android.content.ComponentName
+                            if (topActivity?.packageName == moe.shizuku.manager.BuildConfig.APPLICATION_ID &&
+                                topActivity.className == PortraitFocusActivity::class.java.name &&
+                                SystemClock.uptimeMillis() - lastFocusBridgeAt < 2000) return@synchronized
                             val external = topActivity?.packageName?.let { it != targetPackage } == true
                             // Billing/identity/permission screens may be secure or sized for
                             // the native display. Preserve their live result chain there.
