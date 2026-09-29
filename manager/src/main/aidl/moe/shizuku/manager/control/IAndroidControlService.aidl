@@ -24,4 +24,6 @@ interface IAndroidControlService {
     void sendTargetBack(int displayId, IBinder hostToken) = 13;
     int getTargetPortraitSessionState(int displayId, IBinder hostToken) = 14;
     void handoffTargetToPhone(int displayId, IBinder hostToken) = 15;
+    String getTargetPortraitLink(int displayId, IBinder hostToken) = 16;
+    void setTargetBrowserVisible(int displayId, IBinder hostToken, boolean visible) = 17;
 }

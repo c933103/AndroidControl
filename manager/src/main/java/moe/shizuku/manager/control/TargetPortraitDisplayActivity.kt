@@ -25,6 +25,8 @@ import moe.shizuku.manager.R
 class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener {
     private lateinit var surfaceView: SurfaceView
     private lateinit var statusView: TextView
+    private lateinit var scene: FrameLayout
+    private var webPanel: PortraitWebPanel? = null
     private var displayId = -1
     private var virtualWidth = 0
     private var virtualHeight = 0
@@ -70,7 +72,7 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
                 }
             }
         }
-        val scene = FrameLayout(this)
+        scene = FrameLayout(this)
         root.addView(scene, LinearLayout.LayoutParams(-1, 0, 1f))
         surfaceView = SurfaceView(this).apply {
             holder.addCallback(this@TargetPortraitDisplayActivity)
@@ -103,11 +105,13 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
     override fun onResume() {
         super.onResume()
         foreground = true
+        webPanel?.resume()
         attachSurface()
     }
 
     override fun onPause() {
         foreground = false
+        webPanel?.pause()
         surfaceReady = false
         super.onPause()
     }
@@ -174,7 +178,7 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
     override fun surfaceDestroyed(holder: SurfaceHolder) = detachSurface()
 
     override fun onTouch(v: View?, event: MotionEvent): Boolean {
-        if (!launched || !surfaceReady || !foreground || displayId < 0 || !surfaceView.holder.surface.isValid) return true
+        if (webPanel != null || !launched || !surfaceReady || !foreground || displayId < 0 || !surfaceView.holder.surface.isValid) return true
         val width = surfaceView.width.toFloat()
         val height = surfaceView.height.toFloat()
         if (width <= 0f || height <= 0f) return true
@@ -188,9 +192,37 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
 
     @Deprecated("Deprecated in Android")
     override fun onBackPressed() {
-        if (launched && surfaceReady) {
+        if (webPanel != null) webPanel?.back()
+        else if (launched && surfaceReady) {
             TargetPortraitDisplayClient.back(displayId, hostToken) { error -> if (error != null) showFailure(error) }
         } else stopAndFinish()
+    }
+
+    private fun openWebLink(url: String) {
+        if (webPanel != null || stopping || isDestroyed) return
+        try {
+            val panel = PortraitWebPanel(this) { closeWebLink() }
+            webPanel = panel
+            scene.addView(panel, FrameLayout.LayoutParams(-1, -1))
+            panel.open(url)
+            if (!foreground) panel.pause()
+            TargetPortraitDisplayClient.browser(displayId, hostToken, true) { error ->
+                if (error != null) { closeWebLink(); showFailure(error) }
+            }
+        } catch (failure: Throwable) {
+            closeWebLink()
+            showFailure(getString(R.string.target_web_unavailable))
+        }
+    }
+
+    private fun closeWebLink() {
+        webPanel?.let { scene.removeView(it); it.destroy() }
+        webPanel = null
+        if (!stopping && displayId >= 0) {
+            TargetPortraitDisplayClient.browser(displayId, hostToken, false) { error ->
+                if (error != null) showFailure(error)
+            }
+        }
     }
 
     private fun handoffToPhone() {
@@ -209,7 +241,12 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
                 launched = false
                 surfaceReady = false
                 showFailure(error ?: getString(R.string.target_portrait_display_ended))
-            } else main.postDelayed(poll, 750)
+            } else {
+                TargetPortraitDisplayClient.link(displayId, hostToken) { url ->
+                    if (url != null && foreground && !stopping && !isDestroyed) openWebLink(url)
+                    if (!stopping && !isDestroyed) main.postDelayed(poll, 750)
+                }
+            }
         }
     }
 
@@ -242,6 +279,8 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
     }
 
     override fun onDestroy() {
+        webPanel?.destroy()
+        webPanel = null
         launched = false
         surfaceReady = false
         main.removeCallbacksAndMessages(null)
