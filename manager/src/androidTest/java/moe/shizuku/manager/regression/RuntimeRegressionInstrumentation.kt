@@ -438,13 +438,23 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
             check(latch.await(5, TimeUnit.SECONDS)) { "WebView script did not complete" }
             return result
         }
+        fun tapLink(id: String) {
+            // Chromium intentionally skips history entries without user activation.
+            // Exercise an actual tap, not element.click() from injected JavaScript.
+            val xy = script("(function(){var r=document.getElementById('$id').getBoundingClientRect();return [Math.round((r.x+r.width/2)*devicePixelRatio),Math.round((r.y+r.height/2)*devicePixelRatio)];})()")
+                .removeSurrounding("[", "]").split(',').map { it.toInt() }
+            val location = IntArray(2)
+            runOnMainSync { page()!!.getLocationOnScreen(location) }
+            shell("input -d 0 tap ${location[0] + xy[0]} ${location[1] + xy[1]}")
+        }
+        var passed = false
         try {
             for (newTask in listOf(true, false)) {
                 shell("am broadcast -a org.androidcontrol.regression.WEB_LINK -p ${PortraitTarget.DEFAULT_PACKAGE} --es url http://127.0.0.1:${server.localPort}/redirect --ez new_task $newTask")
                 awaitState("Target web link did not open in the portrait WebView (newTask=$newTask)") {
                     url()?.endsWith("/one") == true
                 }
-                script("document.getElementById('next').click()")
+                tapLink("next")
                 awaitState("Web link escaped the embedded view") { url()?.endsWith("/two") == true }
                 runOnMainSync { activity.onBackPressed() }
                 awaitState("Web Back did not retain page history") { url()?.endsWith("/one") == true }
@@ -461,11 +471,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
                     }
                     check(script("document.body.dataset.survived") == "\"yes\"") { "Unlock recreated the web page" }
                     // A real tap supplies the gesture needed for target=_blank.
-                    val xy = script("(function(){var r=document.getElementById('popup').getBoundingClientRect();return [Math.round((r.x+r.width/2)*devicePixelRatio),Math.round((r.y+r.height/2)*devicePixelRatio)];})()")
-                        .removeSurrounding("[", "]").split(',').map { it.toInt() }
-                    val location = IntArray(2)
-                    runOnMainSync { page()!!.getLocationOnScreen(location) }
-                    shell("input -d 0 tap ${location[0] + xy[0]} ${location[1] + xy[1]}")
+                    tapLink("popup")
                     awaitState("New-window web link escaped the panel") { url()?.endsWith("/popup") == true }
                     runOnMainSync { activity.onBackPressed() }
                     awaitState("Closing web popup did not return to its parent") { url()?.endsWith("/one") == true }
@@ -481,10 +487,13 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
                 awaitState("Game input failed after returning from WebView") { fixtureFile("touches").length > before.length }
             }
             checkpoint("WebView kept redirects, history, popups and lock/unlock; both browser launch modes returned to the same live game")
+            passed = true
         } finally {
             server.close()
             serving.join(1000)
-            closeDisplay(activity)
+            // On failure, preserve the live UI for onStart's screenshot/dumps.
+            // Instrumentation finish subsequently kills the host and its session.
+            if (passed) closeDisplay(activity)
         }
     }
 

@@ -12,6 +12,8 @@ public class PortraitWebLaunchTest {
         String record = record("selected.app", 28, "android.intent.action.VIEW", url);
         PortraitWebLaunch link = PortraitWebLaunch.find(record, 28, "browser/.Browser", "selected.app");
         check(link != null && link.url.equals(url));
+        check(PortraitWebLaunch.find(record.replace("browser/.Browser t28", "browser/.Browser} t28"),
+            28, "browser/.Browser", "selected.app").url.equals(url));
         check(PortraitWebLaunch.find(record, 2, "browser/.Browser", "selected.app") == null);
         check(PortraitWebLaunch.find(record, 28, "browser/.Browser", "selectedXapp") == null);
         check(PortraitWebLaunch.find(record, 28, "browser/.Other", "selected.app") == null);
