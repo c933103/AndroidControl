@@ -244,7 +244,6 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
         if (!stopping && displayId >= 0) {
             TargetPortraitDisplayClient.browser(displayId, hostToken, false) { error ->
                 if (error != null) showFailure(error)
-                else attachSurface()
             }
         }
     }
