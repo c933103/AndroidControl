@@ -63,10 +63,17 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     private var lastPhoneFocusState = ""
     @Volatile private var portraitSurfaceAttached = false
     private var portraitFocusNeedsRefresh = true
+    private var lastFocusBridgeAt = 0L
     private var portraitOriginalResizeMode = 0
     private var handedOffToken: IBinder? = null
     private var handedOffDisplayId = -1
     private val handoffFile = AtomicFile(File("/data/local/tmp/androidcontrol-portrait-native-handoff"))
+    @Volatile private var portraitBrowserVisible = false
+    private var portraitPendingLink: String? = null
+    private var portraitInitialTaskIds = emptySet<Int>()
+    private var closingBrowser: BrowserClose? = null
+    private data class BrowserClose(val taskId: Int, val component: android.content.ComponentName,
+        val launch: PortraitWebLaunch, val deadline: Long, val backPending: Boolean)
 
     private enum class WmApi {
         MODERN,
@@ -230,6 +237,9 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         check(targetPortraitDisplayId < 0 && ownedPortraitDisplay == null) { "Portrait session already running" }
         require(surface.isValid && width > 0 && height > width && densityDpi > 0)
         validateTargetPackage(packageName)
+        val taskManager = getActivityTaskManagerService()
+        portraitInitialTaskIds = (getRecentTasks(taskManager) + getRunningTasks(taskManager))
+            .map { it.taskId }.toSet()
         val component = android.content.ComponentName.unflattenFromString(resolveTargetLauncherComponent(packageName)!!)
             ?: error("Invalid launcher component")
         val info = shellContext.packageManager.getActivityInfo(component, 0)
@@ -285,12 +295,27 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     override fun sendTargetBack(displayId: Int, hostToken: IBinder) {
         synchronized(targetPortraitSessionLock) {
             if (displayId != targetPortraitDisplayId || targetPortraitHostToken !== hostToken ||
-                !portraitSurfaceAttached) return
+                !portraitSurfaceAttached || portraitBrowserVisible) return
             portraitFocusNeedsRefresh = true
             restoreSessionFocus()
             val now = SystemClock.uptimeMillis()
             injectEvent(displayId, KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, 0))
             injectEvent(displayId, KeyEvent(now, now + 1, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK, 0))
+            restoreSessionFocus()
+        }
+    }
+
+    override fun getTargetPortraitLink(displayId: Int, hostToken: IBinder): String? =
+        synchronized(targetPortraitSessionLock) {
+            if (targetPortraitDisplayId == displayId && targetPortraitHostToken === hostToken) portraitPendingLink else null
+        }
+
+    override fun setTargetBrowserVisible(displayId: Int, hostToken: IBinder, visible: Boolean) {
+        synchronized(targetPortraitSessionLock) {
+            check(targetPortraitDisplayId == displayId && targetPortraitHostToken === hostToken) { "Portrait session ended" }
+            portraitBrowserVisible = visible
+            portraitPendingLink = null
+            portraitFocusNeedsRefresh = true
             restoreSessionFocus()
         }
     }
@@ -381,7 +406,15 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     }
 
     private fun restoreSessionFocus() {
-        if (!portraitSurfaceAttached || portraitHostTaskId < 0 || !isPhoneUnlocked()) return
+        val unlocked = isPhoneUnlocked()
+        if (!portraitSurfaceAttached || portraitHostTaskId < 0 || !unlocked) {
+            val state = "surface=$portraitSurfaceAttached; host=$portraitHostTaskId; unlocked=$unlocked; browser=$portraitBrowserVisible"
+            if (state != lastPhoneFocusState) {
+                android.util.Log.d("AndroidControlService", "Portrait focus deferred: $state")
+                lastPhoneFocusState = state
+            }
+            return
+        }
         val atm = getActivityTaskManagerService()
         // getTasks is ordered by last-active time on Android 13, NOT window
         // stacking order. It can pick another app and leave global focus on the
@@ -395,16 +428,19 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         val activity = top.javaClass.getField("topActivity").get(top) as? android.content.ComponentName
         val ownsTop = (rootId == portraitHostTaskId || children?.contains(portraitHostTaskId) == true) &&
             activity?.className == TargetPortraitDisplayActivity::class.java.name
-        val focusState = "host=$portraitHostTaskId; physicalRoot=$rootId; hostOnTop=$ownsTop"
+        val focusState = "host=$portraitHostTaskId; physicalRoot=$rootId; hostOnTop=$ownsTop; browser=$portraitBrowserVisible"
         if (focusState != lastPhoneFocusState) {
             android.util.Log.d("AndroidControlService", "Portrait focus: $focusState")
             lastPhoneFocusState = focusState
         }
         // Never bring the host in front of Home, the lock screen or a native dialog.
         if (ownsTop) {
-            if (android.os.Build.VERSION.SDK_INT >= 35) {
+            val desiredDisplay: Int
+            val desiredRoot: Int
+            if (portraitBrowserVisible || android.os.Build.VERSION.SDK_INT >= 35) {
                 // OWN_FOCUS keeps the game focused while global keys go to the host.
-                invokeActivityTaskManager(atm, "setFocusedRootTask", rootId)
+                desiredDisplay = 0
+                desiredRoot = rootId
             } else {
                 // Older phones have one global focused window. Taking it away
                 // from a Unity/game surface can suspend rendering. Keep the live
@@ -415,18 +451,29 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 val virtualTop = virtualRoots.filterNotNull().firstOrNull {
                     it.javaClass.getField("visible").getBoolean(it)
                 } ?: return
-                if (portraitFocusNeedsRefresh) {
-                    // After wake, WindowManager can focus display 0 while ATM
-                    // still calls the virtual activity top-resumed. Focusing
-                    // that same task is then a no-op. Reconcile the physical
-                    // task first, once per surface attachment, before restoring
-                    // the game's focus. Never do this while another app is on top.
-                    invokeActivityTaskManager(atm, "setFocusedRootTask", rootId)
-                }
-                invokeActivityTaskManager(atm, "setFocusedRootTask",
-                    virtualTop.javaClass.getField("taskId").getInt(virtualTop))
-                portraitFocusNeedsRefresh = false
+                desiredDisplay = targetPortraitDisplayId
+                desiredRoot = virtualTop.javaClass.getField("taskId").getInt(virtualTop)
             }
+            invokeActivityTaskManager(atm, "setFocusedRootTask", desiredRoot)
+            if (android.os.Build.VERSION.SDK_INT < 35) {
+                val focused = invokeActivityTaskManager(atm, "getFocusedRootTaskInfo")
+                val actualRoot = focused?.javaClass?.getField("taskId")?.getInt(focused)
+                if (portraitFocusNeedsRefresh) {
+                    android.util.Log.d("AndroidControlService", "Portrait focus requested=$desiredRoot; actual=$actualRoot")
+                }
+                if (actualRoot != desiredRoot && SystemClock.uptimeMillis() - lastFocusBridgeAt > 2000) {
+                    // Later Android 13 builds consider an activity focused within
+                    // its own display and skip moving that DISPLAY to the front.
+                    // A new transparent task takes the normal display-activation
+                    // path, then immediately finishes back to the existing app.
+                    // Do not send a new launch Intent to the game or change bounds.
+                    lastFocusBridgeAt = SystemClock.uptimeMillis()
+                    runAm("start", "--display", desiredDisplay.toString(),
+                        "-f", "0x18010000", // NEW_TASK | MULTIPLE_TASK | NO_ANIMATION
+                        "-n", "${moe.shizuku.manager.BuildConfig.APPLICATION_ID}/${PortraitFocusActivity::class.java.name}")
+                }
+            }
+            portraitFocusNeedsRefresh = false
         }
     }
 
@@ -658,11 +705,24 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                             val roots = invokeActivityTaskManager(getActivityTaskManagerService(),
                                 "getAllRootTaskInfosOnDisplay", displayId) as? List<*>
                             val top = roots?.filterNotNull()?.firstOrNull { it.javaClass.getField("visible").getBoolean(it) }
-                            val external = (top?.javaClass?.getField("topActivity")?.get(top) as? android.content.ComponentName)
-                                ?.packageName?.let { it != targetPackage } == true
+                            val topActivity = top?.javaClass?.getField("topActivity")?.get(top) as? android.content.ComponentName
+                            if (topActivity?.packageName == moe.shizuku.manager.BuildConfig.APPLICATION_ID &&
+                                topActivity.className == PortraitFocusActivity::class.java.name &&
+                                SystemClock.uptimeMillis() - lastFocusBridgeAt < 2000) return@synchronized
+                            val external = topActivity?.packageName?.let { it != targetPackage } == true
                             // Billing/identity/permission screens may be secure or sized for
                             // the native display. Preserve their live result chain there.
-                            if ((external || handoffFile.baseFile.exists()) && isPhoneUnlocked()) {
+                            val webHandled = !handoffFile.baseFile.exists() && isPhoneUnlocked() && try {
+                                routePortraitWebLink(tasks, topActivity, displayId)
+                            } catch (_: Exception) {
+                                // Unsupported OEM inspection must not strand a browser
+                                // or native screen behind the portrait host.
+                                closingBrowser = null
+                                false
+                            }
+                            if (webHandled) {
+                                restoreSessionFocus()
+                            } else if ((external || handoffFile.baseFile.exists()) && isPhoneUnlocked()) {
                                 handoffTargetToPhone(displayId, hostToken)
                             } else if (tasks.none { getRunningTaskDisplayId(it) == displayId }) {
                                 stopTargetPortraitDisplay(displayId, false)
@@ -675,6 +735,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                     break
                 } catch (t: Throwable) {
                     targetPortraitStatus = "Portrait display monitor: ${t.message}"
+                    android.util.Log.w("AndroidControlService", "Portrait display monitor retry", t)
                     // Keep lifecycle recovery retryable; never silently abandon a
                     // live display because one task snapshot or handoff failed.
                 }
@@ -682,8 +743,70 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         }, "androidcontrol-portrait-display-monitor").apply { isDaemon = true }.start()
     }
 
+    private fun routePortraitWebLink(
+        tasks: List<ActivityManager.RunningTaskInfo>, top: android.content.ComponentName?, displayId: Int
+    ): Boolean {
+        val closing = closingBrowser
+        if (closing != null) {
+            val previous = tasks.firstOrNull { it.taskId == closing.taskId }
+            // A single Back must actually dismiss the browser before we cover the
+            // scene. Never keep popping a user's browser history to reach the game.
+            if ((previous == null || previous.topActivity?.packageName == targetPackage) &&
+                top?.packageName == targetPackage) {
+                closingBrowser = null
+                portraitPendingLink = closing.launch.url
+                portraitBrowserVisible = true
+                return true
+            }
+            if (closing.backPending && isActivityInputFocused(displayId, closing.component)) {
+                // Task metadata changes before the new activity has a window.
+                // Sending Back earlier can finish the game underneath it.
+                val now = SystemClock.uptimeMillis()
+                injectEvent(displayId, KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, 0))
+                injectEvent(displayId, KeyEvent(now, now + 1, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK, 0))
+                closingBrowser = closing.copy(backPending = false, deadline = now + 2500)
+                return true
+            }
+            if (SystemClock.uptimeMillis() < closing.deadline) return true
+            closingBrowser = null
+            return false
+        }
+        if (top == null || top.packageName == targetPackage || portraitBrowserVisible) return false
+        val task = tasks.firstOrNull { getRunningTaskDisplayId(it) == displayId && it.topActivity == top }
+            ?: return false
+        // Only a general-purpose browser qualifies. Verified app links, identity,
+        // billing and permission activities keep their live native result chain.
+        val probe = android.content.Intent(android.content.Intent.ACTION_VIEW,
+            android.net.Uri.parse("https://example.com/"))
+            .addCategory(android.content.Intent.CATEGORY_BROWSABLE).setPackage(top.packageName)
+        HiddenApiBypass.addHiddenApiExemptions("Landroid/content/pm/ResolveInfo;")
+        if (shellContext.packageManager.queryIntentActivities(probe, 0).none {
+                it.javaClass.getField("handleAllWebDataURI").getBoolean(it)
+            }) return false
+        val launch = PortraitWebLaunch.find(runCommand("/system/bin/dumpsys", "activity", "activities"),
+            task.taskId, top.flattenToShortString(), targetPackage) ?: return false
+        val atm = getActivityTaskManagerService()
+        if (task.taskId !in portraitInitialTaskIds && task.numActivities == 1 &&
+            task.baseActivity?.packageName == top.packageName) {
+            // This browser task was created during this session. Do not remove
+            // pre-existing browser tasks, tabs, or a task containing the game.
+            if (invokeActivityTaskManager(atm, "removeTask", task.taskId) != true) return false
+        } else if (task.baseActivity?.packageName != targetPackage) return false
+        closingBrowser = BrowserClose(task.taskId, top, launch, SystemClock.uptimeMillis() + 5000,
+            task.baseActivity?.packageName == targetPackage)
+        return true
+    }
+
+    private fun isActivityInputFocused(displayId: Int, component: android.content.ComponentName): Boolean =
+        runCommand("/system/bin/dumpsys", "input").lineSequence().any {
+            val line = it.trim()
+            line.startsWith("displayId=$displayId, name='") &&
+                line.endsWith(" ${component.flattenToString()}'")
+        }
+
     override fun injectTargetMotionEvent(displayId: Int, event: MotionEvent) {
-        if (displayId <= 0 || displayId != targetPortraitDisplayId || !portraitSurfaceAttached || !isPhoneUnlocked()) return
+        if (displayId <= 0 || displayId != targetPortraitDisplayId || !portraitSurfaceAttached ||
+            portraitBrowserVisible || !isPhoneUnlocked()) return
         try {
             injectEvent(displayId, event)
             if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
@@ -875,6 +998,9 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     }
 
     private fun unregisterTargetPortraitHostLocked() {
+        portraitPendingLink = null
+        portraitBrowserVisible = false
+        closingBrowser = null
         val token = targetPortraitHostToken
         val recipient = targetPortraitHostDeathRecipient
 

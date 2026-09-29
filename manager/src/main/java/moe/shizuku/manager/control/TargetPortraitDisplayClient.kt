@@ -203,6 +203,16 @@ object TargetPortraitDisplayClient {
         }, { mainHandler.post { callback(0, "AndroidControl service unavailable") } })
     }
 
+    fun link(displayId: Int, token: IBinder, callback: (String?) -> Unit) {
+        withService({ service -> executor.execute {
+            val url = runCatching { service.getTargetPortraitLink(displayId, token) }.getOrNull()
+            mainHandler.post { callback(url) }
+        } }, { mainHandler.post { callback(null) } })
+    }
+
+    fun browser(displayId: Int, token: IBinder, visible: Boolean, callback: (String?) -> Unit) =
+        action(callback) { it.setTargetBrowserVisible(displayId, token, visible) }
+
     private fun action(callback: (String?) -> Unit, operation: (IAndroidControlService) -> Unit) {
         withService({ service ->
             executor.execute {

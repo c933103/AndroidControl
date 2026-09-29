@@ -15,6 +15,7 @@ import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
 import android.view.WindowInsets
+import android.view.WindowManager
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -25,6 +26,8 @@ import moe.shizuku.manager.R
 class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.OnTouchListener {
     private lateinit var surfaceView: SurfaceView
     private lateinit var statusView: TextView
+    private lateinit var scene: FrameLayout
+    private var webPanel: PortraitWebPanel? = null
     private var displayId = -1
     private var virtualWidth = 0
     private var virtualHeight = 0
@@ -58,7 +61,9 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
                 // targetSdk 36 enforces edge-to-edge on newer Android. Reserve
                 // navigation/cutout space explicitly so the controls stay usable.
                 if (Build.VERSION.SDK_INT >= 30) {
-                    val safe = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                    val types = WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout() or
+                        (if (webPanel != null) WindowInsets.Type.ime() else 0)
+                    val safe = insets.getInsets(types)
                     view.setPadding(safe.left, safe.top, safe.right, safe.bottom)
                     WindowInsets.CONSUMED
                 } else {
@@ -70,7 +75,7 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
                 }
             }
         }
-        val scene = FrameLayout(this)
+        scene = FrameLayout(this)
         root.addView(scene, LinearLayout.LayoutParams(-1, 0, 1f))
         surfaceView = SurfaceView(this).apply {
             holder.addCallback(this@TargetPortraitDisplayActivity)
@@ -103,11 +108,13 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
     override fun onResume() {
         super.onResume()
         foreground = true
+        webPanel?.resume()
         attachSurface()
     }
 
     override fun onPause() {
         foreground = false
+        webPanel?.pause()
         surfaceReady = false
         super.onPause()
     }
@@ -115,6 +122,16 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
     override fun onStop() {
         detachSurface()
         super.onStop()
+    }
+
+    private fun updateHostFocusability() {
+        if (Build.VERSION.SDK_INT >= 35) return
+        // Android 13/14 share one focused window. A late host relayout or touch
+        // must not reclaim focus from a game that suspends rendering on blur.
+        // NOT_FOCUSABLE still permits touch on the surface and exit controls.
+        // Web content needs physical-display focus and the IME while it is open.
+        if (launched && webPanel == null) window.addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
@@ -139,6 +156,7 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
                 return@start
             }
             launched = id >= 0
+            updateHostFocusability()
             if (launched) {
                 attachSurface()
                 main.post(poll)
@@ -174,7 +192,7 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
     override fun surfaceDestroyed(holder: SurfaceHolder) = detachSurface()
 
     override fun onTouch(v: View?, event: MotionEvent): Boolean {
-        if (!launched || !surfaceReady || !foreground || displayId < 0 || !surfaceView.holder.surface.isValid) return true
+        if (webPanel != null || !launched || !surfaceReady || !foreground || displayId < 0 || !surfaceView.holder.surface.isValid) return true
         val width = surfaceView.width.toFloat()
         val height = surfaceView.height.toFloat()
         if (width <= 0f || height <= 0f) return true
@@ -188,9 +206,46 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
 
     @Deprecated("Deprecated in Android")
     override fun onBackPressed() {
-        if (launched && surfaceReady) {
+        if (webPanel != null) webPanel?.back()
+        else if (launched && surfaceReady) {
             TargetPortraitDisplayClient.back(displayId, hostToken) { error -> if (error != null) showFailure(error) }
         } else stopAndFinish()
+    }
+
+    private fun openWebLink(url: String) {
+        if (webPanel != null || stopping || isDestroyed) return
+        try {
+            val panel = PortraitWebPanel(this) { closeWebLink() }
+            webPanel = panel
+            updateHostFocusability()
+            scene.addView(panel, FrameLayout.LayoutParams(-1, -1))
+            (scene.parent as View).requestApplyInsets()
+            panel.open(url)
+            if (!foreground) panel.pause()
+            TargetPortraitDisplayClient.browser(displayId, hostToken, true) { error ->
+                if (error != null) { closeWebLink(); showFailure(error) }
+            }
+        } catch (failure: Throwable) {
+            closeWebLink()
+            showFailure(getString(R.string.target_web_unavailable))
+        }
+    }
+
+    private fun closeWebLink() {
+        webPanel?.let {
+            getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+                .hideSoftInputFromWindow(it.windowToken, 0)
+            scene.removeView(it)
+            it.destroy()
+        }
+        webPanel = null
+        updateHostFocusability()
+        (scene.parent as View).requestApplyInsets()
+        if (!stopping && displayId >= 0) {
+            TargetPortraitDisplayClient.browser(displayId, hostToken, false) { error ->
+                if (error != null) showFailure(error)
+            }
+        }
     }
 
     private fun handoffToPhone() {
@@ -209,7 +264,12 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
                 launched = false
                 surfaceReady = false
                 showFailure(error ?: getString(R.string.target_portrait_display_ended))
-            } else main.postDelayed(poll, 750)
+            } else {
+                TargetPortraitDisplayClient.link(displayId, hostToken) { url ->
+                    if (url != null && foreground && !stopping && !isDestroyed) openWebLink(url)
+                    if (!stopping && !isDestroyed) main.postDelayed(poll, 750)
+                }
+            }
         }
     }
 
@@ -242,6 +302,8 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
     }
 
     override fun onDestroy() {
+        webPanel?.destroy()
+        webPanel = null
         launched = false
         surfaceReady = false
         main.removeCallbacksAndMessages(null)
