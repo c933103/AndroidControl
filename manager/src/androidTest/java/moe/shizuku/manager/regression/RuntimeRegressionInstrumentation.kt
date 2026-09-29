@@ -67,6 +67,12 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
                 "separate-controls" -> checkSeparateControls()
                 "external-dialog" -> checkExternalDialog()
                 "lock-unlock" -> checkLockUnlock()
+                "shutdown-control" -> runCatching { controlService().destroy() }
+                "root-display" -> {
+                    controlService()
+                    check(Shizuku.getUid() == 0) { "Root regression did not start a root server" }
+                    closeDisplay(checkDisplay())
+                }
                 else -> error("Unknown regression phase")
             }
             finish(-1, Bundle().apply { putString("regression", "PASS ${args.getString("phase")}") })

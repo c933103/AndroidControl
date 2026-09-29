@@ -89,4 +89,15 @@ adb shell dumpsys window > runtime-results/final-windows.txt
 adb shell dumpsys display > runtime-results/final-displays.txt
 adb exec-out screencap -p > runtime-results/final-screen.png
 adb logcat -d -s AndroidRuntime ShizukuServer AndroidControlService > runtime-results/final-log.txt
+# The trusted display also needs a valid package attribution when the parent
+# toolbox is started with root. Exercise that path on these debuggable emulators.
+run_phase shutdown-control || result=1
+adb root
+adb wait-for-device
+test "$(adb shell id -u | tr -d '\r')" = 0
+server_pid=$(adb shell pidof shizuku_server | tr -d '\r')
+adb shell kill "$server_pid"
+adb shell am force-stop "$package"
+adb shell "${apk_path%/*}/lib/x86_64/libshizuku.so --apk=$apk_path"
+run_phase root-display || result=1
 exit "$result"
