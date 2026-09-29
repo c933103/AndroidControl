@@ -92,17 +92,20 @@ class PortraitWebPanel(context: Context, private val returnToApp: () -> Unit) : 
             }
 
             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
-                if (pages.lastOrNull() === view) address.text = url
-                if (PortraitWebLaunch.isWebUrl(url)) lastUrl = url
+                if (pages.lastOrNull() === view) {
+                    address.text = url
+                    if (PortraitWebLaunch.isWebUrl(url)) lastUrl = url
+                }
             }
 
             override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
                 // Android calls this for every WebView sharing the dead renderer.
                 // Remove each affected instance without touching the game's display.
+                val active = pages.lastOrNull() === view
                 pages.remove(view)
                 frame.removeView(view)
                 view.destroy()
-                pages.lastOrNull()?.visibility = VISIBLE
+                if (active) showCurrentPage()
                 message.setText(R.string.target_web_renderer_stopped)
                 message.visibility = VISIBLE
                 return true
@@ -138,13 +141,19 @@ class PortraitWebPanel(context: Context, private val returnToApp: () -> Unit) : 
     }
 
     private fun removePage(page: WebView) {
+        val active = pages.lastOrNull() === page
         pages.remove(page)
         frame.removeView(page)
         page.destroy()
+        if (active) showCurrentPage()
+    }
+
+    private fun showCurrentPage() {
         pages.lastOrNull()?.apply {
             visibility = VISIBLE
             if (resumed) onResume()
             address.text = url
+            if (PortraitWebLaunch.isWebUrl(url)) lastUrl = url
             requestFocus()
         }
     }
