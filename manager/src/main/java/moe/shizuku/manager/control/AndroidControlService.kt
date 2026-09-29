@@ -446,7 +446,11 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                     targetPortraitDisplayId) as? List<*> ?: return
                 val virtualTop = virtualRoots.filterNotNull().firstOrNull {
                     it.javaClass.getField("visible").getBoolean(it)
-                } ?: return
+                }
+                if (virtualTop == null) {
+                    android.util.Log.d("AndroidControlService", "Portrait focus: no visible root on display $targetPortraitDisplayId")
+                    return
+                }
                 if (portraitFocusNeedsRefresh) {
                     // After wake, WindowManager can focus display 0 while ATM
                     // still calls the virtual activity top-resumed. Focusing
@@ -457,6 +461,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 }
                 invokeActivityTaskManager(atm, "setFocusedRootTask",
                     virtualTop.javaClass.getField("taskId").getInt(virtualTop))
+                if (portraitFocusNeedsRefresh) {
+                    val focused = invokeActivityTaskManager(atm, "getFocusedRootTaskInfo")
+                    android.util.Log.d("AndroidControlService", "Portrait focus requested=${virtualTop.javaClass.getField("taskId").getInt(virtualTop)}; actual=${focused?.javaClass?.getField("taskId")?.getInt(focused)}")
+                }
                 portraitFocusNeedsRefresh = false
             }
         }
