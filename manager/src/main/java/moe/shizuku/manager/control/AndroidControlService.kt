@@ -405,7 +405,15 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     }
 
     private fun restoreSessionFocus() {
-        if (!portraitSurfaceAttached || portraitHostTaskId < 0 || !isPhoneUnlocked()) return
+        val unlocked = isPhoneUnlocked()
+        if (!portraitSurfaceAttached || portraitHostTaskId < 0 || !unlocked) {
+            val state = "surface=$portraitSurfaceAttached; host=$portraitHostTaskId; unlocked=$unlocked; browser=$portraitBrowserVisible"
+            if (state != lastPhoneFocusState) {
+                android.util.Log.d("AndroidControlService", "Portrait focus deferred: $state")
+                lastPhoneFocusState = state
+            }
+            return
+        }
         val atm = getActivityTaskManagerService()
         // getTasks is ordered by last-active time on Android 13, NOT window
         // stacking order. It can pick another app and leave global focus on the
@@ -419,7 +427,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         val activity = top.javaClass.getField("topActivity").get(top) as? android.content.ComponentName
         val ownsTop = (rootId == portraitHostTaskId || children?.contains(portraitHostTaskId) == true) &&
             activity?.className == TargetPortraitDisplayActivity::class.java.name
-        val focusState = "host=$portraitHostTaskId; physicalRoot=$rootId; hostOnTop=$ownsTop"
+        val focusState = "host=$portraitHostTaskId; physicalRoot=$rootId; hostOnTop=$ownsTop; browser=$portraitBrowserVisible"
         if (focusState != lastPhoneFocusState) {
             android.util.Log.d("AndroidControlService", "Portrait focus: $focusState")
             lastPhoneFocusState = focusState
@@ -709,6 +717,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                     break
                 } catch (t: Throwable) {
                     targetPortraitStatus = "Portrait display monitor: ${t.message}"
+                    android.util.Log.w("AndroidControlService", "Portrait display monitor retry", t)
                     // Keep lifecycle recovery retryable; never silently abandon a
                     // live display because one task snapshot or handoff failed.
                 }
