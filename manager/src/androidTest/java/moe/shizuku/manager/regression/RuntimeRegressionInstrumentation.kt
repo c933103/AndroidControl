@@ -371,7 +371,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         shell("run-as ${PortraitTarget.DEFAULT_PACKAGE} rm -f files/dialog-dismissed")
         shell("am broadcast -a org.androidcontrol.regression.DIALOG -p ${PortraitTarget.DEFAULT_PACKAGE}")
         SystemClock.sleep(500)
-        runOnMainSync { activity.onBackPressed() }
+        shell("input -d 0 keyevent KEYCODE_BACK")
         awaitState("Back did not dismiss the target's own dialog") { fixtureFile("dialog-dismissed").contains("dismissed") }
         check(!activity.isFinishing) { "Back closed the portrait host while dismissing a dialog" }
         shell("run-as ${PortraitTarget.DEFAULT_PACKAGE} rm -f files/checkout-returned")
