@@ -30,6 +30,7 @@ public final class PortraitWebLaunch {
         String id = null;
         int headerIndent = -1;
         boolean owner = false;
+        boolean returnsResult = false;
         String url = null;
         for (String line : dump.split("\\n")) {
             int indent = 0;
@@ -49,6 +50,9 @@ public final class PortraitWebLaunch {
             }
             if (id == null) continue;
             if (!line.trim().isEmpty() && indent <= headerIndent) break;
+            // Browser-based identity/payment flows may also have an ActivityResult
+            // recipient. Dismissing them here would report cancellation too early.
+            if (line.trim().startsWith("resultTo=")) returnsResult = true;
             for (String token : line.trim().split("\\s+")) {
                 if (token.equals("launchedFromPackage=" + caller)) owner = true;
             }
@@ -58,6 +62,6 @@ public final class PortraitWebLaunch {
                 }
             }
         }
-        return owner && isWebUrl(url) ? new PortraitWebLaunch(id, url) : null;
+        return owner && !returnsResult && isWebUrl(url) ? new PortraitWebLaunch(id, url) : null;
     }
 }
