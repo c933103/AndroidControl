@@ -286,6 +286,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         synchronized(targetPortraitSessionLock) {
             if (displayId != targetPortraitDisplayId || targetPortraitHostToken !== hostToken ||
                 !portraitSurfaceAttached) return
+            portraitFocusNeedsRefresh = true
             restoreSessionFocus()
             val now = SystemClock.uptimeMillis()
             injectEvent(displayId, KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, 0))
@@ -686,6 +687,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         try {
             injectEvent(displayId, event)
             if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                portraitFocusNeedsRefresh = true
                 restoreSessionFocus()
             }
         } catch (t: Throwable) {

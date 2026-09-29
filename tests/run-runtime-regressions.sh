@@ -65,6 +65,9 @@ run_phase reopen || result=1
 # A real package replacement, without clearing app data or Keystore.
 adb install -r manager/build/outputs/apk/debug/*.apk
 adb shell pm grant "$package" android.permission.POST_NOTIFICATIONS
+# Package replacement broadcasts can still be starting/killing a process after
+# install returns. Wait before instrumentation takes ownership of that same UID.
+timeout 60s adb shell am wait-for-broadcast-idle
 run_phase upgrade || result=1
 run_phase key-failure || result=1
 run_phase fresh || result=1
