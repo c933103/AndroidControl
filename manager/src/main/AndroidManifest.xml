@@ -51,7 +51,7 @@
         android:name=".ShizukuApplication"
         android:allowBackup="true"
         android:autoRevokePermissions="allowed"
-        android:banner="@drawable/ic_launcher"
+        android:banner="@drawable/ic_banner"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:directBootAware="true"
         android:enableOnBackInvokedCallback="true"
@@ -67,7 +67,7 @@
 
         <activity
             android:name=".MainActivity"
-            android:banner="@mipmap/banner"
+            android:banner="@drawable/ic_banner"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
