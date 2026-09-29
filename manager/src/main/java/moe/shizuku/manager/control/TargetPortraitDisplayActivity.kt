@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.graphics.Matrix
 import android.os.Binder
 import android.os.Bundle
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
@@ -13,6 +14,7 @@ import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
+import android.view.WindowInsets
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -47,6 +49,21 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.BLACK)
+            setOnApplyWindowInsetsListener { view, insets ->
+                // targetSdk 36 enforces edge-to-edge on newer Android. Reserve
+                // navigation/cutout space explicitly so the controls stay usable.
+                if (Build.VERSION.SDK_INT >= 30) {
+                    val safe = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                    view.setPadding(safe.left, safe.top, safe.right, safe.bottom)
+                    WindowInsets.CONSUMED
+                } else {
+                    @Suppress("DEPRECATION")
+                    view.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop,
+                        insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
+                    @Suppress("DEPRECATION")
+                    insets.consumeSystemWindowInsets()
+                }
+            }
         }
         val scene = FrameLayout(this)
         root.addView(scene, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -75,6 +92,7 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
         button(R.string.target_portrait_close) { stopAndFinish() }
         root.addView(controls, LinearLayout.LayoutParams(-1, -2))
         setContentView(root)
+        root.requestApplyInsets()
     }
 
     override fun onResume() {

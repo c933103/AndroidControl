@@ -122,7 +122,10 @@ object TargetPortraitDisplayClient {
         hostTaskId: Int,
         callback: (Int, String?) -> Unit
     ) {
-        val retained = copySurface(surface)
+        val retained = try { copySurface(surface) } catch (t: Throwable) {
+            callback(-1, t.message ?: "Portrait surface unavailable")
+            return
+        }
         withService({ service ->
             executor.execute {
                 try {
@@ -160,7 +163,10 @@ object TargetPortraitDisplayClient {
     }
 
     fun attach(displayId: Int, token: IBinder, surface: Surface?, callback: (String?) -> Unit) {
-        val retained = surface?.takeIf { it.isValid }?.let { copySurface(it) }
+        val retained = try { surface?.takeIf { it.isValid }?.let { copySurface(it) } } catch (t: Throwable) {
+            callback(t.message ?: "Portrait surface unavailable")
+            return
+        }
         withService({ service ->
             executor.execute {
                 val error = try {

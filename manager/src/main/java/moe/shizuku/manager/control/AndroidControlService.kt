@@ -1,11 +1,13 @@
 package moe.shizuku.manager.control
 
 import android.app.ActivityManager
+import android.app.KeyguardManager
 import android.content.Context
 import android.graphics.Rect
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.os.IBinder
+import android.os.PowerManager
 import android.os.SystemClock
 import android.util.AtomicFile
 import android.view.InputEvent
@@ -348,7 +350,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     }
 
     private fun restorePhoneFocus() {
-        if (!portraitSurfaceAttached || portraitHostTaskId < 0) return
+        if (!portraitSurfaceAttached || portraitHostTaskId < 0 || !isPhoneUnlocked()) return
         val atm = getActivityTaskManagerService()
         val top = getRunningTasks(atm).firstOrNull { getRunningTaskDisplayId(it) == 0 }
         // Never bring the host in front of Home, the lock screen or a native dialog.
@@ -356,6 +358,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             invokeActivityTaskManager(atm, "setFocusedTask", portraitHostTaskId)
         }
     }
+
+    private fun isPhoneUnlocked(): Boolean =
+        shellContext.getSystemService(PowerManager::class.java).isInteractive &&
+            !shellContext.getSystemService(KeyguardManager::class.java).isKeyguardLocked
 
     override fun launchTargetOnPortraitDisplay(
         displayId: Int,
@@ -582,7 +588,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                                 ?.topActivity?.packageName?.let { it != targetPackage } == true
                             // Billing/identity/permission screens may be secure or sized for
                             // the native display. Preserve their live result chain there.
-                            if (external || handoffFile.baseFile.exists()) {
+                            if ((external || handoffFile.baseFile.exists()) && isPhoneUnlocked()) {
                                 handoffTargetToPhone(displayId, hostToken)
                             } else if (tasks.none { getRunningTaskDisplayId(it) == displayId }) {
                                 stopTargetPortraitDisplay(displayId, false)
@@ -603,7 +609,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     }
 
     override fun injectTargetMotionEvent(displayId: Int, event: MotionEvent) {
-        if (displayId <= 0 || displayId != targetPortraitDisplayId || !portraitSurfaceAttached) return
+        if (displayId <= 0 || displayId != targetPortraitDisplayId || !portraitSurfaceAttached || !isPhoneUnlocked()) return
         try {
             injectEvent(displayId, event)
             if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
