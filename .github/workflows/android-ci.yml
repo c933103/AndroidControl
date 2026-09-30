@@ -32,7 +32,7 @@ jobs:
         run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
       - name: Build previous APK and current APK with the same test signing key
         run: |
-          git checkout --detach 8e997d2f7860684b596f6caf2a9e5e4a16367ad4
+          git checkout --detach origin/ci/upgrade-baseline
           ./gradlew :manager:assembleDebug
           cp manager/build/outputs/apk/debug/*.apk "$RUNNER_TEMP/baseline.apk"
           rm manager/build/outputs/apk/debug/*.apk

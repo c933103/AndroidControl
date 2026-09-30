@@ -22,8 +22,8 @@ keytool -genkeypair -keystore "$test_dir/fixture.jks" -storepass android -keypas
 "$build_tools/apksigner" sign --ks "$test_dir/fixture.jks" --ks-pass pass:android "$test_dir/aligned.apk"
 
 # A different installed package exercises selection rather than the old hard-coded target.
-sed -e 's/package="game.qualiarts.hololive.dreams.jp"/package="org.androidcontrol.regression.other"/' \
-    -e 's/android:name=".RegressionGame"/android:name="game.qualiarts.hololive.dreams.jp.RegressionGame"/' \
+sed -e 's/package="org.androidcontrol.regression.target"/package="org.androidcontrol.regression.other"/' \
+    -e 's/android:name=".RegressionGame"/android:name="org.androidcontrol.regression.target.RegressionGame"/' \
     tests/portrait-fixture/AndroidManifest.xml > "$test_dir/AndroidManifest.xml"
 "$build_tools/aapt2" link -I "$android_jar" --manifest "$test_dir/AndroidManifest.xml" -o "$test_dir/other.apk"
 (cd "$test_dir/dex" && zip -q "$test_dir/other.apk" classes.dex)
@@ -95,7 +95,7 @@ adb shell dumpsys activity activities > runtime-results/activities.txt
 adb shell dumpsys display > runtime-results/displays.txt
 adb logcat -d -s AndroidRuntime ShizukuServer AndroidControlService > runtime-results/runtime-log.txt
 adb exec-out screencap -p > runtime-results/screen.png
-adb shell run-as game.qualiarts.hololive.dreams.jp cat files/touches | tee runtime-results/touches.txt || result=1
+adb shell run-as org.androidcontrol.regression.target cat files/touches | tee runtime-results/touches.txt || result=1
 grep -q touch runtime-results/touches.txt || result=1
 run_phase select-target || result=1
 run_phase separate-controls || result=1
