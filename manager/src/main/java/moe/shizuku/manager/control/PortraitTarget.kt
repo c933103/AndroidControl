@@ -10,7 +10,7 @@ object PortraitTarget {
     fun validate(value: String): String {
         val name = value.trim()
         require(Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+").matches(name)) {
-            "Enter an Android package name, for example $DEFAULT_PACKAGE"
+            "Enter an Android package name, for example org.example.app"
         }
         require(name != BuildConfig.APPLICATION_ID) { "AndroidControl cannot target itself" }
         return name

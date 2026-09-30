@@ -9,7 +9,7 @@ public final class AndroidPortraitRegexTest {
         if (!"Android Runtime".equals(System.getProperty("java.runtime.name"))) {
             throw new AssertionError("This regression requires the actual Android runtime");
         }
-        String oldPattern = Pattern.quote("game.qualiarts.hololive.dreams.jp")
+        String oldPattern = Pattern.quote("org.androidcontrol.regression.target")
                 + "/\\S+\\s+t58934(?:\\s|})";
         boolean reproduced = false;
         try {

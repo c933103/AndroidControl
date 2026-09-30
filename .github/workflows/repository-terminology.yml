@@ -1,0 +1,46 @@
+name: Repository terminology maintenance
+on:
+  workflow_run:
+    workflows: ['Android CI']
+    types: [completed]
+    branches: [master]
+permissions:
+  contents: write
+  actions: write
+jobs:
+  rewrite:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 2
+      - name: Check one-time maintenance scope
+        id: scope
+        env:
+          ORIGINAL_PARENT: 84c6f084d001fddbf528b24f8b100bb494d3ca67
+        run: |
+          if [ "$(git rev-parse HEAD^)" = "$ORIGINAL_PARENT" ]; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install pinned rewrite tool
+        if: steps.scope.outputs.run == 'true'
+        run: python -m pip install git-filter-repo==2.47.0
+      - name: Verify and atomically replace published branch history
+        if: steps.scope.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY_URL: https://github.com/${{ github.repository }}.git
+          EXPECTED_HEAD: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          python tools/neutralize_repository.py --source "$REPOSITORY_URL" \
+            --expected-head "$EXPECTED_HEAD" \
+            --expected-parent 84c6f084d001fddbf528b24f8b100bb494d3ca67 --apply
+      - name: Validate rewritten master and build its signed draft APK
+        if: steps.scope.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run android-ci.yml --ref master
+          gh workflow run draft-test-release.yml --ref master

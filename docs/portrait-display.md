@@ -2,7 +2,7 @@
 
 ## Required behavior
 
-The target is configurable in the app; `game.qualiarts.hololive.dreams.jp` is the initial default. Only the selected package is targeted. The game retains its landscape-only orientation policy. AndroidControl supplies a separate logical display with width less than height, puts the game in a resizable/freeform task filling that display, and presents the display in a portrait host with touch forwarding and visible navigation/exit controls.
+The target is configurable in the app; its initial default is defined once in `PortraitTarget.DEFAULT_PACKAGE`. Only the selected package is targeted. The game retains its landscape-only orientation policy. AndroidControl supplies a separate logical display with width less than height, puts the game in a resizable/freeform task filling that display, and presents the display in a portrait host with touch forwarding and visible navigation/exit controls.
 
 The one-time, device-wide legacy recovery has already completed. Keep its UI retired and do not repeat its package scan as part of normal launch or restore. Normal changes to compatibility flags are confined to the target package. Temporary global freeform support settings must retain and restore their previous values.
 
@@ -12,10 +12,10 @@ The recovered discussion and game dump reported Unity sizes of 1662×712 and 712
 
 - PR #7 separated legacy recovery from normal target-only operations.
 - PR #8 archived legacy recovery controls.
-- PR #9 is an unmerged alternative using a shell-owned trusted virtual display.
+- PR #9 was closed as superseded after its shell-owned trusted display design was incorporated in PR #17.
 - PR #10 added Android 13 task/freeform fallback handling.
 - PR #11 added activity-bounds verification and compatibility capability checks.
-- PR #12 introduced the app-owned public virtual display and fullscreen host currently in master.
+- PR #12 introduced the earlier app-owned public virtual display and fullscreen host.
 - PR #13 retains landscape orientation and verifies portrait bounds independently of the orientation enum.
 
 This is a continuation of those attempts, not a fresh orientation-flag experiment.
@@ -58,7 +58,7 @@ For a permanently missing or invalid encryption key, the error UI offers a separ
 
 ## Configurable target and independent system control
 
-The home screen has separate target-display and system-wide sections. Change target package validates package syntax, rejects AndroidControl itself and packages without a launcher, and saves the choice in the existing app preferences. The host captures the selection at launch. The privileged daemon persists that session’s package before changing compatibility/task state, and restores the previous session before accepting another package. Ledgers from older builds without a package owner belong to the original Hololive Dreams default. Editing the selection during a session affects the next launch; Close still restores and reopens the session’s original app.
+The home screen has separate target-display and system-wide sections. Change target package validates package syntax, rejects AndroidControl itself and packages without a launcher, and saves the choice in the existing app preferences. The host captures the selection at launch. The privileged daemon persists that session’s package before changing compatibility/task state, and restores the previous session before accepting another package. Ledgers from older builds without a package owner belong to the original default target. Editing the selection during a session affects the next launch; Close still restores and reopens the session’s original app.
 
 The system-wide button only changes display 0 user rotation, fixed-to-user rotation and ignore-orientation-request. It does not launch apps or apply per-package overrides. The button is enabled when the build advertises the modern query/set commands; a blanket Android-version threshold would misidentify OEM capabilities. A durable snapshot retains the previous rotation mode, remembered angle, fixed rotation policy and ignore-orientation policy. Restore replays and verifies that snapshot, retaining it if anything fails. This mode does not promise to reflow every app’s internal UI.
 
@@ -96,3 +96,7 @@ The WebView exposes no JavaScript-to-native bridge, file/content access or SSL b
 Later Android 13 builds can treat both the host and game as already focused within their respective displays, making `setFocusedRootTask` a no-op even when the other display remains globally active. Runtime tracing reproduced a request for game task 18 leaving host task 17 focused. On older Android versions, a verified failed focus transfer now activates the desired display through a separate transparent AndroidControl task, which immediately removes itself on focus (with a bounded timeout). It is restricted to callers holding `MANAGE_ACTIVITY_TASKS`, is excluded from Recents, and runs only while the portrait host owns the phone's foreground. It sends no new Intent to the game. The host yields keyboard focus while the game is shown; its touch and exit controls remain usable.
 
 Regression coverage includes full URL/query preservation, exact caller/task parsing, Android ICU compatibility, separate-UID browser launches in a new task and within the game's task, HTTP redirects, page Back, new-window links, retained web DOM after lock/unlock, and return to the same game PID/display with working input. Existing native checkout/ActivityResult, pairing, root-parent and separate system-control tests remain enabled. The fixture is not Google Chrome or the game's real web/authentication flow; those still require device validation.
+
+## Generic target configuration
+
+The initial package appears only in the editable target preference default. The service reads the captured session owner, and regression fixtures use independent neutral package names. Restoration journals use `androidcontrol-target-compat` and `androidcontrol-target-tasks`; existing target-labelled journals are migrated before starting the daemon. Conflicting records are retained and reported, never overwritten. Ownerless records from older builds still restore the original default package. Application ID, signing identity and pairing storage are unchanged.

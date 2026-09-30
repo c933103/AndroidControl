@@ -24,23 +24,30 @@ import java.io.InputStreamReader
 class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() {
 
     init {
+        val directory = File("/data/local/tmp")
+        val migrations = PortraitStateFiles.migrations(directory)
+        val names = listOf("target-compat", "target-tasks",
+            "portrait-display-session", "freeform-support-prev", "multiwindow-config-prev",
+            "portrait-target-package", "system-rotation-prev", "portrait-native-handoff")
+        val records = names.flatMap { name ->
+            listOf("", ".bak", ".new").map { suffix -> File(directory, "androidcontrol-$name$suffix") }
+        } + migrations.map { it[0] }
+        for (record in records) {
+            try {
+                val stat = android.system.Os.lstat(record.path)
+                check(android.system.OsConstants.S_ISREG(stat.st_mode)) { "Invalid control state file" }
+                if (android.os.Process.myUid() == 0 && stat.st_uid == 0) {
+                    android.system.Os.lchown(record.path, 2000, 2000)
+                }
+            } catch (error: android.system.ErrnoException) {
+                if (error.errno != android.system.OsConstants.ENOENT) throw error
+            }
+        }
+        PortraitStateFiles.migrate(migrations)
         // Only this dedicated control daemon needs a package-backed UID for
         // DisplayManager attribution. Keep the parent/root server and other tools
         // untouched. Shell already has every permission used by these controls.
         if (android.os.Process.myUid() == 0) {
-            val names = listOf("hololive-dreams-compat", "hololive-dreams-tasks",
-                "portrait-display-session", "freeform-support-prev", "multiwindow-config-prev",
-                "portrait-target-package", "system-rotation-prev", "portrait-native-handoff")
-            for (name in names) for (suffix in listOf("", ".bak", ".new")) {
-                val path = "/data/local/tmp/androidcontrol-$name$suffix"
-                try {
-                    val stat = android.system.Os.lstat(path)
-                    check(android.system.OsConstants.S_ISREG(stat.st_mode)) { "Invalid control state file: $path" }
-                    if (stat.st_uid == 0) android.system.Os.lchown(path, 2000, 2000)
-                } catch (error: android.system.ErrnoException) {
-                    if (error.errno != android.system.OsConstants.ENOENT) throw error
-                }
-            }
             android.system.Os.setgid(2000)
             android.system.Os.setuid(2000)
         }
@@ -105,10 +112,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     }
 
     private val targetCompatStateFile =
-        File("/data/local/tmp/androidcontrol-hololive-dreams-compat")
+        File("/data/local/tmp/androidcontrol-target-compat")
 
     private val fallbackTaskStateFile =
-        File("/data/local/tmp/androidcontrol-hololive-dreams-tasks")
+        File("/data/local/tmp/androidcontrol-target-tasks")
 
     // Written before am start: even a failed launch or daemon restart has a cleanup target.
     private val portraitDisplayStateFile =
@@ -153,7 +160,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         return try {
             PortraitTarget.validate(targetOwnerFile.openRead().bufferedReader().use { it.readText() })
         } catch (t: java.io.FileNotFoundException) {
-            DEFAULT_TARGET_PACKAGE
+            PortraitTarget.DEFAULT_PACKAGE
         }
     }
 
@@ -170,8 +177,6 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     }
 
     private companion object {
-        const val DEFAULT_TARGET_PACKAGE = "game.qualiarts.hololive.dreams.jp"
-
         const val FORCE_RESIZE_APP = "174042936"
         const val FORCE_NON_RESIZE_APP = "181136395"
         const val NEVER_SANDBOX_DISPLAY_APIS = "184838306"
@@ -1234,7 +1239,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                     break
                 }
             }
-        }, "androidcontrol-hololive-dreams-portrait")
+        }, "androidcontrol-target-portrait")
 
         portraitWatcherThread = thread
         thread.isDaemon = true

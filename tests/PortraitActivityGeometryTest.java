@@ -1,7 +1,7 @@
 package moe.shizuku.manager.control;
 
 public final class PortraitActivityGeometryTest {
-    private static final String PKG = "game.qualiarts.hololive.dreams.jp";
+    private static final String PKG = "org.androidcontrol.regression.target";
     private static String record(int task, String config) {
         // Actual Android 13 formatting captured by the installed-app regression.
         return "    * Hist  #0: ActivityRecord{abc u0 " + PKG + "/.Main} t" + task + "}\n"

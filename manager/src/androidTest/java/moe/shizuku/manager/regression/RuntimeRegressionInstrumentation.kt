@@ -62,7 +62,10 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
                     "New pairing identity was not durable before returning to the caller"
                 }
                 "key-recovery" -> checkKeyRecovery()
-                "display" -> closeDisplay(checkDisplay())
+                "display" -> {
+                    PortraitTarget.save(fixturePackage)
+                    closeDisplay(checkDisplay())
+                }
                 "select-target" -> selectTarget()
                 "separate-controls" -> checkSeparateControls()
                 "external-dialog" -> checkExternalDialog()
@@ -209,6 +212,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         check(fingerprint() != oldFingerprint) { "Explicit reset did not create a usable new identity" }
     }
 
+    private val fixturePackage = "org.androidcontrol.regression.target"
     private val otherPackage = "org.androidcontrol.regression.other"
 
     private fun shell(command: String): String = ParcelFileDescriptor.AutoCloseInputStream(
@@ -301,7 +305,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         check(service.setForcePortrait(true))
         val forced = rotationSnapshot()
         check(service.hasSystemPortraitOverride())
-        check(!controlRecordExists("androidcontrol-hololive-dreams-compat")) {
+        check(!controlRecordExists("androidcontrol-target-compat")) {
             "System-wide mode applied target compatibility flags"
         }
         checkpoint("system enabled; restarting daemon")
@@ -322,7 +326,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         check(shell("cat /data/local/tmp/androidcontrol-portrait-target-package") == otherPackage)
         check(shell("run-as $otherPackage cat files/touches").contains("touch"))
         // Changing the next selection must not retarget this session's cleanup.
-        PortraitTarget.save(PortraitTarget.DEFAULT_PACKAGE)
+        PortraitTarget.save(fixturePackage)
         checkpoint("selected target received touch; closing session")
         closeDisplay(activity)
         check(rotationSnapshot() == forced) { "Target restoration disabled the global mode" }
@@ -369,7 +373,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
     }
 
     private fun fixtureFile(name: String): String =
-        shell("run-as ${PortraitTarget.DEFAULT_PACKAGE} cat files/$name")
+        shell("run-as ${fixturePackage} cat files/$name")
 
     private fun tapScene(activity: TargetPortraitDisplayActivity) {
         val field = activity.javaClass.getDeclaredField("surfaceView").apply { isAccessible = true }
@@ -387,7 +391,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
     }
 
     private fun checkWebLinks() {
-        PortraitTarget.save(PortraitTarget.DEFAULT_PACKAGE)
+        PortraitTarget.save(fixturePackage)
         val server = java.net.ServerSocket(0, 8, java.net.InetAddress.getByName("127.0.0.1"))
         val serving = Thread {
             while (!server.isClosed) {
@@ -407,7 +411,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
             }
         }.apply { isDaemon = true; start() }
         val activity = checkDisplay()
-        val pid = shell("pidof ${PortraitTarget.DEFAULT_PACKAGE}")
+        val pid = shell("pidof ${fixturePackage}")
         val displayField = activity.javaClass.getDeclaredField("displayId").apply { isAccessible = true }
         val originalDisplay = displayField.getInt(activity)
         val panelField = activity.javaClass.getDeclaredField("webPanel").apply { isAccessible = true }
@@ -451,7 +455,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         var passed = false
         try {
             for (newTask in listOf(true, false)) {
-                shell("am broadcast -a org.androidcontrol.regression.WEB_LINK -p ${PortraitTarget.DEFAULT_PACKAGE} --es url http://127.0.0.1:${server.localPort}/redirect --ez new_task $newTask")
+                shell("am broadcast -a org.androidcontrol.regression.WEB_LINK -p ${fixturePackage} --es url http://127.0.0.1:${server.localPort}/redirect --ez new_task $newTask")
                 awaitState("Target web link did not open in the portrait WebView (newTask=$newTask)") {
                     url()?.endsWith("/one") == true
                 }
@@ -487,7 +491,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
                     fixtureFile("window-focus").trim() == "true" && panelField.get(activity) == null
                 }
                 check(!activity.isFinishing && displayField.getInt(activity) == originalDisplay)
-                check(shell("pidof ${PortraitTarget.DEFAULT_PACKAGE}") == pid) { "Opening a link restarted the game" }
+                check(shell("pidof ${fixturePackage}") == pid) { "Opening a link restarted the game" }
                 val before = fixtureFile("touches")
                 tapScene(activity)
                 awaitState("Game input failed after returning from WebView") { fixtureFile("touches").length > before.length }
@@ -504,11 +508,11 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
     }
 
     private fun checkExternalDialog() {
-        PortraitTarget.save(PortraitTarget.DEFAULT_PACKAGE)
+        PortraitTarget.save(fixturePackage)
         val activity = checkDisplay()
-        val pid = shell("pidof ${PortraitTarget.DEFAULT_PACKAGE}")
-        shell("run-as ${PortraitTarget.DEFAULT_PACKAGE} rm -f files/dialog-dismissed")
-        shell("am broadcast -a org.androidcontrol.regression.DIALOG -p ${PortraitTarget.DEFAULT_PACKAGE}")
+        val pid = shell("pidof ${fixturePackage}")
+        shell("run-as ${fixturePackage} rm -f files/dialog-dismissed")
+        shell("am broadcast -a org.androidcontrol.regression.DIALOG -p ${fixturePackage}")
         SystemClock.sleep(500)
         if (android.os.Build.VERSION.SDK_INT >= 35) {
             shell("input -d 0 keyevent KEYCODE_BACK")
@@ -533,9 +537,9 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         }
         awaitState("Back did not dismiss the target's own dialog") { fixtureFile("dialog-dismissed").contains("dismissed") }
         check(!activity.isFinishing) { "Back closed the portrait host while dismissing a dialog" }
-        shell("run-as ${PortraitTarget.DEFAULT_PACKAGE} rm -f files/checkout-returned")
+        shell("run-as ${fixturePackage} rm -f files/checkout-returned")
         shell("run-as org.androidcontrol.regression.checkout rm -f files/ready")
-        shell("am broadcast -a org.androidcontrol.regression.CHECKOUT -p ${PortraitTarget.DEFAULT_PACKAGE}")
+        shell("am broadcast -a org.androidcontrol.regression.CHECKOUT -p ${fixturePackage}")
         awaitState("External dialog did not reach the native display with its button visible") {
             val ready = shell("run-as org.androidcontrol.regression.checkout cat files/ready")
             ready.contains("display=0;") && ready.contains("buttonVisible=true")
@@ -559,7 +563,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         awaitState("Dismissing the external dialog did not return its result to the target") {
             fixtureFile("checkout-returned").contains("returned")
         }
-        check(shell("pidof ${PortraitTarget.DEFAULT_PACKAGE}") == pid) { "Native handoff restarted the game process" }
+        check(shell("pidof ${fixturePackage}") == pid) { "Native handoff restarted the game process" }
         val before = fixtureFile("touches")
         awaitState("Returned game did not finish its display transition") {
             fixtureFile("window-focus").trim() == "true" &&
@@ -576,11 +580,11 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
     }
 
     private fun checkInterruptedHandoff() {
-        PortraitTarget.save(PortraitTarget.DEFAULT_PACKAGE)
+        PortraitTarget.save(fixturePackage)
         val service = controlService()
         val activity = checkDisplay()
         val id = activity.javaClass.getDeclaredField("displayId").apply { isAccessible = true }.getInt(activity)
-        val pid = shell("pidof ${PortraitTarget.DEFAULT_PACKAGE}")
+        val pid = shell("pidof ${fixturePackage}")
         check(pid.isNotEmpty())
         // Fault injection: a handoff record that cannot be read must fail closed,
         // retaining the live process even when the host is then closed.
@@ -592,7 +596,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
             }
             runOnMainSync { activity.finish() }
             SystemClock.sleep(1500)
-            check(shell("pidof ${PortraitTarget.DEFAULT_PACKAGE}") == pid) {
+            check(shell("pidof ${fixturePackage}") == pid) {
                 "Interrupted handoff cleanup killed the preserved game"
             }
             check(controlRecordExists("androidcontrol-portrait-native-handoff")) {
@@ -606,7 +610,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
     }
 
     private fun checkLockUnlock() {
-        PortraitTarget.save(PortraitTarget.DEFAULT_PACKAGE)
+        PortraitTarget.save(fixturePackage)
         val activity = checkDisplay()
         val before = fixtureFile("frame").trim().toLong()
         shell("input keyevent KEYCODE_SLEEP")
