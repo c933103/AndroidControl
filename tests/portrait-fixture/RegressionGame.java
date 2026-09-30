@@ -1,4 +1,4 @@
-package game.qualiarts.hololive.dreams.jp;
+package org.androidcontrol.regression.target;
 
 import android.app.Activity;
 import android.content.BroadcastReceiver;
