@@ -1,29 +1,36 @@
 name: Repository terminology maintenance
 on:
-  workflow_run:
-    workflows: ['Android CI']
-    types: [completed]
+  push:
     branches: [master]
 permissions:
   contents: write
   actions: write
 jobs:
   rewrite:
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 2
-      - name: Check one-time maintenance scope
+      - name: Check one-time scope and existing application validation
         id: scope
         env:
-          ORIGINAL_PARENT: 84c6f084d001fddbf528b24f8b100bb494d3ca67
+          ORIGINAL_PARENT: 810abecd28bc25257cd7700e0fa82546ae1319d0
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "$(git rev-parse HEAD^)" = "$ORIGINAL_PARENT" ]; then
-            echo 'run=true' >> "$GITHUB_OUTPUT"
+          if [ "$(git rev-parse HEAD^)" != "$ORIGINAL_PARENT" ]; then
+            exit 0
           fi
+          # This follow-up only fixes the maintenance runner. Application code
+          # must be identical to the already successful master Android CI run.
+          python - <<'PY'
+          import os, subprocess
+          paths = set(subprocess.check_output(['git', 'diff', '--name-only', os.environ['ORIGINAL_PARENT'], 'HEAD']).decode().splitlines())
+          assert paths <= {'.github/workflows/repository-terminology.yml', 'tools/neutralize_repository.py'}, paths
+          PY
+          validation=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/36653395670" --jq '[.head_sha, .conclusion] | join(" ")')
+          test "$validation" = "$ORIGINAL_PARENT success"
+          echo 'run=true' >> "$GITHUB_OUTPUT"
       - name: Install pinned rewrite tool
         if: steps.scope.outputs.run == 'true'
         run: python -m pip install git-filter-repo==2.47.0
@@ -32,11 +39,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY_URL: https://github.com/${{ github.repository }}.git
-          EXPECTED_HEAD: ${{ github.event.workflow_run.head_sha }}
+          EXPECTED_HEAD: ${{ github.sha }}
         run: |
           python tools/neutralize_repository.py --source "$REPOSITORY_URL" \
             --expected-head "$EXPECTED_HEAD" \
-            --expected-parent 84c6f084d001fddbf528b24f8b100bb494d3ca67 --apply
+            --expected-parent 810abecd28bc25257cd7700e0fa82546ae1319d0 --apply
       - name: Validate rewritten master and build its signed draft APK
         if: steps.scope.outputs.run == 'true'
         env:

@@ -11,8 +11,16 @@ import tempfile
 
 
 def git(*args, cwd=None, data=None):
-    return subprocess.run(['git', *args], cwd=cwd, input=data, check=True,
-                          stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
+    result = subprocess.run(['git', *args], cwd=cwd, input=data,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if result.returncode:
+        detail = result.stderr.decode('utf-8', 'replace')
+        token = os.environ.get('GH_TOKEN')
+        if token:
+            encoded = base64.b64encode(('x-access-token:' + token).encode()).decode()
+            detail = detail.replace(token, '[redacted]').replace(encoded, '[redacted]')
+        raise RuntimeError('Git command failed: ' + detail)
+    return result.stdout
 
 
 def make_transform(package):
@@ -143,7 +151,7 @@ def main():
                   'new_master': after[master].decode(), 'applied': args.apply,
                   'retained_limits': 'GitHub pull refs, old PR diffs, cached commit pages and external clones are not erased.'}
         if args.apply:
-            current = dict(line.split(b'\t')[::-1] for line in git('ls-remote', '--heads', '--tags', args.source).splitlines()
+            current = dict(line.split(b'\t')[::-1] for line in git('ls-remote', '--heads', '--tags', args.source, cwd=repo).splitlines()
                            if not line.split(b'\t')[1].endswith(b'^{}'))
             if current != before: raise RuntimeError('Published refs moved; no rewrite pushed')
             push = ['push', '--atomic']
