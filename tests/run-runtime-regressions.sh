@@ -135,4 +135,9 @@ if [[ -n "$server_pid" ]]; then adb shell kill "$server_pid"; fi
 adb shell am force-stop "$package"
 adb shell "${apk_path%/*}/lib/x86_64/libshizuku.so --apk=$apk_path"
 run_phase root-display || result=1
+adb logcat -d -s AndroidControlService > runtime-results/surface-control-log.txt
+if grep -q 'Portrait surface bounds refresh failed' runtime-results/surface-control-log.txt; then
+    echo '::error::The portrait surface correction failed on this Android version.'
+    result=1
+fi
 exit "$result"
