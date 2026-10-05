@@ -394,8 +394,20 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
                 shell("settings get system accelerometer_rotation") == "0" &&
                 shell("settings get system user_rotation") == mode.last().toString()
         }
-        shell("wm user-rotation -d 0 lock $angle")
-        awaitUserRotation("lock $angle", angle)
+        var nextWrite = 0L
+        awaitStableRotation("Manual rotation baseline did not retain its angle") {
+            val ready = shell("wm user-rotation -d 0") == "lock $angle" &&
+                shell("settings get system user_rotation") == angle.toString() &&
+                shell("settings get system accelerometer_rotation") == "0"
+            if (!ready && SystemClock.uptimeMillis() >= nextWrite) {
+                // Android can asynchronously rewrite the angle when the lock
+                // mode changes. Reapply only this test precondition; assertions
+                // of the app's apply/restore behavior remain read-only.
+                shell("wm user-rotation -d 0 lock $angle")
+                nextWrite = SystemClock.uptimeMillis() + 1000
+            }
+            ready
+        }
     }
 
     private fun checkSeparateControls() {
