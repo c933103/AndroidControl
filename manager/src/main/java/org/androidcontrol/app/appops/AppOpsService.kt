@@ -10,7 +10,6 @@ import android.content.pm.PackageManager
 import android.os.Binder
 import android.os.Build
 import android.os.Process
-import android.os.UserHandle
 import android.util.AtomicFile
 import androidx.annotation.Keep
 import org.androidcontrol.app.BuildConfig
@@ -19,6 +18,7 @@ import org.json.JSONObject
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 import rikka.hidden.compat.PackageManagerApis
 import rikka.hidden.compat.UserManagerApis
+import rikka.hidden.compat.ActivityManagerApis
 import java.io.File
 import java.lang.reflect.InvocationTargetException
 import java.util.concurrent.Executors
@@ -37,11 +37,9 @@ class AppOpsService @Keep constructor(serviceContext: Context) : IAppOpsControlS
     private val catalog: List<Op>
 
 
-    private val receiver: BroadcastReceiver
-        get() = installReceiver
     private val installReceiver by lazy {
         object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) {
+            override fun onReceive(context: Context?, intent: Intent) {
                 if (intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) return
                 val pkg = intent.data?.schemeSpecificPart ?: return
                 val uid = intent.getIntExtra(Intent.EXTRA_UID, -1)
@@ -77,7 +75,7 @@ class AppOpsService @Keep constructor(serviceContext: Context) : IAppOpsControlS
             } ?: "Other operations"
             Op(code, name, permission, group, static("opToSwitch", code) as Int,
                 static("opToDefaultMode", code) as Int)
-        }
+        }.filter { it.name.isNotBlank() && it.switch in 0 until count }
         checkStateFiles()
         try {
             val saved = JSONObject(rulesFile.openRead().bufferedReader().use { it.readText() })
@@ -90,15 +88,16 @@ class AppOpsService @Keep constructor(serviceContext: Context) : IAppOpsControlS
         }
         val filter = IntentFilter(Intent.ACTION_PACKAGE_ADDED).apply { addDataScheme("package") }
         // Listen across profiles; the rule still checks the broadcast's full UID.
-        val allUsers = UserHandle::class.java.getDeclaredField("ALL").apply { isAccessible = true }.get(null)
-        Context::class.java.getMethod("registerReceiverAsUser", BroadcastReceiver::class.java,
-            UserHandle::class.java, IntentFilter::class.java, String::class.java, android.os.Handler::class.java)
-            .invoke(context, receiver, allUsers, filter, null, null)
+        // UserServices have no ActivityManager application-process record. The
+        // compat API registers with a null application thread and supports old
+        // and new framework signatures. Its callback supplies a null Context.
+        ActivityManagerApis.registerReceiver("com.android.shell", null, null,
+            installReceiver, filter, null, -1, 0)
     }
 
     override fun destroy() {
         enforceManager()
-        context.unregisterReceiver(receiver)
+        // Process exit releases the registered receiver's Binder.
         worker.shutdownNow()
         kotlin.system.exitProcess(0)
     }
@@ -228,7 +227,7 @@ class AppOpsService @Keep constructor(serviceContext: Context) : IAppOpsControlS
         invoke("setMode", arrayOf(Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, String::class.java, Int::class.javaPrimitiveType!!), op.code, uid, pkg, mode)
         val stored = entries(uid, pkg).firstOrNull { entryInt(it, "getOp") == op.switch }?.let { entryInt(it, "getMode") }
             ?: catalog.first { it.code == op.switch }.defaultMode
-        check(stored == mode) { "Android did not retain the requested package mode (requested $mode, read $stored)" }
+        check(stored == mode) { "Android did not retain the requested package mode (requested $mode, read $stored). This operation may be controlled by a runtime permission or device policy." }
         return JSONObject().put("stored", stored).put("effective", rawMode(op, uid, pkg))
     }
     private fun snapshot(user: Int, pkg: String): JSONObject {

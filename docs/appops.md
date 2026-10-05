@@ -14,6 +14,8 @@ App search, permission grouping, modes, backups, user selection, and optional ne
 
 The screen distinguishes the package mode from its effective AppOps mode. UID-wide settings can override package settings. Writes verify the saved package setting; the UI explains masking without changing UID rules affecting other packages. Allow does not grant runtime permissions. This is not an Internet firewall or runtime-permission manager.
 
+Android versions and device policies can refuse package-mode changes. In particular, Android 15 can manage runtime-permission operations such as camera through its permission service and ignore direct package-mode writes. AndroidControl reports the failed readback; it does not change runtime grants or silently substitute a UID-wide write. Non-runtime operations such as clipboard remain available where the framework permits them.
+
 The catalog and shared switches come from the running Android framework. Default filtering shows requested-permission operations, recorded operations, and permissionless operations such as clipboard controls; Show all exposes the remaining operations. Groups use Android permission-group identifiers. Find apps by operation lists matching installed apps and their effective modes. The menu can reset recorded package modes to framework defaults without changing UID rules. Last access/rejection timestamps come from Android records; missing timestamps do not prove an app never accessed the resource. This is a history display, not continuous access recording.
 
 ## Users and new installs

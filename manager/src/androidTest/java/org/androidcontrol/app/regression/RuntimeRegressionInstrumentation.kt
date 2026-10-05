@@ -114,50 +114,81 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         controlService()
         val client = org.androidcontrol.app.appops.AppOpsClient
         val user = android.os.Process.myUid() / 100000
+        val name = "android:read_clipboard"
         val ops = client.request("ops", user, fixturePackage) as org.json.JSONArray
-        val camera = (0 until ops.length()).map { ops.getJSONObject(it) }.first { it.getString("name") == "android:camera" }
-        val original = camera.getInt("mode")
+        check((0 until ops.length()).all { ops.getJSONObject(it).getString("name").isNotBlank() }) { "Placeholder operation exposed" }
+        val clipboard = (0 until ops.length()).map { ops.getJSONObject(it) }.first { it.getString("name") == name }
+        val original = clipboard.getInt("mode")
         try {
-            val denied = client.request("set", user, fixturePackage) { it.put("op", "android:camera").put("mode", 1) } as org.json.JSONObject
+            val denied = client.request("set", user, fixturePackage) { it.put("op", name).put("mode", 1) } as org.json.JSONObject
             check(denied.getInt("stored") == 1 && denied.getInt("effective") == 1) { "Ignore did not take effect" }
-            val shellValue = shell("cmd appops get --user $user $fixturePackage CAMERA")
+            val shellValue = shell("cmd appops get --user $user $fixturePackage READ_CLIPBOARD")
             check(shellValue.contains("ignore")) { "Independent AppOps read disagrees: $shellValue" }
-            client.request("set", user, fixturePackage) { it.put("op", "android:camera").put("mode", 0) }
-            check(shell("cmd appops get --user $user $fixturePackage CAMERA").contains("allow")) { "Allow readback failed" }
-            check(runCatching { client.request("set", user, fixturePackage) { it.put("op", "android:camera").put("mode", 99) } }.isFailure) { "Invalid mode accepted" }
-            check(runCatching { client.request("set", user, "missing.fixture.package") { it.put("op", "android:camera").put("mode", 1) } }.isFailure) { "Missing package accepted" }
+            val native = org.json.JSONObject().put("format", "androidcontrol-appops").put("version", 2)
+                .put("apps", org.json.JSONArray().put(client.request("snapshot", user, fixturePackage)))
+            check(org.androidcontrol.app.appops.AppOpsBackup.parse(native.toString(), ops).any { it.name == name && it.mode == 1 }) { "Native backup did not round-trip" }
+            client.request("reset", user, fixturePackage)
+            check(shell("cmd appops get --user $user $fixturePackage READ_CLIPBOARD").contains("allow")) { "Reset readback failed" }
+            client.request("set", user, fixturePackage) { it.put("op", name).put("mode", 0) }
+            check(runCatching { client.request("set", user, fixturePackage) { it.put("op", name).put("mode", 99) } }.isFailure) { "Invalid mode accepted" }
+            check(runCatching { client.request("set", user, "missing.fixture.package") { it.put("op", name).put("mode", 1) } }.isFailure) { "Missing package accepted" }
             val legacy = """{"v":1,"opbacks":[{"pkg":"$fixturePackage","ops":"26,27"}]}"""
             val parsed = org.androidcontrol.app.appops.AppOpsBackup.parse(legacy, ops)
             check(parsed.any { it.name == "android:camera" && it.mode == 1 }) { "Legacy backup camera mapping failed" }
-            val native = org.json.JSONObject().put("format", "androidcontrol-appops").put("version", 2)
-                .put("apps", org.json.JSONArray().put(client.request("snapshot", user, fixturePackage)))
-            check(org.androidcontrol.app.appops.AppOpsBackup.parse(native.toString(), ops).isNotEmpty()) { "Native backup did not round-trip" }
             val duplicate = """{"v":1,"opbacks":[{"pkg":"$fixturePackage","ops":"26,26"}]}"""
             check(runCatching { org.androidcontrol.app.appops.AppOpsBackup.parse(duplicate, ops) }.isFailure) { "Duplicate import accepted" }
             val invalid = """{"v":1,"opbacks":[{"pkg":"$fixturePackage","ops":"999"}]}"""
             check(runCatching { org.androidcontrol.app.appops.AppOpsBackup.parse(invalid, ops) }.isFailure) { "Unknown legacy operation accepted" }
             // Verify UID rules are observed but not overwritten by a package write.
-            shell("cmd appops set --uid --user $user $fixturePackage CAMERA ignore")
-            val masked = client.request("set", user, fixturePackage) { it.put("op", "android:camera").put("mode", 0) } as org.json.JSONObject
+            shell("cmd appops set --uid --user $user $fixturePackage READ_CLIPBOARD ignore")
+            val masked = client.request("set", user, fixturePackage) { it.put("op", name).put("mode", 0) } as org.json.JSONObject
             check(masked.getInt("stored") == 0 && masked.getInt("effective") == 1) { "UID masking was not reported" }
+            // Some Android 15 permission services ignore package camera writes.
+            // Such writes must fail verification instead of claiming success.
+            val camera = (0 until ops.length()).map { ops.getJSONObject(it) }.first { it.getString("name") == "android:camera" }
+            val cameraWrite = runCatching { client.request("set", user, fixturePackage) { it.put("op", "android:camera").put("mode", 1) } }
+            if (cameraWrite.isSuccess) {
+                client.request("set", user, fixturePackage) { it.put("op", "android:camera").put("mode", camera.getInt("mode")) }
+            } else {
+                check(cameraWrite.exceptionOrNull()?.message?.contains("did not retain") == true) { "Unexpected camera write error: ${cameraWrite.exceptionOrNull()}" }
+            }
         } finally {
-            shell("cmd appops set --uid --user $user $fixturePackage CAMERA default")
-            client.request("set", user, fixturePackage) { it.put("op", "android:camera").put("mode", original) }
+            shell("cmd appops set --uid --user $user $fixturePackage READ_CLIPBOARD default")
+            client.request("set", user, fixturePackage) { it.put("op", name).put("mode", original) }
         }
     }
 
     private fun checkAppOpsUserIsolation() {
+        controlService()
         val client = org.androidcontrol.app.appops.AppOpsClient
         val user = android.os.Process.myUid() / 100000
+        val savedRules = client.request("rules", user) as org.json.JSONObject
         val output = shell("pm create-user AndroidControlRegression")
         val otherUser = Regex("created user id (\\d+)").find(output)?.groupValues?.get(1)?.toInt()
             ?: error("Could not create second Android user: $output")
         try {
+            shell("am start-user -w $otherUser")
+            val rules = org.json.JSONObject().put("user", otherUser).put("enabled", true)
+                .put("ops", org.json.JSONArray().put("android:read_clipboard"))
+            client.request("saveRules", otherUser) { it.put("rules", rules) }
             shell("cmd package install-existing --user $otherUser $fixturePackage")
-            client.request("set", otherUser, fixturePackage) { it.put("op", "android:camera").put("mode", 1) }
-            check(shell("cmd appops get --user $otherUser $fixturePackage CAMERA").contains("ignore"))
-            check(!shell("cmd appops get --user $user $fixturePackage CAMERA").contains("ignore")) { "Write leaked to primary user" }
-        } finally { shell("pm remove-user $otherUser") }
+            val deadline = SystemClock.uptimeMillis() + 15000
+            var installedMode = -1
+            while (SystemClock.uptimeMillis() < deadline && installedMode != 1) {
+                val ops = client.request("ops", otherUser, fixturePackage) as org.json.JSONArray
+                installedMode = (0 until ops.length()).map { ops.getJSONObject(it) }
+                    .first { it.getString("name") == "android:read_clipboard" }.getInt("mode")
+                if (installedMode != 1) SystemClock.sleep(100)
+            }
+            check(installedMode == 1) { "New-install rule did not apply in selected user" }
+            client.request("set", otherUser, fixturePackage) { it.put("op", "android:read_clipboard").put("mode", 0) }
+            client.request("set", otherUser, fixturePackage) { it.put("op", "android:read_clipboard").put("mode", 1) }
+            check(shell("cmd appops get --user $otherUser $fixturePackage READ_CLIPBOARD").contains("ignore"))
+            check(!shell("cmd appops get --user $user $fixturePackage READ_CLIPBOARD").contains("ignore")) { "Write leaked to primary user" }
+        } finally {
+            client.request("saveRules", savedRules.getInt("user")) { it.put("rules", savedRules) }
+            shell("pm remove-user $otherUser")
+        }
     }
 
     private fun savePairingIdentity() {
