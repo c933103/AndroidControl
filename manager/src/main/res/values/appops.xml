@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="appops_title">App operations</string>
+    <string name="appops_home_description">Inspect and control app operations, access history, backups, and rules for new apps.</string>
+    <string name="appops_open">Manage app operations</string>
+    <string name="appops_start_hint">Start the AndroidControl privileged service, then choose an app.</string>
+    <string name="appops_user">User</string>
+    <string name="appops_choose_app">Choose app</string>
+    <string name="appops_refresh">Refresh</string>
+    <string name="appops_filter">Filter operations or permissions</string>
+    <string name="appops_group">Permission group</string>
+    <string name="appops_all_ops">Show all operations</string>
+    <string name="appops_restrict">Restrict selected</string>
+    <string name="appops_rules">New-app rules</string>
+    <string name="appops_backup">Backup</string>
+    <string name="appops_working">Working…</string>
+    <string name="appops_error">AppOps error: %1$s</string>
+    <string name="appops_apps_loaded">%1$d apps for user %2$d</string>
+    <string name="appops_user_number">User %1$d</string>
+    <string name="appops_no_apps">No apps found. Check the privileged service and selected user.</string>
+    <string name="appops_search_apps">Search app name or package</string>
+    <string name="appops_selection">%1$s · user %2$d</string>
+    <string name="appops_all_groups">All permission groups</string>
+    <string name="appops_allow">Allow</string>
+    <string name="appops_ignore">Ignore</string>
+    <string name="appops_deny">Deny</string>
+    <string name="appops_default">Default</string>
+    <string name="appops_foreground">Foreground only</string>
+    <string name="appops_unknown">Unknown mode</string>
+    <string name="appops_uid_override">The package setting was saved, but a UID-level rule changes its effective mode. AndroidControl leaves UID rules unchanged because they can affect other apps sharing that UID. Allow also cannot grant a missing Android runtime permission.</string>
+    <string name="appops_select_ops">Tick the operations to restrict first.</string>
+    <string name="appops_restrict_confirm">Set %1$d selected operations to Ignore for %2$s? Operations sharing a switch change together. This can interrupt app features.</string>
+    <string name="appops_applied">Applied %1$d changes.</string>
+    <string name="appops_auto_new">Automatically restrict new apps</string>
+    <string name="appops_rules_help">Choose operations to set to Ignore when an app is newly installed for the selected user. Rules run only while the privileged AppOps service is running; they exclude AndroidControl and app updates. Saving replaces the previous user’s automatic rule.</string>
+    <string name="appops_rule_user">New-app rules · user %1$d</string>
+    <string name="appops_save">Save</string>
+    <string name="appops_rules_saved">Rules saved.</string>
+    <string name="appops_export">Export selected user’s package settings</string>
+    <string name="appops_import">Import AndroidControl or AppOpsX backup</string>
+    <string name="appops_import_confirm">Apply %1$d changes from %2$s to user %3$d? Import changes the listed package modes only. Operations sharing a switch change together. AndroidControl reports each failed change.</string>
+    <string name="appops_exported">Exported package settings for %1$d apps.</string>
+    <string name="appops_last_access">Last allowed access: %1$s</string>
+    <string name="appops_last_reject">Last rejected access: %1$s</string>
+    <string name="appops_effective_mode">Effective AppOps mode: %1$s</string>
+    <string name="appops_credits" translatable="false">AppOpsX · MIT · Zheng li (2016)</string>
+</resources>

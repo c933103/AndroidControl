@@ -10,12 +10,12 @@ plugins {
 }
 
 android {
-    namespace 'moe.shizuku.manager'
+    namespace 'org.androidcontrol.app'
     defaultConfig {
-        applicationId "moe.shizuku.privileged.api"
+        applicationId "org.androidcontrol.app"
         versionCode rootProject.ext.versionCode
         versionName rootProject.ext.versionName
-        testInstrumentationRunner 'moe.shizuku.manager.regression.RuntimeRegressionInstrumentation'
+        testInstrumentationRunner 'org.androidcontrol.app.regression.RuntimeRegressionInstrumentation'
         externalNativeBuild {
             cmake {
                 arguments '-DANDROID_STL=none'

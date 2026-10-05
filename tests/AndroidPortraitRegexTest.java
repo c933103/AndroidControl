@@ -1,4 +1,4 @@
-package moe.shizuku.manager.control;
+package org.androidcontrol.app.control;
 
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;

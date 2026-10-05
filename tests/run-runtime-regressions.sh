@@ -39,7 +39,7 @@ jar --create --file "$test_dir/checkout.jar" -C "$test_dir/checkout-classes" .
 "$build_tools/zipalign" -p 4 "$test_dir/checkout.apk" "$test_dir/checkout-aligned.apk"
 "$build_tools/apksigner" sign --ks "$test_dir/fixture.jks" --ks-pass pass:android "$test_dir/checkout-aligned.apk"
 
-package=moe.shizuku.privileged.api
+package=org.androidcontrol.app
 mkdir -p "$test_dir/browser-classes" "$test_dir/browser-dex"
 javac --release 8 -cp "$android_jar" -d "$test_dir/browser-classes" tests/browser-fixture/BrowserActivity.java
 jar --create --file "$test_dir/browser.jar" -C "$test_dir/browser-classes" .
@@ -48,7 +48,7 @@ jar --create --file "$test_dir/browser.jar" -C "$test_dir/browser-classes" .
 (cd "$test_dir/browser-dex" && zip -q "$test_dir/browser.apk" classes.dex)
 "$build_tools/zipalign" -p 4 "$test_dir/browser.apk" "$test_dir/browser-aligned.apk"
 "$build_tools/apksigner" sign --ks "$test_dir/fixture.jks" --ks-pass pass:android "$test_dir/browser-aligned.apk"
-runner="$package.test/moe.shizuku.manager.regression.RuntimeRegressionInstrumentation"
+runner="$package.test/org.androidcontrol.app.regression.RuntimeRegressionInstrumentation"
 run_phase() {
     timeout 90s adb shell am instrument -w -e phase "$1" "$runner" | tee "runtime-results/$1.txt"
     if ! grep -q "regression=PASS $1" "runtime-results/$1.txt"; then
@@ -68,6 +68,14 @@ run_phase() {
 result=0
 
 adb install "$RUNNER_TEMP/baseline.apk"
+baseline_package=$("$build_tools/aapt2" dump badging "$RUNNER_TEMP/baseline.apk" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")
+if [[ "$baseline_package" != "$package" ]]; then
+    # A package rename must retain the old installation and its private data.
+    adb shell run-as "$baseline_package" sh -c 'mkdir -p files'
+    adb shell run-as "$baseline_package" sh -c 'echo retained > files/rebrand-regression-marker'
+    adb install manager/build/outputs/apk/debug/*.apk
+    adb shell run-as "$baseline_package" cat files/rebrand-regression-marker | grep -q retained
+fi
 adb install manager/build/outputs/apk/androidTest/debug/*.apk
 run_phase seed || result=1
 run_phase reopen || result=1
@@ -99,6 +107,8 @@ adb shell run-as org.androidcontrol.regression.target cat files/touches | tee ru
 grep -q touch runtime-results/touches.txt || result=1
 run_phase select-target || result=1
 run_phase separate-controls || result=1
+run_phase appops || result=1
+run_phase appops-user || result=1
 run_phase web-links || result=1
 run_phase external-dialog || result=1
 run_phase interrupted-handoff || result=1
@@ -121,7 +131,7 @@ for attempt in {1..30}; do
 done
 test "$root_uid" = 0
 # Restarting adbd can already have terminated the previous shell server.
-server_pid=$(adb shell pidof shizuku_server | tr -d '\r') || true
+server_pid=$(adb shell pidof androidcontrol_server | tr -d '\r') || true
 if [[ -n "$server_pid" ]]; then adb shell kill "$server_pid"; fi
 adb shell am force-stop "$package"
 adb shell "${apk_path%/*}/lib/x86_64/libshizuku.so --apk=$apk_path"

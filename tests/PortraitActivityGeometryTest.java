@@ -1,4 +1,4 @@
-package moe.shizuku.manager.control;
+package org.androidcontrol.app.control;
 
 public final class PortraitActivityGeometryTest {
     private static final String PKG = "org.androidcontrol.regression.target";
