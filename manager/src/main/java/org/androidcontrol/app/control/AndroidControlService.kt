@@ -69,6 +69,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     private var portraitHostTaskId = -1
     private var lastPhoneFocusState = ""
     @Volatile private var portraitSurfaceAttached = false
+    private var portraitSurfaceBoundsRefreshes = 0
     private var portraitFocusNeedsRefresh = true
     private var lastFocusBridgeAt = 0L
     private var portraitOriginalResizeMode = 0
@@ -265,6 +266,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         ownedPortraitDisplay = display
         portraitHostTaskId = hostTaskId
         portraitSurfaceAttached = true
+        portraitSurfaceBoundsRefreshes = 0
         handedOffToken = null
         handedOffDisplayId = -1
         try {
@@ -284,6 +286,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             val valid = surface?.takeIf { it.isValid }
             ownedPortraitDisplay?.surface = valid
             portraitSurfaceAttached = valid != null
+            portraitSurfaceBoundsRefreshes = if (valid != null) 4 else 0
             portraitFocusNeedsRefresh = true
             if (valid != null) restoreSessionFocus()
         }
@@ -409,6 +412,29 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         val organizerClass = Class.forName("android.window.WindowOrganizer")
         organizerClass.getMethod("applyTransaction", transactionClass)
             .invoke(organizerClass.getConstructor().newInstance(), transaction)
+    }
+
+    private fun refreshTargetSurfaceBounds(task: ActivityManager.RunningTaskInfo, displayId: Int) {
+        val (width, height) = getLogicalDisplaySize(displayId) ?: return
+        val bounds = Rect(0, 0, width, height)
+        // A Shell-organized freeform task can retain its launch surface offset
+        // after waking, even when getTaskBounds already reports the full display.
+        // Reset the surface's position/crop with its next draw, without changing
+        // the activity configuration or restarting the app.
+        val atm = getActivityTaskManagerService()
+        if (invokeActivityTaskManager(atm, "getTaskBounds", task.taskId) != bounds) return
+        HiddenApiBypass.addHiddenApiExemptions("Landroid/window/", "Landroid/app/TaskInfo;")
+        val tokenClass = Class.forName("android.window.WindowContainerToken")
+        val transactionClass = Class.forName("android.window.WindowContainerTransaction")
+        val transaction = transactionClass.getConstructor().newInstance()
+        transactionClass.getMethod("setBoundsChangeSurfaceBounds", tokenClass, Rect::class.java)
+            .invoke(transaction, task.javaClass.getField("token").get(task), bounds)
+        val organizerClass = Class.forName("android.window.WindowOrganizer")
+        organizerClass.getMethod("applyTransaction", transactionClass)
+            .invoke(organizerClass.getConstructor().newInstance(), transaction)
+        if (org.androidcontrol.app.BuildConfig.DEBUG) {
+            android.util.Log.d("AndroidControlService", "Portrait surface aligned: task=${task.taskId}; display=$displayId; bounds=$bounds")
+        }
     }
 
     private fun restoreSessionFocus() {
@@ -716,6 +742,17 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                                 topActivity.className == PortraitFocusActivity::class.java.name &&
                                 SystemClock.uptimeMillis() - lastFocusBridgeAt < 2000) return@synchronized
                             val external = topActivity?.packageName?.let { it != targetPackage } == true
+                            if (portraitSurfaceBoundsRefreshes > 0 && portraitSurfaceAttached &&
+                                !portraitBrowserVisible && !handoffFile.baseFile.exists() &&
+                                isPhoneUnlocked() && topActivity?.packageName == targetPackage) {
+                                val target = tasks.firstOrNull { getRunningTaskDisplayId(it) == displayId &&
+                                    it.baseActivity?.packageName == targetPackage && it.topActivity == topActivity }
+                                if (target != null) {
+                                    portraitSurfaceBoundsRefreshes--
+                                    runCatching { refreshTargetSurfaceBounds(target, displayId) }
+                                        .onFailure { android.util.Log.w("AndroidControlService", "Portrait surface bounds refresh failed", it) }
+                                }
+                            }
                             // Billing/identity/permission screens may be secure or sized for
                             // the native display. Preserve their live result chain there.
                             val webHandled = !handoffFile.baseFile.exists() && isPhoneUnlocked() && try {
