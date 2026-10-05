@@ -38,7 +38,7 @@
 }
 
 # Entrance of shell
--keep class moe.shizuku.manager.shell.Shell {
+-keep class org.androidcontrol.app.shell.Shell {
     public static void main(java.lang.String[], java.lang.String, android.os.IBinder, android.os.Handler);
 }
 
@@ -46,7 +46,7 @@
     public static *** d(...);
 }
 
--assumenosideeffects class moe.shizuku.manager.utils.Logger {
+-assumenosideeffects class org.androidcontrol.app.utils.Logger {
     public *** d(...);
 }
 

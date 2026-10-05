@@ -10,12 +10,12 @@ plugins {
 }
 
 android {
-    namespace 'moe.shizuku.manager'
+    namespace 'org.androidcontrol.app'
     defaultConfig {
-        applicationId "moe.shizuku.privileged.api"
+        applicationId "org.androidcontrol.app"
         versionCode rootProject.ext.versionCode
         versionName rootProject.ext.versionName
-        testInstrumentationRunner 'moe.shizuku.manager.regression.RuntimeRegressionInstrumentation'
+        testInstrumentationRunner 'org.androidcontrol.app.regression.RuntimeRegressionInstrumentation'
         externalNativeBuild {
             cmake {
                 arguments '-DANDROID_STL=none'
@@ -145,6 +145,8 @@ configurations.configureEach {
 }
 
 dependencies {
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20250107'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2'
 

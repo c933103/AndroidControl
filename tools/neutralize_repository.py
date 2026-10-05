@@ -106,7 +106,7 @@ def main():
             raise RuntimeError('Master changed; refusing to rewrite a different revision')
         if git('rev-parse', 'master^', cwd=repo).decode().strip() != args.expected_parent:
             raise RuntimeError('One-time parent guard no longer matches; refusing to repeat rewrite')
-        target = git('show', 'master:manager/src/main/java/moe/shizuku/manager/control/PortraitTarget.kt', cwd=repo)
+        target = git('show', 'master:manager/src/main/java/org/androidcontrol/app/control/PortraitTarget.kt', cwd=repo)
         package = re.search(rb'const val DEFAULT_PACKAGE = "([^"]+)"', target).group(1)
         transform, search = make_transform(package)
         affected = set(git('log', '--all', '--format=%H', '-i', '-G', search.decode(), cwd=repo).splitlines())

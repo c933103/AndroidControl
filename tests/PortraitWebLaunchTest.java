@@ -1,4 +1,4 @@
-package moe.shizuku.manager.control;
+package org.androidcontrol.app.control;
 
 public class PortraitWebLaunchTest {
     private static String record(String caller, int task, String action, String url) {

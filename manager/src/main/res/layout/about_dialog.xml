@@ -48,6 +48,12 @@
             android:text="@string/about_upstream"
             android:textColor="?android:textColorSecondary"
             android:textSize="12sp" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/appops_credits"
+            android:textColor="?android:textColorSecondary"
+            android:textSize="12sp" />
 
     </LinearLayout>
 

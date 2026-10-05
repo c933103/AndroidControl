@@ -54,7 +54,7 @@ public class ShizukuShellLoader {
         data.putBinder("binder", receiverBinder);
 
         Intent intent = new Intent("rikka.shizuku.intent.action.REQUEST_BINDER")
-                .setPackage("moe.shizuku.privileged.api")
+                .setPackage("org.androidcontrol.app")
                 .addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
                 .putExtra("data", data);
 
@@ -106,7 +106,7 @@ public class ShizukuShellLoader {
 
         try {
             var classLoader = new BaseDexClassLoader(sourceDir, null, librarySearchPath, ClassLoader.getSystemClassLoader());
-            Class<?> cls = classLoader.loadClass("moe.shizuku.manager.shell.Shell");
+            Class<?> cls = classLoader.loadClass("org.androidcontrol.app.shell.Shell");
             cls.getDeclaredMethod("main", String[].class, String.class, IBinder.class, Handler.class)
                     .invoke(null, args, callingPackage, binder, handler);
         } catch (ClassNotFoundException tr) {

@@ -1,85 +1,60 @@
-# Shizuku
+# AndroidControl
 
-## Background
+AndroidControl is an Android toolbox for app operations, portrait display sessions, system rotation, privileged file access, and shell access. Its privileged backend is derived from [Shizuku](https://github.com/RikkaApps/Shizuku); the integrated operation controls bring [AppOpsX](https://github.com/8enet/AppOpsX) functionality into the same app.
 
-When developing apps that requires root, the most common method is to run some commands in the su shell. For example, there is an app that uses the `pm enable/disable` command to enable/disable components.
+**App name:** AndroidControl · **Package:** `org.androidcontrol.app` · **Minimum Android:** 7.0 (API 24).
 
-This method has very big disadvantages:
+Download AndroidControl from this repository’s [Releases](https://github.com/c933103/AndroidControl/releases) or successful [Actions builds](https://github.com/c933103/AndroidControl/actions). Upstream Shizuku downloads are a different application.
 
-1. **Extremely slow** (Multiple process creation)
-2. Needs to process texts (**Super unreliable**)
-3. The possibility is limited to available commands
-4. Even if ADB has sufficient permissions, the app requires root privileges to run
+## Features
 
-Shizuku uses a completely different way. See detailed description below.
+- **App operations:** search installed apps, choose an Android user, group/filter by permission and find apps by operation, inspect access and rejection timestamps, and set package modes to Allow, Ignore, Deny, Default, or Foreground only (Android 10+). Each write is read back from Android.
+- **Backups:** export a user’s package modes with stable operation names; import AndroidControl JSON or AppOpsX v1 `.bak` files with a target-user preview and per-operation failure reporting.
+- **New-app rules:** optionally apply selected Ignore rules to newly installed apps for a chosen user. Rules exclude updates and AndroidControl itself and run while the privileged AppOps daemon is alive.
+- **Portrait sessions:** edit the target package, open it on a portrait-shaped display, forward touches and web links, and hand off to the normal phone display for external checkout screens.
+- **System rotation:** control and restore system portrait behavior separately from target-specific sessions.
+- **Privileged tools:** retain the manager, server, starter, shell, file provider, and Shizuku API for future extensions.
 
-## User guide & Download
+AppOps do not grant missing runtime permissions. Operations can share a switch and change together. AndroidControl changes **package modes only** and displays effective AppOps modes; UID-wide rules affecting several apps are preserved. See [AppOps behavior and formats](docs/appops.md).
 
-<https://shizuku.rikka.app/>
+## Start and use
 
-## How does Shizuku work?
+1. Install an AndroidControl APK from this repository.
+2. Start its privileged server from the home screen. On Android 11+, wireless-debugging pairing can start it without a computer. Root and wired ADB startup options are also available.
+3. Open **Manage app operations**, choose a user/app, and tap an operation’s mode or tick operations for a batch restriction. **Default** returns a package operation to Android’s default handling; the menu can reset all recorded package operations.
+4. Use the separate portrait/session and system-rotation controls as needed. The saved portrait target does not limit AppOps app selection.
 
-First, we need to talk about how app use system APIs. For example, if the app wants to get installed apps, we all know we should use `PackageManager#getInstalledPackages()`. This is actually an interprocess communication (IPC) process of the app process and system server process, just the Android framework did the inner works for us.
+An ADB-started server needs restarting after reboot. Automatic new-app rules resume when AndroidControl reconnects its daemon; installs while it was stopped are not retroactively covered. Device/OS privileges can limit supported controls.
 
-Android uses `binder` to do this type of IPC. `Binder` allows the server-side to learn the uid and pid of the client-side, so that the system server can check if the app has the permission to do the operation.
+## Package transition
 
-Usually, if there is a "manager" (e.g., `PackageManager`) for apps to use, there should be a "service" (e.g., `PackageManagerService`) in the system server process. We can simply think if the app holds the `binder` of the "service", it can communicate with the "service". The app process will receive binders of system services on start.
+The previous fork used upstream Shizuku’s application ID. `org.androidcontrol.app` installs **alongside** that previous app and official Shizuku. Android keeps their settings and Keystore identities separate, so pair wireless debugging again in the new app. The old app’s data is retained; this is not an automatic settings or key migration.
 
-Shizuku guides users to run a process, Shizuku server, with root or ADB first. When the app starts, the `binder` to Shizuku server will also be sent to the app.
+AndroidControl has its own declared private permissions, native starter lookup, server process, and authorization file. Internal upstream Binder keys/namespaces remain where required by the backend. External clients must target AndroidControl’s identity/permissions to discover this fork; the rename does not redirect clients compiled for official Shizuku.
 
-The most important feature Shizuku provides is something like be a middle man to receive requests from the app, sent them to the system server, and send back the results. You can see the `transactRemote` method in `rikka.shizuku.server.ShizukuService` class, and `moe.shizuku.api.ShizukuBinderWrapper` class for the detail.
+## Build and verify
 
-So, we reached our goal, to use system APIs with higher permission. And to the app, it is almost identical to the use of system APIs directly.
+Use JDK 21, Android SDK platform/build tools 36, NDK `29.0.13113456`, and CMake 3.31.x. The Gradle wrapper is included.
 
-## Developer guide
+```sh
+git clone --recurse-submodules https://github.com/c933103/AndroidControl.git
+cd AndroidControl
+./gradlew :manager:assembleDebug :manager:assembleDebugAndroidTest
+bash tests/run-portrait-checks.sh
+```
 
-### API & sample
+The APK is under `manager/build/outputs/apk/debug/`. Set `ANDROID_HOME` or `sdk.dir` in `local.properties`. Signing material stays outside Git; updates to the new package require the same signing certificate.
 
-https://github.com/RikkaApps/Shizuku-API
+[Android CI](.github/workflows/android-ci.yml) builds the app and exercises Android 13/15 package separation, pairing persistence within the new package, portrait lifecycle, AppOps read/write, backup validation, and user isolation.
 
-### Migrating from pre-v11
+## Layout and licenses
 
-> Existing applications still works, of course.
+| Location | Purpose |
+| --- | --- |
+| `manager/` | UI, portrait controls, file provider, AppOps client/daemon |
+| `server/`, `starter/`, `shell/`, `common/` | Privileged backend and bootstrap |
+| `api/` | Pinned upstream Shizuku API submodule |
+| `tests/` | Host and Android runtime regressions |
+| `docs/` | Behavior and format documentation |
 
-https://github.com/RikkaApps/Shizuku-API#migration-guide-for-existing-applications-use-shizuku-pre-v11
-
-### Attention
-
-1. ADB permissions are limited
-
-   ADB has limited permissions and different on various system versions. You can see permissions granted to ADB [here](https://github.com/aosp-mirror/platform_frameworks_base/blob/master/packages/Shell/AndroidManifest.xml).
-
-   Before calling the API, you can use `ShizukuService#getUid` to check if Shizuku is running user ADB, or use `ShizukuService#checkPermission` to check if the server has sufficient permissions.
-
-2. Hidden API limitation from Android 9
-
-   As of Android 9, the usage of the hidden APIs is limited for normal apps. Please use other methods (such as <https://github.com/LSPosed/AndroidHiddenApiBypass>).
-
-3. Android 8.0 & ADB
-
-   At present, the way Shizuku service gets the app process is to combine `IActivityManager#registerProcessObserver` and `IActivityManager#registerUidObserver` (26+) to ensure that the app process will be sent when the app starts. However, on API 26, ADB lacks permissions to use `registerUidObserver`, so if you need to use Shizuku in a process that might not be started by an Activity, it is recommended to trigger the send binder by starting a transparent activity.
-
-4. Direct use of `transactRemote` requires attention
-
-   * The API may be different under different Android versions, please be sure to check it carefully. Also, the `android.app.IActivityManager` has the aidl form in API 26 and later, and `android.app.IActivityManager$Stub` exists only on API 26.
-
-   * `SystemServiceHelper.getTransactionCode` may not get the correct transaction code, such as `android.content.pm.IPackageManager$Stub.TRANSACTION_getInstalledPackages` does not exist on API 25 and there is `android.content.pm.IPackageManager$Stub.TRANSACTION_getInstalledPackages_47` (this situation has been dealt with, but it is not excluded that there may be other circumstances). This problem is not encountered with the `ShizukuBinderWrapper` method.
-
-## Developing Shizuku itself
-
-### Build
-
-- Clone with `git clone --recurse-submodules`
-- Run gradle task `:manager:assembleDebug` or `:manager:assembleRelease`
-
-The `:manager:assembleDebug` task generates a debuggable server. You can attach a debugger to `shizuku_server` to debug the server. Be aware that, in Android Studio, "Run/Debug configurations" - "Always install with package manager" should be checked, so that the server will use the latest code.
-
-## License
-
-All code files in this project are licensed under Apache 2.0
-
-Under Apache 2.0 section 6, specifically:
-
-* You are **FORBIDDEN** to use `manager/src/main/res/mipmap*/ic_launcher*.png` image files, unless for displaying Shizuku itself.
-
-* You are **FORBIDDEN** to use `Shizuku` as app name or use `moe.shizuku.privileged.api` as application id or declare `moe.shizuku.manager.permission.*` permission.
+The inherited Shizuku implementation is [Apache-2.0](LICENSE). AppOpsX backup compatibility is adapted under [MIT](licenses/AppOpsX-MIT.txt); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). AndroidControl uses its own identity and launcher artwork and is an independently branded fork.

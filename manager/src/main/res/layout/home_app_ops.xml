@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    style="?homeCardStyle"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+    <TextView style="@style/CardTitle" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/appops_title" />
+    <TextView style="@style/CardContent" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="@string/appops_home_description" />
+    <com.google.android.material.button.MaterialButton android:id="@+id/open_app_ops" style="@style/CardButton" android:text="@string/appops_open" />
+</LinearLayout>

@@ -1,4 +1,4 @@
-package moe.shizuku.manager.control;
+package org.androidcontrol.app.control;
 
 import java.io.File;
 import java.io.IOException;
