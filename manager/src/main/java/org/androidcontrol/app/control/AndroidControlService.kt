@@ -79,8 +79,9 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     private var portraitPendingLink: String? = null
     private var portraitInitialTaskIds = emptySet<Int>()
     private var closingBrowser: BrowserClose? = null
+    private enum class BrowserDismissal { REMOVE_TASK, BACK, WAIT }
     private data class BrowserClose(val taskId: Int, val component: android.content.ComponentName,
-        val launch: PortraitWebLaunch, val deadline: Long, val backPending: Boolean)
+        val launch: PortraitWebLaunch, val deadline: Long, val dismissal: BrowserDismissal)
 
     private enum class WmApi {
         MODERN,
@@ -763,13 +764,24 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                 portraitBrowserVisible = true
                 return true
             }
-            if (closing.backPending && isActivityInputFocused(displayId, closing.component)) {
-                // Task metadata changes before the new activity has a window.
-                // Sending Back earlier can finish the game underneath it.
+            if (closing.dismissal != BrowserDismissal.WAIT && isActivityInputFocused(displayId, closing.component)) {
+                // Task metadata precedes the actual window. Early Back can finish
+                // the game; removing a cold task can kill an unattached browser
+                // and leave a stale process record blocking the next link launch.
                 val now = SystemClock.uptimeMillis()
-                injectEvent(displayId, KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, 0))
-                injectEvent(displayId, KeyEvent(now, now + 1, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK, 0))
-                closingBrowser = closing.copy(backPending = false, deadline = now + 2500)
+                when (closing.dismissal) {
+                    BrowserDismissal.REMOVE_TASK -> if (invokeActivityTaskManager(
+                        getActivityTaskManagerService(), "removeTask", closing.taskId) != true) {
+                        closingBrowser = null
+                        return false
+                    }
+                    BrowserDismissal.BACK -> {
+                        injectEvent(displayId, KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, 0))
+                        injectEvent(displayId, KeyEvent(now, now + 1, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK, 0))
+                    }
+                    BrowserDismissal.WAIT -> Unit
+                }
+                closingBrowser = closing.copy(dismissal = BrowserDismissal.WAIT, deadline = now + 2500)
                 return true
             }
             if (SystemClock.uptimeMillis() < closing.deadline) return true
@@ -790,15 +802,15 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             }) return false
         val launch = PortraitWebLaunch.find(runCommand("/system/bin/dumpsys", "activity", "activities"),
             task.taskId, top.flattenToShortString(), targetPackage) ?: return false
-        val atm = getActivityTaskManagerService()
-        if (task.taskId !in portraitInitialTaskIds && task.numActivities == 1 &&
+        val dismissal = if (task.taskId !in portraitInitialTaskIds && task.numActivities == 1 &&
             task.baseActivity?.packageName == top.packageName) {
             // This browser task was created during this session. Do not remove
             // pre-existing browser tasks, tabs, or a task containing the game.
-            if (invokeActivityTaskManager(atm, "removeTask", task.taskId) != true) return false
-        } else if (task.baseActivity?.packageName != targetPackage) return false
+            BrowserDismissal.REMOVE_TASK
+        } else if (task.baseActivity?.packageName == targetPackage) BrowserDismissal.BACK
+        else return false
         closingBrowser = BrowserClose(task.taskId, top, launch, SystemClock.uptimeMillis() + 5000,
-            task.baseActivity?.packageName == targetPackage)
+            dismissal)
         return true
     }
 
