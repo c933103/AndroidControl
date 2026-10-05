@@ -1,10 +1,7 @@
 package org.androidcontrol.app.appops
 
 import android.app.AppOpsManager
-import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.os.Binder
@@ -18,49 +15,26 @@ import org.json.JSONObject
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 import rikka.hidden.compat.PackageManagerApis
 import rikka.hidden.compat.UserManagerApis
-import rikka.hidden.compat.ActivityManagerApis
 import java.io.File
 import java.lang.reflect.InvocationTargetException
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 
 /** A separate UserService preserves root privilege; the portrait daemon drops to shell. */
 @Keep
 class AppOpsService @Keep constructor(serviceContext: Context) : IAppOpsControlService.Stub() {
     private val context = serviceContext.createPackageContext("com.android.shell", Context.CONTEXT_IGNORE_SECURITY)
     private val lock = Any()
-    private val worker = Executors.newSingleThreadExecutor()
+    private val worker = Executors.newSingleThreadScheduledExecutor()
     private val appOps: AppOpsManager
     private val rulesFile = AtomicFile(File("/data/local/tmp/androidcontrol-appops-rules.json"))
     private var rules = JSONObject().put("user", 0).put("enabled", false).put("ops", JSONArray())
     private data class Op(val code: Int, val name: String, val permission: String?, val group: String,
         val switch: Int, val defaultMode: Int)
     private val catalog: List<Op>
-
-
-    private val installReceiver by lazy {
-        object : BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: Intent) {
-                if (intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) return
-                val pkg = intent.data?.schemeSpecificPart ?: return
-                val uid = intent.getIntExtra(Intent.EXTRA_UID, -1)
-                if (uid < 0 || pkg == BuildConfig.APPLICATION_ID) return
-                worker.execute {
-                    synchronized(lock) {
-                        if (rules.getBoolean("enabled") && uid / 100000 == rules.getInt("user")) {
-                            runCatching { restrict(rules.getInt("user"), pkg, rules.getJSONArray("ops")) }
-                                .onSuccess { result ->
-                                    rules.put("lastResult", result.put("package", pkg).put("time", System.currentTimeMillis()))
-                                    if (result.getJSONArray("failures").length() > 0) {
-                                        android.util.Log.e("AndroidControlAppOps", "New-app rule partly failed for $pkg: $result")
-                                    }
-                                }
-                                .onFailure { android.util.Log.e("AndroidControlAppOps", "New-app rule failed for $pkg", it) }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    private var installMonitor: ScheduledFuture<*>? = null
+    private var knownInstalls = emptyMap<String, Long>()
 
     init {
         HiddenApiBypass.addHiddenApiExemptions("")
@@ -86,18 +60,17 @@ class AppOpsService @Keep constructor(serviceContext: Context) : IAppOpsControlS
             rules.put("error", "Saved automatic rules disabled: ${t.message}")
             android.util.Log.e("AndroidControlAppOps", "Invalid saved rule; automatic restrictions disabled", t)
         }
-        val filter = IntentFilter(Intent.ACTION_PACKAGE_ADDED).apply { addDataScheme("package") }
-        // Listen across profiles; the rule still checks the broadcast's full UID.
-        // UserServices have no ActivityManager application-process record. The
-        // compat API registers with a null application thread and supports old
-        // and new framework signatures. Its callback supplies a null Context.
-        ActivityManagerApis.registerReceiver("com.android.shell", null, null,
-            installReceiver, filter, null, -1, 0)
+        if (rules.getBoolean("enabled")) {
+            try { startInstallMonitor(installedIdentities(rules.getInt("user"))) }
+            catch (t: Throwable) {
+                rules.put("enabled", false).put("error", "Automatic rules disabled: ${failureMessage(t)}")
+                android.util.Log.e("AndroidControlAppOps", "Could not start install monitor", t)
+            }
+        }
     }
 
     override fun destroy() {
         enforceManager()
-        // Process exit releases the registered receiver's Binder.
         worker.shutdownNow()
         kotlin.system.exitProcess(0)
     }
@@ -134,7 +107,11 @@ class AppOpsService @Keep constructor(serviceContext: Context) : IAppOpsControlS
                         val proposed = input.getJSONObject("rules")
                         validateRules(proposed)
                         require(proposed.getInt("user") == user) { "Rule user does not match selection" }
+                        // Capture existing apps before enabling; never treat them
+                        // as new installs after a rule edit or daemon restart.
+                        val baseline = if (proposed.getBoolean("enabled")) installedIdentities(user) else emptyMap()
                         writeRules(proposed)
+                        startInstallMonitor(baseline)
                         JSONObject(rules.toString())
                     }
                     "restrict" -> restrict(user, input.getString("package"), input.getJSONArray("ops"))
@@ -157,6 +134,53 @@ class AppOpsService @Keep constructor(serviceContext: Context) : IAppOpsControlS
     private fun failureMessage(t: Throwable): String {
         val cause = if (t is InvocationTargetException) t.targetException else t
         return cause.message ?: cause.javaClass.simpleName
+    }
+
+    private fun installedIdentities(user: Int): Map<String, Long> {
+        // Use the throwing API: a failed read must not erase the baseline and
+        // cause a later successful scan to restrict every existing package.
+        return requireNotNull(PackageManagerApis.getInstalledPackages(0, user)) {
+            "Package enumeration unavailable for user $user"
+        }.list
+            .associate { it.packageName to it.firstInstallTime }
+    }
+
+    private fun startInstallMonitor(baseline: Map<String, Long>) {
+        installMonitor?.cancel(false)
+        installMonitor = null
+        knownInstalls = baseline
+        if (!rules.getBoolean("enabled")) return
+        // UserServices lack an ActivityManager app record, so receiver
+        // registration can silently fail. Scoped package snapshots work in
+        // both shell and root mode, including other Android users.
+        installMonitor = worker.scheduleWithFixedDelay({
+            synchronized(lock) {
+                if (rules.getBoolean("enabled")) {
+                    try {
+                        val user = rules.getInt("user")
+                        require(UserManagerApis.getUserIdsNoThrow().contains(user)) { "Rule user no longer exists" }
+                        val current = installedIdentities(user)
+                        val added = current.filter { (pkg, firstInstall) ->
+                            pkg != BuildConfig.APPLICATION_ID && knownInstalls[pkg] != firstInstall
+                        }.keys
+                        knownInstalls = current
+                        rules.remove("error")
+                        added.forEach { pkg ->
+                            val result = runCatching { restrict(user, pkg, rules.getJSONArray("ops")) }
+                                .getOrElse { error -> JSONObject().put("applied", 0).put("failures",
+                                    JSONArray().put(JSONObject().put("error", failureMessage(error)))) }
+                            rules.put("lastResult", result.put("package", pkg).put("time", System.currentTimeMillis()))
+                            if (result.getJSONArray("failures").length() > 0) {
+                                android.util.Log.e("AndroidControlAppOps", "New-app rule partly failed for $pkg: $result")
+                            }
+                        }
+                    } catch (t: Throwable) {
+                        rules.put("error", "New-app scan failed: ${failureMessage(t)}")
+                        android.util.Log.e("AndroidControlAppOps", "New-app scan failed; baseline retained", t)
+                    }
+                }
+            }
+        }, 5, 5, TimeUnit.SECONDS)
     }
 
     private fun packages(user: Int) = PackageManagerApis.getInstalledPackagesNoThrow(PackageManager.GET_PERMISSIONS.toLong(), user)

@@ -35,7 +35,7 @@
     <string name="appops_restrict_confirm">Set %1$d selected operations to Ignore for %2$s? Operations sharing a switch change together. This can interrupt app features.</string>
     <string name="appops_applied">Applied %1$d changes.</string>
     <string name="appops_auto_new">Automatically restrict new apps</string>
-    <string name="appops_rules_help">Choose operations to set to Ignore when an app is newly installed for the selected user. Rules run only while the privileged AppOps service is running; they exclude AndroidControl and app updates. Saving replaces the previous user’s automatic rule.</string>
+    <string name="appops_rules_help">Choose operations to set to Ignore for newly installed apps in the selected user. While enabled, the privileged AppOps service checks every five seconds. Existing apps, app updates and AndroidControl are excluded. Rules run only while that service is running. Saving replaces the previous user’s automatic rule.</string>
     <string name="appops_rule_user">New-app rules · user %1$d</string>
     <string name="appops_save">Save</string>
     <string name="appops_rules_saved">Rules saved.</string>

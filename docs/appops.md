@@ -22,7 +22,7 @@ The catalog and shared switches come from the running Android framework. Default
 
 Enumeration, package/UID lookup, reads, and writes are explicitly scoped to the selected user. A missing app is reported rather than redirected to another profile.
 
-Automatic rules are disabled by default. One saved rule selects operation names and a user; saving replaces the previous user’s rule. The privileged daemon listens for new installs, excludes updates and AndroidControl, and sets applicable operations to Ignore. It can run after the screen closes while the daemon remains alive. Stopped-server installs are not covered; failures are logged rather than marked successful.
+Automatic rules are disabled by default. One saved rule selects operation names and a user; saving replaces the previous user’s rule. While enabled, the privileged daemon checks that user’s installed packages every five seconds and sets applicable operations in new installs to Ignore. Existing packages form a baseline when a rule is saved or the daemon restarts. Package updates keep their original install time and are excluded, as is AndroidControl. Reinstalls with a new first-install time are eligible. No scans run while rules are disabled. The monitor can run after the screen closes while the daemon remains alive; this is not an immediate install-time barrier. Stopped-server installs and packages removed before a scan are not covered. Failed scans preserve the previous baseline and report an error; failed writes are logged and included in the last result rather than marked successful.
 
 ## Backup formats
 

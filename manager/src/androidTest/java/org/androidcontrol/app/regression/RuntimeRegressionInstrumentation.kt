@@ -172,7 +172,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
                 .put("ops", org.json.JSONArray().put("android:read_clipboard"))
             client.request("saveRules", otherUser) { it.put("rules", rules) }
             shell("cmd package install-existing --user $otherUser $fixturePackage")
-            val deadline = SystemClock.uptimeMillis() + 15000
+            val deadline = SystemClock.uptimeMillis() + 20000
             var installedMode = -1
             while (SystemClock.uptimeMillis() < deadline && installedMode != 1) {
                 val ops = client.request("ops", otherUser, fixturePackage) as org.json.JSONArray
@@ -180,14 +180,18 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
                     .first { it.getString("name") == "android:read_clipboard" }.getInt("mode")
                 if (installedMode != 1) SystemClock.sleep(100)
             }
-            check(installedMode == 1) { "New-install rule did not apply in selected user" }
+            check(installedMode == 1) { "New-install rule did not apply in selected user: ${client.request("rules", otherUser)}" }
             client.request("set", otherUser, fixturePackage) { it.put("op", "android:read_clipboard").put("mode", 0) }
+            // Existing installs and updates must retain a manual change.
+            shell("cmd package install-existing --user $otherUser $fixturePackage")
+            SystemClock.sleep(5500)
+            check(!shell("cmd appops get --user $otherUser $fixturePackage READ_CLIPBOARD").contains("ignore")) { "Existing installation was restricted again" }
             client.request("set", otherUser, fixturePackage) { it.put("op", "android:read_clipboard").put("mode", 1) }
             check(shell("cmd appops get --user $otherUser $fixturePackage READ_CLIPBOARD").contains("ignore"))
             check(!shell("cmd appops get --user $user $fixturePackage READ_CLIPBOARD").contains("ignore")) { "Write leaked to primary user" }
         } finally {
-            client.request("saveRules", savedRules.getInt("user")) { it.put("rules", savedRules) }
-            shell("pm remove-user $otherUser")
+            try { client.request("saveRules", savedRules.getInt("user")) { it.put("rules", savedRules) } }
+            finally { shell("pm remove-user $otherUser") }
         }
     }
 
@@ -362,13 +366,36 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
     ).joinToString("\n") { shell(it) }
 
     private fun awaitUserRotation(mode: String, angle: Int) {
-        val deadline = SystemClock.uptimeMillis() + 5000
+        awaitStableRotation("Test rotation baseline did not settle") {
+            shell("wm user-rotation -d 0") == mode &&
+                shell("settings get system user_rotation") == angle.toString()
+        }
+    }
+
+    private fun awaitStableRotation(message: String, ready: () -> Boolean) {
+        val deadline = SystemClock.uptimeMillis() + 10000
+        var matchingSince = 0L
         while (SystemClock.uptimeMillis() < deadline) {
-            if (shell("wm user-rotation -d 0") == mode &&
-                shell("settings get system user_rotation") == angle.toString()) return
+            val now = SystemClock.uptimeMillis()
+            if (ready()) {
+                if (matchingSince == 0L) matchingSince = now
+                if (now - matchingSince >= 500) return
+            } else matchingSince = 0L
             SystemClock.sleep(100)
         }
-        error("Test rotation baseline did not settle: ${rotationSnapshot()}")
+        error("$message: ${rotationSnapshot()}")
+    }
+
+    private fun lockTestRotation(angle: Int) {
+        shell("wm user-rotation -d 0 lock")
+        awaitStableRotation("Manual rotation baseline did not lock") {
+            val mode = shell("wm user-rotation -d 0")
+            Regex("lock [0-3]").matches(mode) &&
+                shell("settings get system accelerometer_rotation") == "0" &&
+                shell("settings get system user_rotation") == mode.last().toString()
+        }
+        shell("wm user-rotation -d 0 lock $angle")
+        awaitUserRotation("lock $angle", angle)
     }
 
     private fun checkSeparateControls() {
@@ -380,10 +407,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         shell("wm set-ignore-orientation-request -d 0 false")
         // Establish the locked mode before changing its angle. Android writes
         // accelerometer mode and user angle separately, with asynchronous observers.
-        shell("wm user-rotation -d 0 lock")
-        awaitState("Manual rotation baseline did not lock") { shell("wm user-rotation -d 0").startsWith("lock ") }
-        shell("wm user-rotation -d 0 lock 1")
-        awaitUserRotation("lock 1", 1)
+        lockTestRotation(1)
         val previous = rotationSnapshot()
         check(service.setForcePortrait(true))
         val forced = rotationSnapshot()
@@ -428,10 +452,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         check(rotationSnapshot() == automatic) { "Automatic rotation was not restored; expected=$automatic; actual=${rotationSnapshot()}" }
         checkpoint("automatic rotation restored")
         // Upgrade from a pre-journal version must still offer an explicit way out.
-        shell("wm user-rotation -d 0 lock")
-        awaitState("Pre-journal rotation baseline did not lock") { shell("wm user-rotation -d 0").startsWith("lock ") }
-        shell("wm user-rotation -d 0 lock 0")
-        awaitUserRotation("lock 0", 0)
+        lockTestRotation(0)
         shell("wm fixed-to-user-rotation -d 0 enabled")
         shell("wm set-ignore-orientation-request -d 0 true")
         val forcedDeadline = SystemClock.uptimeMillis() + 5000
