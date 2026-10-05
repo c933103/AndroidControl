@@ -70,6 +70,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
                 "separate-controls" -> checkSeparateControls()
                 "appops" -> checkAppOps()
                 "appops-user" -> checkAppOpsUserIsolation()
+                "appops-caller" -> checkAppOpsCallerIsolation()
                 "external-dialog" -> checkExternalDialog()
                 "web-links" -> checkWebLinks()
                 "interrupted-handoff" -> checkInterruptedHandoff()
@@ -189,10 +190,78 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
             client.request("set", otherUser, fixturePackage) { it.put("op", "android:read_clipboard").put("mode", 1) }
             check(shell("cmd appops get --user $otherUser $fixturePackage READ_CLIPBOARD").contains("ignore"))
             check(!shell("cmd appops get --user $user $fixturePackage READ_CLIPBOARD").contains("ignore")) { "Write leaked to primary user" }
+            shell("cmd package install-existing --user $otherUser ${BuildConfig.APPLICATION_ID}")
+            shell("cmd package install-existing --user $otherUser ${BuildConfig.APPLICATION_ID}.test")
+            val callerResult = shell("am instrument --user $otherUser -w -e phase appops-caller " +
+                "-e forbiddenUser $user ${BuildConfig.APPLICATION_ID}.test/" +
+                "org.androidcontrol.app.regression.RuntimeRegressionInstrumentation")
+            check(callerResult.contains("regression=PASS appops-caller")) { "Secondary caller regression failed: $callerResult" }
+            val retained = client.request("rules", otherUser) as org.json.JSONObject
+            check(retained.getBoolean("enabled") && retained.getInt("user") == otherUser) {
+                "Secondary manager replaced the administrator's automatic rules"
+            }
+            check(!shell("cmd appops get --user $user $fixturePackage READ_CLIPBOARD").contains("ignore")) {
+                "Secondary manager changed primary-user AppOps"
+            }
         } finally {
             try { client.request("saveRules", savedRules.getInt("user")) { it.put("rules", savedRules) } }
             finally { shell("pm remove-user $otherUser") }
         }
+    }
+
+    private fun checkAppOpsCallerIsolation() {
+        val user = android.os.Process.myUid() / 100000
+        val forbidden = args.getString("forbiddenUser")!!.toInt()
+        check(user != forbidden) { "Caller test did not run as a secondary user" }
+        val deadline = SystemClock.uptimeMillis() + 15000
+        while (!Shizuku.pingBinder() && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(100)
+        check(Shizuku.pingBinder()) { "Secondary manager did not receive the server binder" }
+        val client = org.androidcontrol.app.appops.AppOpsClient
+        val users = client.request("users", user) as org.json.JSONArray
+        check(users.length() == 1 && users.getJSONObject(0).getInt("id") == user) {
+            "Non-administrator could enumerate other users"
+        }
+        val implicit = org.json.JSONObject(client.connect().execute(org.json.JSONObject().put("action", "apps").toString()))
+        check(implicit.getBoolean("ok")) { "Default user request failed: $implicit" }
+        val apps = implicit.getJSONArray("data")
+        check(apps.length() > 0 && (0 until apps.length()).all { apps.getJSONObject(it).getInt("uid") / 100000 == user }) {
+            "Default request used the privileged process's user"
+        }
+        for (action in listOf("apps", "ops", "appsForOp", "set", "snapshot", "reset", "restrict", "saveRules")) {
+            val failure = runCatching { client.request(action, forbidden, fixturePackage) {
+                it.put("op", "android:read_clipboard").put("mode", 1).put("ops", org.json.JSONArray())
+            } }.exceptionOrNull()
+            check(failure?.message?.contains("administrator") == true) { "Cross-user $action was not denied: $failure" }
+        }
+        val saved = client.request("rules", user) as org.json.JSONObject
+        check(saved.getInt("user") == user && !saved.getBoolean("enabled")) { "Administrator's rules leaked into this profile" }
+        client.request("saveRules", user) { it.put("rules", saved) }
+        check(runCatching { client.request("saveRules", user) {
+            it.put("rules", org.json.JSONObject().put("user", forbidden).put("enabled", false).put("ops", org.json.JSONArray()))
+        } }.exceptionOrNull()?.message?.contains("administrator") == true) { "Nested rule user bypassed caller scope" }
+        client.request("set", user, fixturePackage) { it.put("op", "android:read_clipboard").put("mode", 0) }
+        client.request("set", user, fixturePackage) { it.put("op", "android:read_clipboard").put("mode", 1) }
+
+        // Request the administrator's known service tag explicitly. A tag is not
+        // authority: even a borrowed Binder must reject this profile's UID.
+        var privileged: org.androidcontrol.app.appops.IAppOpsControlService? = null
+        val ready = CountDownLatch(1)
+        val connection = object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+                privileged = org.androidcontrol.app.appops.IAppOpsControlService.Stub.asInterface(binder)
+                ready.countDown()
+            }
+            override fun onServiceDisconnected(name: ComponentName) {}
+        }
+        runOnMainSync {
+            Shizuku.bindUserService(Shizuku.UserServiceArgs(ComponentName(BuildConfig.APPLICATION_ID,
+                org.androidcontrol.app.appops.AppOpsService::class.java.name))
+                .tag(if (forbidden == 0) org.androidcontrol.app.appops.AppOpsService::class.java.name else "appops-user-$forbidden")
+                .daemon(true).version(BuildConfig.VERSION_CODE), connection)
+        }
+        check(ready.await(15, TimeUnit.SECONDS) && privileged != null) { "Could not obtain administrator service for caller test" }
+        val denied = runCatching { privileged!!.execute(org.json.JSONObject().put("action", "apps").put("user", forbidden).toString()) }
+        check(denied.exceptionOrNull() is SecurityException) { "Borrowed service accepted secondary manager: $denied" }
     }
 
     private fun savePairingIdentity() {

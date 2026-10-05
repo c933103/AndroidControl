@@ -24,12 +24,15 @@ import java.util.concurrent.TimeUnit
 /** A separate UserService preserves root privilege; the portrait daemon drops to shell. */
 @Keep
 class AppOpsService @Keep constructor(serviceContext: Context) : IAppOpsControlService.Stub() {
+    private val managerUid = serviceContext.applicationInfo.uid
+    private val managerUser = managerUid / 100000
     private val context = serviceContext.createPackageContext("com.android.shell", Context.CONTEXT_IGNORE_SECURITY)
     private val lock = Any()
     private val worker = Executors.newSingleThreadScheduledExecutor()
     private val appOps: AppOpsManager
-    private val rulesFile = AtomicFile(File("/data/local/tmp/androidcontrol-appops-rules.json"))
-    private var rules = JSONObject().put("user", 0).put("enabled", false).put("ops", JSONArray())
+    private val rulesFile = AtomicFile(File("/data/local/tmp/androidcontrol-appops-rules" +
+        (if (managerUser == 0) "" else "-$managerUser") + ".json"))
+    private var rules = JSONObject().put("user", managerUser).put("enabled", false).put("ops", JSONArray())
     private data class Op(val code: Int, val name: String, val permission: String?, val group: String,
         val switch: Int, val defaultMode: Int)
     private val catalog: List<Op>
@@ -81,11 +84,13 @@ class AppOpsService @Keep constructor(serviceContext: Context) : IAppOpsControlS
             try {
                 require(request.length <= 262144) { "Request is too large" }
                 val input = JSONObject(request)
-                val user = input.optInt("user", Process.myUid() / 100000)
+                val user = input.optInt("user", managerUser)
                 require(UserManagerApis.getUserIdsNoThrow().contains(user)) { "Unknown Android user" }
+                enforceUser(user)
                 val data: Any = when (input.getString("action")) {
                     "users" -> JSONArray().apply {
-                        UserManagerApis.getUserIdsNoThrow().forEach { put(JSONObject().put("id", it)) }
+                        val ids = if (isAdministrator()) UserManagerApis.getUserIdsNoThrow().toList() else listOf(managerUser)
+                        ids.forEach { put(JSONObject().put("id", it)) }
                     }
                     "apps" -> JSONArray().apply {
                         packages(user).forEach { pi ->
@@ -128,8 +133,21 @@ class AppOpsService @Keep constructor(serviceContext: Context) : IAppOpsControlS
     private fun enforceManager() {
         val uid = Binder.getCallingUid()
         if (uid == Process.myUid()) return
-        val info = PackageManagerApis.getApplicationInfoNoThrow(BuildConfig.APPLICATION_ID, 0, uid / 100000)
-        if (info == null || info.uid != uid) throw SecurityException("Only AndroidControl may use this service")
+        val info = PackageManagerApis.getApplicationInfoNoThrow(BuildConfig.APPLICATION_ID, 0, managerUser)
+        if (uid != managerUid || info == null || info.uid != uid) {
+            throw SecurityException("Only AndroidControl in this service's profile may use it")
+        }
+    }
+    private fun isAdministrator(): Boolean = runCatching {
+        val info = UserManagerApis.getUsers(true, true, true).firstOrNull { it.id == managerUser }
+            ?: return@runCatching false
+        info.javaClass.getMethod("isAdmin").invoke(info) == true
+    }.getOrDefault(false)
+
+    private fun enforceUser(user: Int) {
+        if (user != managerUser && !isAdministrator()) {
+            throw SecurityException("Only an Android administrator may manage another user's AppOps")
+        }
     }
     private fun failureMessage(t: Throwable): String {
         val cause = if (t is InvocationTargetException) t.targetException else t
@@ -159,6 +177,7 @@ class AppOpsService @Keep constructor(serviceContext: Context) : IAppOpsControlS
                     try {
                         val user = rules.getInt("user")
                         require(UserManagerApis.getUserIdsNoThrow().contains(user)) { "Rule user no longer exists" }
+                        enforceUser(user)
                         val current = installedIdentities(user)
                         val added = current.filter { (pkg, firstInstall) ->
                             pkg != BuildConfig.APPLICATION_ID && knownInstalls[pkg] != firstInstall
@@ -290,6 +309,7 @@ class AppOpsService @Keep constructor(serviceContext: Context) : IAppOpsControlS
     }
     private fun validateRules(value: JSONObject) {
         require(UserManagerApis.getUserIdsNoThrow().contains(value.getInt("user"))) { "Rule user no longer exists" }
+        enforceUser(value.getInt("user"))
         value.getBoolean("enabled")
         val ops = value.getJSONArray("ops")
         require(ops.length() <= catalog.size)

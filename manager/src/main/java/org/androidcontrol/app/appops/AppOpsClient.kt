@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.ServiceConnection
 import android.os.IBinder
 import org.androidcontrol.app.BuildConfig
+import org.androidcontrol.app.utils.UserHandleCompat
 import org.json.JSONObject
 import rikka.shizuku.Shizuku
 import java.util.concurrent.CountDownLatch
@@ -14,9 +15,11 @@ object AppOpsClient {
     val executor = Executors.newSingleThreadExecutor()
     @Volatile private var remote: IAppOpsControlService? = null
     private val args = Shizuku.UserServiceArgs(ComponentName(BuildConfig.APPLICATION_ID, AppOpsService::class.java.name))
+        .tag(if (UserHandleCompat.myUserId() == 0) AppOpsService::class.java.name
+            else "appops-user-${UserHandleCompat.myUserId()}")
         .daemon(true).processNameSuffix("appops").debuggable(BuildConfig.DEBUG).version(BuildConfig.VERSION_CODE)
 
-    /** Called off the UI thread. A daemon owns the optional install receiver even after UI exit. */
+    /** Called off the UI thread. Each profile's daemon owns its optional install monitor after UI exit. */
     @Synchronized fun connect(): IAppOpsControlService {
         remote?.takeIf { it.asBinder().pingBinder() }?.let { return it }
         check(Shizuku.pingBinder()) { "Start AndroidControl's privileged service first" }
