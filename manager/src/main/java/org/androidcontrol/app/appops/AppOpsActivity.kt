@@ -9,6 +9,8 @@ import android.text.TextWatcher
 import android.text.format.DateFormat
 import android.view.View
 import android.view.ViewGroup
+import android.view.Menu
+import android.view.MenuItem
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
@@ -27,6 +29,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Date
 
+@Suppress("UNCHECKED_CAST")
 class AppOpsActivity : AppBarActivity() {
     private var user = UserHandleCompat.myUserId()
     private var selectedPackage: String? = null
@@ -97,6 +100,25 @@ class AppOpsActivity : AppBarActivity() {
     }
 
     private fun dp(n: Int) = (resources.displayMetrics.density * n).toInt()
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menu.add(0, 101, 0, R.string.appops_reset)
+        return true
+    }
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        if (item.itemId != 101) return super.onOptionsItemSelected(item)
+        val pkg = selectedPackage ?: return true
+        if (busy) return true
+        MaterialAlertDialogBuilder(this).setTitle(R.string.appops_reset)
+            .setMessage(getString(R.string.appops_reset_confirm, pkg, user))
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                task({ AppOpsClient.request("reset", user, pkg) }) { result ->
+                    val data = result as JSONObject
+                    showResults(getString(R.string.appops_applied, data.getInt("applied")), data.getJSONArray("failures"))
+                    loadApp()
+                }
+            }.setNegativeButton(android.R.string.cancel, null).show()
+        return true
+    }
     private fun button(parent: LinearLayout, text: Int, action: () -> Unit) {
         parent.addView(Button(this).apply {
             setText(text)
@@ -129,7 +151,6 @@ class AppOpsActivity : AppBarActivity() {
             val saved = AppOpsClient.request("rules", requestedUser) as JSONObject
             loaded to saved
         }) { result ->
-            @Suppress("UNCHECKED_CAST")
             val (loaded, saved) = result as Pair<JSONArray, JSONObject>
             apps = jsonList(loaded).sortedBy { it.getString("label").lowercase() }
             rules = saved
@@ -200,11 +221,30 @@ class AppOpsActivity : AppBarActivity() {
     }
     private fun selectGroup() {
         val groups = operations.map { it.getString("group") }.distinct().sorted()
-        val labels = listOf(getString(R.string.appops_all_groups)) + groups
+        val labels = listOf(getString(R.string.appops_all_groups), getString(R.string.appops_apps_by_op)) + groups
         MaterialAlertDialogBuilder(this).setTitle(R.string.appops_group).setItems(labels.toTypedArray()) { _, index ->
-            group = if (index == 0) null else groups[index - 1]
-            filter()
+            if (index == 1) selectAppsByOperation() else {
+                group = if (index == 0) null else groups[index - 2]
+                filter()
+            }
         }.show()
+    }
+    private fun selectAppsByOperation() {
+        val names = operations.map { it.getString("name") }.sorted()
+        MaterialAlertDialogBuilder(this).setTitle(R.string.appops_apps_by_op).setItems(names.toTypedArray()) { _, index ->
+            val name = names[index]
+            task({ AppOpsClient.request("appsForOp", user) { it.put("op", name) } }) { result ->
+                val matches = jsonList(result as JSONArray).sortedBy { it.getString("label").lowercase() }
+                MaterialAlertDialogBuilder(this).setTitle(name).setItems(matches.map {
+                    "${it.getString("label")} · ${modeLabel(it.getInt("effective"))}\n${it.getString("package")}" }.toTypedArray()) { _, i ->
+                    selectedPackage = matches[i].getString("package")
+                    group = null
+                    chosen.clear()
+                    search.setText(name.removePrefix("android:"))
+                    loadApp()
+                }.setNegativeButton(android.R.string.cancel, null).show()
+            }
+        }.setNegativeButton(android.R.string.cancel, null).show()
     }
     private fun modeLabel(mode: Int): String = getString(when (mode) {
         0 -> R.string.appops_allow
@@ -254,7 +294,12 @@ class AppOpsActivity : AppBarActivity() {
             setText(R.string.appops_auto_new)
             isChecked = rules.optInt("user") == user && rules.getBoolean("enabled")
         }
-        root.addView(TextView(this).apply { setText(R.string.appops_rules_help) })
+        root.addView(TextView(this).apply {
+            text = getString(R.string.appops_rules_help) + rules.optString("error").takeIf { it.isNotBlank() }?.let { "\n$it" }.orEmpty() +
+                rules.optJSONObject("lastResult")?.let {
+                    "\n" + getString(R.string.appops_auto_result, it.getString("package"), it.getInt("applied"), it.getJSONArray("failures").length())
+                }.orEmpty()
+        })
         root.addView(enabled)
         val picker = android.widget.ListView(this).apply {
             choiceMode = android.widget.ListView.CHOICE_MODE_MULTIPLE
@@ -323,7 +368,6 @@ class AppOpsActivity : AppBarActivity() {
                 require(Build.VERSION.SDK_INT >= 29 || changes.none { it.mode == 4 }) { "Foreground mode requires Android 10 or later" }
                 Triple(changes, root.optInt("user", -1), root.has("opbacks"))
             }) { result ->
-                @Suppress("UNCHECKED_CAST")
                 val (changes, backupUser, legacy) = result as Triple<List<AppOpsBackup.Change>, Int, Boolean>
                 MaterialAlertDialogBuilder(this).setTitle(R.string.appops_import)
                     .setMessage(getString(R.string.appops_import_confirm, changes.size, if (legacy) "AppOpsX" else "user $backupUser", user))
@@ -346,7 +390,6 @@ class AppOpsActivity : AppBarActivity() {
             }
             applied to failures
         }) { result ->
-            @Suppress("UNCHECKED_CAST")
             val (applied, failures) = result as Pair<Int, JSONArray>
             showResults(getString(R.string.appops_applied, applied), failures)
             loadApp()

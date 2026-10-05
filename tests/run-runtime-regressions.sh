@@ -71,8 +71,7 @@ adb install "$RUNNER_TEMP/baseline.apk"
 baseline_package=$("$build_tools/aapt2" dump badging "$RUNNER_TEMP/baseline.apk" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")
 if [[ "$baseline_package" != "$package" ]]; then
     # A package rename must retain the old installation and its private data.
-    adb shell run-as "$baseline_package" sh -c 'mkdir -p files'
-    adb shell run-as "$baseline_package" sh -c 'echo retained > files/rebrand-regression-marker'
+    adb shell "run-as $baseline_package sh -c 'mkdir -p files; echo retained > files/rebrand-regression-marker'"
     adb install manager/build/outputs/apk/debug/*.apk
     adb shell run-as "$baseline_package" cat files/rebrand-regression-marker | grep -q retained
 fi

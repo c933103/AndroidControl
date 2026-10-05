@@ -110,7 +110,7 @@ jobs:
         run: bash tests/run-portrait-checks.sh
 
       - name: Build debug APK
-        run: ./gradlew :manager:assembleDebug
+        run: ./gradlew :manager:testDebugUnitTest :manager:assembleDebug
 
       - name: Upload APK
         if: success()

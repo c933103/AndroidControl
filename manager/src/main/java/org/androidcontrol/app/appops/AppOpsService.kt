@@ -50,6 +50,12 @@ class AppOpsService @Keep constructor(serviceContext: Context) : IAppOpsControlS
                     synchronized(lock) {
                         if (rules.getBoolean("enabled") && uid / 100000 == rules.getInt("user")) {
                             runCatching { restrict(rules.getInt("user"), pkg, rules.getJSONArray("ops")) }
+                                .onSuccess { result ->
+                                    rules.put("lastResult", result.put("package", pkg).put("time", System.currentTimeMillis()))
+                                    if (result.getJSONArray("failures").length() > 0) {
+                                        android.util.Log.e("AndroidControlAppOps", "New-app rule partly failed for $pkg: $result")
+                                    }
+                                }
                                 .onFailure { android.util.Log.e("AndroidControlAppOps", "New-app rule failed for $pkg", it) }
                         }
                     }
@@ -73,9 +79,15 @@ class AppOpsService @Keep constructor(serviceContext: Context) : IAppOpsControlS
                 static("opToDefaultMode", code) as Int)
         }
         checkStateFiles()
-        try { rules = JSONObject(rulesFile.openRead().bufferedReader().use { it.readText() }) }
-        catch (_: java.io.FileNotFoundException) { }
-        validateRules(rules)
+        try {
+            val saved = JSONObject(rulesFile.openRead().bufferedReader().use { it.readText() })
+            validateRules(saved)
+            rules = saved
+        } catch (_: java.io.FileNotFoundException) { }
+        catch (t: Throwable) {
+            rules.put("error", "Saved automatic rules disabled: ${t.message}")
+            android.util.Log.e("AndroidControlAppOps", "Invalid saved rule; automatic restrictions disabled", t)
+        }
         val filter = IntentFilter(Intent.ACTION_PACKAGE_ADDED).apply { addDataScheme("package") }
         // Listen across profiles; the rule still checks the broadcast's full UID.
         val allUsers = UserHandle::class.java.getDeclaredField("ALL").apply { isAccessible = true }.get(null)
@@ -112,10 +124,12 @@ class AppOpsService @Keep constructor(serviceContext: Context) : IAppOpsControlS
                         }
                     }
                     "ops" -> operations(user, input.getString("package"))
+                    "appsForOp" -> appsForOp(user, input.getString("op"))
                     "set" -> {
                         setMode(user, input.getString("package"), input.getString("op"), input.getInt("mode"))
                     }
                     "snapshot" -> snapshot(user, input.getString("package"))
+                    "reset" -> resetPackage(user, input.getString("package"))
                     "rules" -> JSONObject(rules.toString())
                     "saveRules" -> {
                         val proposed = input.getJSONObject("rules")
@@ -141,11 +155,15 @@ class AppOpsService @Keep constructor(serviceContext: Context) : IAppOpsControlS
         val info = PackageManagerApis.getApplicationInfoNoThrow(BuildConfig.APPLICATION_ID, 0, uid / 100000)
         if (info == null || info.uid != uid) throw SecurityException("Only AndroidControl may use this service")
     }
+    private fun failureMessage(t: Throwable): String {
+        val cause = if (t is InvocationTargetException) t.targetException else t
+        return cause.message ?: cause.javaClass.simpleName
+    }
 
-    private fun packages(user: Int) = PackageManagerApis.getInstalledPackagesNoThrow(PackageManager.GET_PERMISSIONS, user)
+    private fun packages(user: Int) = PackageManagerApis.getInstalledPackagesNoThrow(PackageManager.GET_PERMISSIONS.toLong(), user)
     private fun packageInfo(user: Int, pkg: String): PackageInfo {
         require(pkg.matches(Regex("[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)*"))) { "Invalid package name" }
-        return PackageManagerApis.getPackageInfoNoThrow(pkg, PackageManager.GET_PERMISSIONS, user)
+        return PackageManagerApis.getPackageInfoNoThrow(pkg, PackageManager.GET_PERMISSIONS.toLong(), user)
             ?: error("$pkg is not installed for user $user")
     }
     private fun static(name: String, code: Int): Any? = AppOpsManager::class.java
@@ -184,6 +202,25 @@ class AppOpsService @Keep constructor(serviceContext: Context) : IAppOpsControlS
             }
         }
     }
+    private fun appsForOp(user: Int, name: String): JSONArray {
+        val op = catalog.firstOrNull { it.name == name } ?: error("Unavailable operation")
+        val records = invoke("getPackagesForOps", arrayOf(IntArray::class.java), intArrayOf(op.code, op.switch)) as? List<*> ?: emptyList<Any>()
+        val byPackage = records.filter { record -> entryInt(record!!, "getUid") / 100000 == user }
+            .associateBy { it!!.javaClass.getMethod("getPackageName").invoke(it) as String }
+        return JSONArray().apply {
+            packages(user).forEach { pi ->
+                val ai = pi.applicationInfo ?: return@forEach
+                val record = byPackage[pi.packageName]
+                if (op.permission != null && pi.requestedPermissions?.contains(op.permission) != true && record == null) return@forEach
+                val packageOps = record?.javaClass?.getMethod("getOps")?.invoke(record) as? List<*> ?: emptyList<Any>()
+                val stored = packageOps.firstOrNull { entryInt(it!!, "getOp") == op.switch }?.let { entryInt(it, "getMode") }
+                    ?: catalog.first { it.code == op.switch }.defaultMode
+                put(JSONObject().put("package", pi.packageName).put("uid", ai.uid).put("mode", stored)
+                    .put("effective", rawMode(op, ai.uid, pi.packageName))
+                    .put("label", runCatching { ai.loadLabel(context.packageManager).toString() }.getOrDefault(pi.packageName)))
+            }
+        }
+    }
     private fun setMode(user: Int, pkg: String, name: String, mode: Int): JSONObject {
         require(mode in 0..4 && (mode != 4 || Build.VERSION.SDK_INT >= 29)) { "Unsupported AppOps mode" }
         val op = catalog.firstOrNull { it.name == name } ?: error("Operation is unavailable on this Android version: $name")
@@ -204,6 +241,17 @@ class AppOpsService @Keep constructor(serviceContext: Context) : IAppOpsControlS
         }
         return JSONObject().put("package", pkg).put("ops", ops)
     }
+    private fun resetPackage(user: Int, pkg: String): JSONObject {
+        val ops = snapshot(user, pkg).getJSONArray("ops")
+        val failures = JSONArray()
+        for (i in 0 until ops.length()) {
+            val name = ops.getJSONObject(i).getString("name")
+            val op = catalog.first { it.name == name }
+            runCatching { setMode(user, pkg, name, op.defaultMode) }
+                .onFailure { failures.put(JSONObject().put("op", name).put("error", failureMessage(it))) }
+        }
+        return JSONObject().put("applied", ops.length() - failures.length()).put("failures", failures)
+    }
     private fun restrict(user: Int, pkg: String, selected: JSONArray): JSONObject {
         val relevant = operations(user, pkg)
         val names = (0 until selected.length()).map { selected.getString(it) }.toSet()
@@ -213,7 +261,7 @@ class AppOpsService @Keep constructor(serviceContext: Context) : IAppOpsControlS
             val op = relevant.getJSONObject(i)
             if (op.getString("name") !in names || !op.getBoolean("relevant") || !done.add(op.getInt("switch"))) continue
             runCatching { setMode(user, pkg, op.getString("name"), AppOpsManager.MODE_IGNORED) }
-                .onFailure { failures.put(JSONObject().put("op", op.getString("name")).put("error", it.message)) }
+                .onFailure { failures.put(JSONObject().put("op", op.getString("name")).put("error", failureMessage(it))) }
         }
         return JSONObject().put("applied", done.size - failures.length()).put("failures", failures)
     }

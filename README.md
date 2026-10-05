@@ -8,7 +8,7 @@ Download AndroidControl from this repository’s [Releases](https://github.com/c
 
 ## Features
 
-- **App operations:** search installed apps, choose an Android user, group/filter by permission, inspect access and rejection timestamps, and set package modes to Allow, Ignore, Deny, Default, or Foreground only (Android 10+). Each write is read back from Android.
+- **App operations:** search installed apps, choose an Android user, group/filter by permission and find apps by operation, inspect access and rejection timestamps, and set package modes to Allow, Ignore, Deny, Default, or Foreground only (Android 10+). Each write is read back from Android.
 - **Backups:** export a user’s package modes with stable operation names; import AndroidControl JSON or AppOpsX v1 `.bak` files with a target-user preview and per-operation failure reporting.
 - **New-app rules:** optionally apply selected Ignore rules to newly installed apps for a chosen user. Rules exclude updates and AndroidControl itself and run while the privileged AppOps daemon is alive.
 - **Portrait sessions:** edit the target package, open it on a portrait-shaped display, forward touches and web links, and hand off to the normal phone display for external checkout screens.
@@ -21,7 +21,7 @@ AppOps do not grant missing runtime permissions. Operations can share a switch a
 
 1. Install an AndroidControl APK from this repository.
 2. Start its privileged server from the home screen. On Android 11+, wireless-debugging pairing can start it without a computer. Root and wired ADB startup options are also available.
-3. Open **Manage app operations**, choose a user/app, and tap an operation’s mode or tick operations for a batch restriction. **Default** returns a package operation to Android’s default handling.
+3. Open **Manage app operations**, choose a user/app, and tap an operation’s mode or tick operations for a batch restriction. **Default** returns a package operation to Android’s default handling; the menu can reset all recorded package operations.
 4. Use the separate portrait/session and system-rotation controls as needed. The saved portrait target does not limit AppOps app selection.
 
 An ADB-started server needs restarting after reboot. Automatic new-app rules resume when AndroidControl reconnects its daemon; installs while it was stopped are not retroactively covered. Device/OS privileges can limit supported controls.

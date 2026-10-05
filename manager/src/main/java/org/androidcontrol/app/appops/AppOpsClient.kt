@@ -43,4 +43,5 @@ object AppOpsClient {
     }
 
     fun startMonitor() { executor.execute { runCatching { connect() } } }
+    fun onBinderDead() { remote = null }
 }

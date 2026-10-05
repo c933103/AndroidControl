@@ -21,12 +21,15 @@
     <string name="appops_search_apps">Search app name or package</string>
     <string name="appops_selection">%1$s · user %2$d</string>
     <string name="appops_all_groups">All permission groups</string>
+    <string name="appops_apps_by_op">Find apps by operation</string>
     <string name="appops_allow">Allow</string>
     <string name="appops_ignore">Ignore</string>
     <string name="appops_deny">Deny</string>
     <string name="appops_default">Default</string>
     <string name="appops_foreground">Foreground only</string>
     <string name="appops_unknown">Unknown mode</string>
+    <string name="appops_reset">Reset package defaults</string>
+    <string name="appops_reset_confirm">Restore recorded package operations for %1$s to Android defaults in user %2$d? UID-wide rules and runtime permission grants will stay unchanged.</string>
     <string name="appops_uid_override">The package setting was saved, but a UID-level rule changes its effective mode. AndroidControl leaves UID rules unchanged because they can affect other apps sharing that UID. Allow also cannot grant a missing Android runtime permission.</string>
     <string name="appops_select_ops">Tick the operations to restrict first.</string>
     <string name="appops_restrict_confirm">Set %1$d selected operations to Ignore for %2$s? Operations sharing a switch change together. This can interrupt app features.</string>
@@ -36,6 +39,7 @@
     <string name="appops_rule_user">New-app rules · user %1$d</string>
     <string name="appops_save">Save</string>
     <string name="appops_rules_saved">Rules saved.</string>
+    <string name="appops_auto_result">Last new app: %1$s · applied %2$d · failed %3$d</string>
     <string name="appops_export">Export selected user’s package settings</string>
     <string name="appops_import">Import AndroidControl or AppOpsX backup</string>
     <string name="appops_import_confirm">Apply %1$d changes from %2$s to user %3$d? Import changes the listed package modes only. Operations sharing a switch change together. AndroidControl reports each failed change.</string>

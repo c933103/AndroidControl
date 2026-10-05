@@ -40,6 +40,7 @@ abstract class HomeActivity : AppBarActivity() {
 
     private val binderDeadListener = Shizuku.OnBinderDeadListener {
         OrientationControlClient.onShizukuBinderDead()
+        AppOpsClient.onBinderDead()
         checkServerStatus()
     }
 
