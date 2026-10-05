@@ -257,7 +257,7 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
             Shizuku.bindUserService(Shizuku.UserServiceArgs(ComponentName(BuildConfig.APPLICATION_ID,
                 org.androidcontrol.app.appops.AppOpsService::class.java.name))
                 .tag(if (forbidden == 0) org.androidcontrol.app.appops.AppOpsService::class.java.name else "appops-user-$forbidden")
-                .daemon(true).version(BuildConfig.VERSION_CODE), connection)
+                .daemon(true).processNameSuffix("appops").version(BuildConfig.VERSION_CODE), connection)
         }
         check(ready.await(15, TimeUnit.SECONDS) && privileged != null) { "Could not obtain administrator service for caller test" }
         val denied = runCatching { privileged!!.execute(org.json.JSONObject().put("action", "apps").put("user", forbidden).toString()) }
