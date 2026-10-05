@@ -44,8 +44,8 @@ class AppOpsService @Keep constructor(serviceContext: Context) : IAppOpsControlS
         appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
         val count = AppOpsManager::class.java.getDeclaredField("_NUM_OP").apply { isAccessible = true }.getInt(null)
         catalog = (0 until count).map { code ->
-            val name = runCatching { static("opToPublicName", code) as? String }.getOrNull()
-                ?: static("opToName", code) as String
+            val name = AppOpsNames.normalize(runCatching { static("opToPublicName", code) as? String }.getOrNull()
+                ?: static("opToName", code) as String)
             val permission = static("opToPermission", code) as? String
             val group = permission?.let {
                 runCatching { context.packageManager.getPermissionInfo(it, 0).group }.getOrNull()
@@ -313,7 +313,7 @@ class AppOpsService @Keep constructor(serviceContext: Context) : IAppOpsControlS
         value.getBoolean("enabled")
         val ops = value.getJSONArray("ops")
         require(ops.length() <= catalog.size)
-        for (i in 0 until ops.length()) require(catalog.any { it.name == ops.getString(i) }) { "Unknown rule operation" }
+        value.put("ops", AppOpsNames.normalizeSelection(ops, catalog.map { it.name }.toSet()))
         require(!value.getBoolean("enabled") || ops.length() > 0) { "Select operations before enabling automatic restrictions" }
     }
     private fun checkStateFiles() {

@@ -40,7 +40,7 @@ object AppOpsBackup {
                 val ops = app.getJSONArray("ops")
                 for (j in 0 until ops.length()) {
                     val op = ops.getJSONObject(j)
-                    val name = op.getString("name")
+                    val name = AppOpsNames.normalize(op.getString("name"))
                     val mode = op.getInt("mode")
                     require(name in names) { "Operation is unavailable on this device: $name" }
                     require(mode in 0..4) { "Unsupported operation mode: $mode" }

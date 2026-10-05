@@ -660,10 +660,21 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
                         }
                     }
                     check(script("document.body.dataset.survived") == "\"yes\"") { "Unlock recreated the web page" }
+                    var inputReadySince = 0L
                     awaitState("Wake animation still blocks web input") {
                         val input = shell("dumpsys input")
-                        !input.contains("ColorFade") &&
+                        val touchable = input.lineSequence().any { line ->
+                            Regex("^\\s*\\d+: name=").containsMatchIn(line) &&
+                                line.contains("TargetPortraitDisplayActivity") && line.contains("displayId=0,") &&
+                                line.contains("touchableRegion=[") &&
+                                listOf("NOT_VISIBLE", "NOT_TOUCHABLE", "NO_INPUT_CHANNEL").none { line.contains(it) }
+                        }
+                        val ready = touchable && !input.contains("ColorFade") &&
+                            Regex("DispatchEnabled:\\s*(?:true|1)\\b").containsMatchIn(input) &&
                             Regex("DispatchFrozen:\\s*(?:false|0)\\b").containsMatchIn(input)
+                        val now = SystemClock.uptimeMillis()
+                        if (!ready) inputReadySince = 0L else if (inputReadySince == 0L) inputReadySince = now
+                        ready && now - inputReadySince >= 500
                     }
                     // A real tap supplies the gesture needed for target=_blank.
                     tapLink("popup")
