@@ -767,20 +767,32 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
             ready.contains("display=0;") && ready.contains("buttonVisible=true")
         }
         awaitState("Portrait host remained over the native transaction screen") { activity.isFinishing }
-        // Moving to display 0 can rotate it. A laid-out button is not yet
-        // tappable while WindowManager is freezing input for that transition.
-        awaitState("Native transaction window did not finish its display transition") {
-            val ready = shell("run-as org.androidcontrol.regression.checkout cat files/ready")
-            ready.contains("display=0;") && ready.contains("buttonVisible=true") &&
-                ready.contains("focused=true") &&
-                Regex("DispatchFrozen:\\s*(?:false|0)\\b").containsMatchIn(shell("dumpsys input"))
+        // Accept one fresh geometry generation after rotation/layout has settled.
+        // The retained tuple, rather than a later unchecked read, owns the tap.
+        val readiness = CheckoutReadiness()
+        var tapSnapshot: CheckoutReadySnapshot? = null
+        var tapInput: CheckoutInputState? = null
+        var lastReadinessEvidence = "no sample"
+        try {
+            awaitState("Native transaction window did not finish its display transition") {
+                val sample = CheckoutReadySnapshot.parse(shell("run-as org.androidcontrol.regression.checkout cat files/ready"))
+                val inputDump = shell("dumpsys input")
+                val input = CheckoutInputState.parse(inputDump)
+                lastReadinessEvidence = "${sample?.evidence() ?: "ready-parse-failed"};${CheckoutInputState.numericEvidence(inputDump)}"
+                readiness.observe(sample, input, SystemClock.uptimeMillis()).also { accepted ->
+                    if (accepted) { tapSnapshot = sample; tapInput = input }
+                }
+            }
+        } finally {
+            if (tapSnapshot == null) checkpoint("checkout-readiness-last: $lastReadinessEvidence")
         }
         checkpoint("secure external dialog and its bottom button are visible on the phone display")
         // Exercise the actual bottom control instead of invoking host Back, which
         // must not own/destroy this external activity or its result callback.
-        val ready = shell("run-as org.androidcontrol.regression.checkout cat files/ready")
-        val x = ready.substringAfter(";x=").substringBefore(';').toInt()
-        val y = ready.substringAfter(";y=").toInt()
+        val ready = checkNotNull(tapSnapshot)
+        checkpoint("checkout-tap-ready: $lastReadinessEvidence;${checkNotNull(tapInput).evidence()}")
+        val x = ready.x
+        val y = ready.y
         shell("input -d 0 tap $x $y")
         awaitState("Dismissing the external dialog did not return its result to the target") {
             fixtureFile("checkout-returned").contains("returned")
