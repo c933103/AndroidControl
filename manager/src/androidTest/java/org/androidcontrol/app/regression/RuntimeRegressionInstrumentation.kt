@@ -391,10 +391,17 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
     }
 
     private fun controlService(): IAndroidControlService {
-        openManager()
-        val deadline = SystemClock.uptimeMillis() + 10000
-        while (!Shizuku.pingBinder() && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(100)
-        check(Shizuku.pingBinder())
+        // A live raw binder can precede Shizuku's application-attach callback.
+        // Wait for API readiness before attempting the service bind.
+        val attached = CountDownLatch(1)
+        val received = Shizuku.OnBinderReceivedListener { attached.countDown() }
+        Shizuku.addBinderReceivedListenerSticky(received)
+        try {
+            openManager()
+            check(attached.await(10, TimeUnit.SECONDS)) { "Shizuku application attach timed out" }
+        } finally {
+            Shizuku.removeBinderReceivedListener(received)
+        }
         var service: IAndroidControlService? = null
         val ready = CountDownLatch(1)
         val connection = object : ServiceConnection {
@@ -404,11 +411,19 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
             }
             override fun onServiceDisconnected(name: ComponentName) {}
         }
+        // runOnMainSync does not move a main-thread exception to onStart's catch.
+        // Return it to the instrumentation thread so normal failure dumps survive.
+        var bindFailure: Throwable? = null
         runOnMainSync {
-            Shizuku.bindUserService(Shizuku.UserServiceArgs(ComponentName(BuildConfig.APPLICATION_ID,
-                AndroidControlService::class.java.name)).daemon(true).processNameSuffix("android_control")
-                .debuggable(BuildConfig.DEBUG).version(BuildConfig.VERSION_CODE), connection)
+            try {
+                Shizuku.bindUserService(Shizuku.UserServiceArgs(ComponentName(BuildConfig.APPLICATION_ID,
+                    AndroidControlService::class.java.name)).daemon(true).processNameSuffix("android_control")
+                    .debuggable(BuildConfig.DEBUG).version(BuildConfig.VERSION_CODE), connection)
+            } catch (failure: Throwable) {
+                bindFailure = failure
+            }
         }
+        bindFailure?.let { throw it }
         check(ready.await(15, TimeUnit.SECONDS)) { "Control service bind timed out" }
         return service!!
     }
