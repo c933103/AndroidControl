@@ -19,11 +19,12 @@ object AdbFileClient {
             .version(BuildConfig.VERSION_CODE)
 
     private val binding = RetryingServiceBinding<IAdbFileService, ServiceConnection>(
-        isAlive = { it.asBinder().pingBinder() },
+        // isBinderAlive reads cached death state; pingBinder performs synchronous IPC.
+        isAlive = { it.asBinder().isBinderAlive },
         connection = { connected, disconnected ->
             object : ServiceConnection {
                 override fun onServiceConnected(name: ComponentName, binder: IBinder?) {
-                    connected(binder?.takeIf { it.pingBinder() }?.let { IAdbFileService.Stub.asInterface(it) })
+                    connected(binder?.takeIf { it.isBinderAlive }?.let { IAdbFileService.Stub.asInterface(it) })
                 }
                 override fun onServiceDisconnected(name: ComponentName) = disconnected()
                 override fun onBindingDied(name: ComponentName) = disconnected()
@@ -37,7 +38,7 @@ object AdbFileClient {
     @Throws(IOException::class)
     fun requireService(timeoutSeconds: Long = 8): IAdbFileService {
         binding.peek()?.let { return it }
-        if (!Shizuku.pingBinder()) {
+        if (Shizuku.getBinder()?.isBinderAlive != true) {
             throw IOException("AndroidControl is not running")
         }
         if (Looper.myLooper() == Looper.getMainLooper()) {

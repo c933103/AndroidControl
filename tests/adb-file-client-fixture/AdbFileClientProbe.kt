@@ -9,7 +9,11 @@ import java.util.concurrent.TimeUnit
 
 private class Service : IAdbFileService, IBinder {
     override fun asBinder(): IBinder = this
-    override fun pingBinder() = true
+    override val isBinderAlive = true
+    override fun pingBinder(): Boolean {
+        check(!java.lang.Boolean.getBoolean("adb.fixture.forbidPing")) { "Synchronous service ping is forbidden" }
+        return true
+    }
 }
 private fun fails(block: () -> Unit): IOException {
     try { block() } catch (e: IOException) { return e }
@@ -47,7 +51,7 @@ fun main() {
             check(Shizuku.unbinds == 1)
             check(Shizuku.registrations.single() === fresh)
             check(runCatching { initial.get(1, TimeUnit.SECONDS) }.exceptionOrNull()?.cause is IOException)
-            println("PASS: actual AdbFileClient timeout retry, stale connect/disconnect, registration isolation, main-thread and backend guards")
+            println("PASS: actual AdbFileClient timeout retry, stale connect/disconnect, registration isolation, main-thread/backend guards and nonblocking liveness")
         } finally { retryExecutor.shutdownNow() }
     } finally { executor.shutdownNow() }
 }

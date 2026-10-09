@@ -1,5 +1,5 @@
 package android.os
-interface IBinder { fun pingBinder(): Boolean }
+interface IBinder { val isBinderAlive: Boolean; fun pingBinder(): Boolean }
 class Looper {
     companion object {
         private val main = Looper()

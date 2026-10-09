@@ -2,6 +2,7 @@
 package rikka.shizuku
 import android.content.ComponentName
 import android.content.ServiceConnection
+import android.os.IBinder
 object Shizuku {
     class UserServiceArgs(name: ComponentName) {
         fun daemon(value: Boolean) = this
@@ -13,7 +14,15 @@ object Shizuku {
     val registrations = mutableListOf<ServiceConnection>()
     var running = true
     var unbinds = 0
-    fun pingBinder() = running
+    private val backend = object : IBinder {
+        override val isBinderAlive get() = running
+        override fun pingBinder() = Shizuku.pingBinder()
+    }
+    fun getBinder(): IBinder? = backend.takeIf { running }
+    fun pingBinder(): Boolean {
+        check(!java.lang.Boolean.getBoolean("adb.fixture.forbidPing")) { "Synchronous backend ping is forbidden" }
+        return running
+    }
     fun bindUserService(args: UserServiceArgs, connection: ServiceConnection) {
         synchronized(registrations) { registrations.add(connection) }
         callbacks.add(connection)

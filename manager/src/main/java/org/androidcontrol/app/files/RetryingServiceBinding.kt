@@ -6,7 +6,10 @@ import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-/** One generation owns both its callback and its waiters. */
+/**
+ * One generation owns both its callback and its waiters.
+ * [isAlive] must be a nonblocking local-state read, never a remote health ping.
+ */
 internal class RetryingServiceBinding<T : Any, C : Any>(
     private val isAlive: (T) -> Boolean,
     private val connection: (connected: (T?) -> Unit, disconnected: () -> Unit) -> C,

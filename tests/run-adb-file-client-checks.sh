@@ -10,4 +10,4 @@ if [[ -f "$source_dir/RetryingServiceBinding.kt" ]]; then
   sources+=("$source_dir/RetryingServiceBinding.kt")
 fi
 "${KOTLINC:-kotlinc}" "${sources[@]}" tests/adb-file-client-fixture/*.kt -d "$classes"
-java -cp "$classes:${KOTLIN_STDLIB:?Set KOTLIN_STDLIB to your kotlin-stdlib JAR}" org.androidcontrol.app.files.AdbFileClientProbeKt
+java "-Dadb.fixture.forbidPing=${AC001_FORBID_PING:-false}" -cp "$classes:${KOTLIN_STDLIB:?Set KOTLIN_STDLIB to your kotlin-stdlib JAR}" org.androidcontrol.app.files.AdbFileClientProbeKt
