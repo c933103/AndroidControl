@@ -395,10 +395,21 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         // Wait for API readiness before attempting the service bind.
         val attached = CountDownLatch(1)
         val received = Shizuku.OnBinderReceivedListener { attached.countDown() }
-        Shizuku.addBinderReceivedListenerSticky(received)
         try {
+            Shizuku.addBinderReceivedListenerSticky(received)
             openManager()
-            check(attached.await(10, TimeUnit.SECONDS)) { "Shizuku application attach timed out" }
+            val deadline = SystemClock.uptimeMillis() + 10000
+            while (attached.count != 0L) {
+                val remaining = deadline - SystemClock.uptimeMillis()
+                check(remaining > 0) { "Shizuku application attach timed out" }
+                if (attached.await(minOf(remaining, 100L), TimeUnit.MILLISECONDS)) break
+                check(SystemClock.uptimeMillis() < deadline) { "Shizuku application attach timed out" }
+                // The pinned API checks sticky readiness before adding its listener.
+                // Re-register within the same deadline if attach crossed that gap.
+                // Never retry bindUserService: it registers connection state first.
+                Shizuku.removeBinderReceivedListener(received)
+                Shizuku.addBinderReceivedListenerSticky(received)
+            }
         } finally {
             Shizuku.removeBinderReceivedListener(received)
         }

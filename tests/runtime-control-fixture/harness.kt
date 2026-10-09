@@ -1,4 +1,3 @@
-import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -36,12 +35,18 @@ class Environment(
     val initiallyAttached: Boolean = true,
     val attachDelayMs: Long? = null,
     val connectionDelayMs: Long = 0,
-    val bindFailure: Throwable? = null
+    val bindFailure: Throwable? = null,
+    val attachDuringFirstRegistration: Boolean = false,
+    val readyPublicationAfterRegistrations: Int = 0,
+    val dieBeforeBind: Boolean = false
 ) : AutoCloseable {
     val main = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "fixture-main") }
     private val timer = Executors.newSingleThreadScheduledExecutor()
     val uncaught = AtomicReference<Throwable?>()
     @Volatile var attachObserved = initiallyAttached
+    @Volatile var binderReady = initiallyAttached
+    @Volatile var registrationCalls = 0
+    var maximumListeners = 0
     @Volatile var bindCalls = 0
     @Volatile var prematureBind = false
     var interruptionAtAwait = false
@@ -52,11 +57,19 @@ class Environment(
     fun openManager() {
         attachDelayMs?.let { delay ->
             schedule(delay) {
-                attachObserved = true
-                Shizuku.listeners.forEach { it.onBinderReceived() }
+                completeAttach()
             }
         }
         if (interruptionAtAwait) Thread.currentThread().interrupt()
+    }
+    fun completeAttach() {
+        // Pinned API: service and attach payload exist before notification;
+        // binderReady is set only after iterating the listener list.
+        attachObserved = true
+        synchronized(Shizuku.listeners) {
+            Shizuku.listeners.forEach { Shizuku.dispatch(it) }
+        }
+        if (readyPublicationAfterRegistrations == 0) binderReady = true
     }
     fun runOnMainSync(block: () -> Unit) {
         val done = CountDownLatch(1)
@@ -82,12 +95,32 @@ class Environment(
 object Shizuku {
     fun interface OnBinderReceivedListener { fun onBinderReceived() }
     lateinit var environment: Environment
-    val listeners = CopyOnWriteArraySet<OnBinderReceivedListener>()
-    fun addBinderReceivedListenerSticky(listener: OnBinderReceivedListener) {
-        listeners.add(listener)
-        if (environment.attachObserved) environment.main.execute { listener.onBinderReceived() }
+    val listeners = mutableListOf<OnBinderReceivedListener>()
+    fun dispatch(listener: OnBinderReceivedListener) {
+        if (Thread.currentThread().name == "fixture-main") listener.onBinderReceived()
+        else environment.main.execute { listener.onBinderReceived() }
     }
-    fun removeBinderReceivedListener(listener: OnBinderReceivedListener): Boolean = listeners.remove(listener)
+    fun addBinderReceivedListenerSticky(listener: OnBinderReceivedListener) {
+        // Match pinned Shizuku.java: readiness check precedes synchronized add.
+        val wasReady = environment.binderReady
+        environment.registrationCalls++
+        if (environment.attachDuringFirstRegistration && environment.registrationCalls == 1) {
+            check(!wasReady && listeners.isEmpty())
+            // Deterministically insert attach after read-false but before add.
+            environment.completeAttach()
+        }
+        if (environment.readyPublicationAfterRegistrations == environment.registrationCalls) {
+            // Resume the paused notifier only after several failed sticky reads.
+            environment.binderReady = true
+        }
+        if (wasReady) dispatch(listener)
+        synchronized(listeners) {
+            listeners.add(listener)
+            environment.maximumListeners = maxOf(environment.maximumListeners, listeners.size)
+        }
+    }
+    fun removeBinderReceivedListener(listener: OnBinderReceivedListener): Boolean =
+        synchronized(listeners) { listeners.removeAll { it === listener } }
     // The controlled historical failure has a live raw binder before API attach.
     fun pingBinder(): Boolean = true
     class UserServiceArgs(name: ComponentName) {
@@ -99,6 +132,7 @@ object Shizuku {
     fun bindUserService(args: UserServiceArgs, connection: ServiceConnection) {
         check(Thread.currentThread().name == "fixture-main")
         environment.bindCalls++
+        if (environment.dieBeforeBind) environment.attachObserved = false
         if (!environment.attachObserved) {
             environment.prematureBind = true
             throw IllegalStateException("fixture binder has not attached")
@@ -141,6 +175,37 @@ fun main() {
             check(env.uncaught.get() == null && Shizuku.listeners.isEmpty())
         }
     }
+    test("attach races sticky registration") {
+        Environment(initiallyAttached = false, attachDuringFirstRegistration = true).use { env ->
+            Shizuku.environment = env
+            check(ActualHelper(env).controlService() === FixtureService)
+            check(env.attachObserved && env.binderReady && !env.prematureBind && env.bindCalls == 1)
+            check(env.registrationCalls >= 2 && env.maximumListeners == 1 && Shizuku.listeners.isEmpty())
+        }
+    }
+    test("delayed sticky flag publication") {
+        Environment(initiallyAttached = false, attachDuringFirstRegistration = true,
+            readyPublicationAfterRegistrations = 3).use { env ->
+            Shizuku.environment = env
+            check(ActualHelper(env).controlService() === FixtureService)
+            check(env.registrationCalls >= 4 && env.maximumListeners == 1 && Shizuku.listeners.isEmpty())
+            check(!env.prematureBind && env.bindCalls == 1)
+        }
+    }
+    test("callback can precede readiness flag") {
+        Environment(initiallyAttached = false).use { env ->
+            Shizuku.environment = env
+            val called = CountDownLatch(1)
+            val listener = Shizuku.OnBinderReceivedListener {
+                check(env.attachObserved && !env.binderReady)
+                called.countDown()
+            }
+            Shizuku.addBinderReceivedListenerSticky(listener)
+            env.runOnMainSync { env.completeAttach() }
+            check(called.count == 0L && env.binderReady)
+            Shizuku.removeBinderReceivedListener(listener)
+        }
+    }
     test("delayed service connection") {
         Environment(connectionDelayMs = 75).use { env ->
             Shizuku.environment = env
@@ -155,6 +220,25 @@ fun main() {
             val failure = runCatching { ActualHelper(env).controlService() }.exceptionOrNull()
             check(failure === original) { "bind exception did not reach instrumentation thread unchanged" }
             check(env.uncaught.get() == null && env.bindCalls == 1 && Shizuku.listeners.isEmpty())
+        }
+    }
+    test("death before bind is reported without retry") {
+        Environment(dieBeforeBind = true).use { env ->
+            Shizuku.environment = env
+            val failure = runCatching { ActualHelper(env).controlService() }.exceptionOrNull()
+            check(failure is IllegalStateException && failure.message == "fixture binder has not attached")
+            check(env.uncaught.get() == null && env.bindCalls == 1 && Shizuku.listeners.isEmpty())
+        }
+    }
+    test("missing attach keeps readiness deadline") {
+        Environment(initiallyAttached = false).use { env ->
+            Shizuku.environment = env
+            val start = SystemClock.uptimeMillis()
+            val failure = runCatching { ActualHelper(env).controlService() }.exceptionOrNull()
+            val elapsed = SystemClock.uptimeMillis() - start
+            check(failure is IllegalStateException && failure.message == "Shizuku application attach timed out")
+            check(elapsed >= 9900 && elapsed < 20000) { "readiness timeout changed: $elapsed ms" }
+            check(env.bindCalls == 0 && env.maximumListeners == 1 && Shizuku.listeners.isEmpty())
         }
     }
     test("interrupted readiness removes listener") {
