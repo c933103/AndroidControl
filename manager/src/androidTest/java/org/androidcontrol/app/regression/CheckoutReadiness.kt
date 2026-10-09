@@ -58,13 +58,19 @@ internal data class CheckoutInputState(val rotation: Int, val width: Int, val he
                 Regex("^\\s*displayId=0, name='([^']+)'$").find(it)?.groupValues?.get(1)
             }.singleOrNull()?.takeIf { it.endsWith(" $COMPONENT") }
         }
+        // API 33 quotes Windows record names; API 35 emits the same names unquoted.
+        // Normalize only a complete supported form, then compare the full focused token/name.
+        private fun windowName(line: String): String? {
+            val match = Regex("^\\s*\\d+: name=(?:'([^']+)'|([^',]+)), id=").find(line) ?: return null
+            return match.groupValues[1].ifEmpty { match.groupValues[2] }
+        }
         fun numericEvidence(dump: String): String {
             val lines = dump.lines()
             val focused = focusedWindow(lines)
             val display = lines.indexOfFirst { it.trim() == "Display: 0" }
             val header = if (display >= 0) lines.drop(display + 1).takeWhile { it.trim() != "Windows:" } else emptyList()
-            val window = lines.firstOrNull { focused != null && Regex("^\\s*\\d+: name=").containsMatchIn(it) &&
-                it.substringAfter("name=").substringBefore(", id=") == focused }?.substringAfter(", id=") ?: ""
+            val window = lines.firstOrNull { focused != null && windowName(it) == focused &&
+                it.contains("displayId=0,") }?.substringAfter(", id=") ?: ""
             fun numbers(value: String) = Regex("-?\\d+(?:\\.\\d+)?").findAll(value).take(64).joinToString(",") { it.value }
             val flags = window.substringAfter("inputConfig=", "").substringBefore(", alpha=")
                 .split(Regex("\\s*\\|\\s*")).filter { it.matches(Regex("[A-Z_]+|0x[0-9a-fA-F]+")) }.joinToString("|")
@@ -101,8 +107,7 @@ internal data class CheckoutInputState(val rotation: Int, val width: Int, val he
                 matches(0.0, -1.0, w.toDouble(), 1.0, 0.0, 0.0) -> 3
                 else -> return null
             }
-            val line = lines.firstOrNull { Regex("^\\s*\\d+: name=").containsMatchIn(it) &&
-                it.substringAfter("name=").substringBefore(", id=") == focused && it.contains("displayId=0,") } ?: return null
+            val line = lines.firstOrNull { windowName(it) == focused && it.contains("displayId=0,") } ?: return null
             val flags = line.substringAfter("inputConfig=", "").substringBefore(", alpha=")
             if (flags.isEmpty() || listOf("NOT_VISIBLE", "NOT_TOUCHABLE", "NO_INPUT_CHANNEL", "DROP_INPUT", "PAUSE_DISPATCHING").any { it in flags }) return null
             val rect = Regex("frame=\\[(-?\\d+),(-?\\d+)\\]\\[(-?\\d+),(-?\\d+)\\]").find(line) ?: return null

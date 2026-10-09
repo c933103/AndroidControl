@@ -2,7 +2,7 @@
 """Run test-only parser/model checks using the verified Gradle Kotlin compiler.
 
 Example: JAVA_HOME=/path/to/jdk python3 tests/run-checkout-readiness-host-checks.py \
-  --kotlin-lib /path/to/gradle-8.14/lib [--input-dump /path/to/authorized-input.txt]
+  --kotlin-lib /path/to/gradle-8.14/lib [--input-dump /path/to/api35-input.txt] [--api33-input-dump /path/to/api33-input.txt]
 No Android device, downloads, or production routing are used.
 """
 import argparse
@@ -15,6 +15,7 @@ import tempfile
 p = argparse.ArgumentParser()
 p.add_argument('--kotlin-lib', type=Path, required=True)
 p.add_argument('--input-dump', type=Path)
+p.add_argument('--api33-input-dump', type=Path)
 a = p.parse_args()
 root = Path(__file__).resolve().parents[1]
 java = str(Path(os.environ['JAVA_HOME']) / 'bin/java') if os.environ.get('JAVA_HOME') else shutil.which('java')
@@ -33,8 +34,10 @@ with tempfile.TemporaryDirectory(prefix='checkout-readiness-') as temporary:
         str(root/'tests/CheckoutReadinessTest.kt')], check=True)
     command = [java, '-cp', str(classes)+os.pathsep+classpath,
         'org.androidcontrol.app.regression.CheckoutReadinessTestKt']
-    if a.input_dump:
-        command.append(str(a.input_dump.resolve()))
+    if a.input_dump or a.api33_input_dump:
+        command.append(str(a.input_dump.resolve()) if a.input_dump else '')
+    if a.api33_input_dump:
+        command.append(str(a.api33_input_dump.resolve()))
     subprocess.run(command, check=True)
     # Parse Java 8 syntax without resolving Android types. This is not an APK build.
     parser = temp / 'CheckJavaSyntax.java'

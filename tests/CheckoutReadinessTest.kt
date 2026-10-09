@@ -125,9 +125,56 @@ fun main(args: Array<String>) {
     verify(!reset.observe(snapshot(3, 1500), null, 1500), "bad active window resets settling")
     verify(!reset.observe(snapshot(4, 1750), input, 1750), "cannot reuse pre-transition settling time")
     verify(reset.observe(snapshot(6, 2250), input, 2250), "settles after active window restoration")
-    if (args.isNotEmpty()) {
+    // Minimal format/geometry reproduction from artifact 11624086374, input lines 1216/1239.
+    // The complete authorized dump can also be supplied locally as args[1].
+    val api33Dump = inputDump().replace("abc", "4727ed")
+        .replace("name=4727ed $COMPONENT,", "name='4727ed $COMPONENT',")
+        .replace("id=741", "id=752").replace("SENSITIVE_FOR_PRIVACY", "0x0")
+        .replace("frame=[24,0][316,640]", "frame=[0,0][292,640]")
+    val api33Input = CheckoutInputState(1, 640, 320, CheckoutRect(0, 28, 640, 320))
+    fun verifyApi33(dump: String, label: String) {
+        verify(CheckoutInputState.parse(dump) == api33Input, "$label quoted record preserves logical geometry")
+        val evidence = CheckoutInputState.numericEvidence(dump)
+        verify("0,0,292,640" in evidence && "fixtureInputFlags=0x0" in evidence,
+            "$label numeric rejection evidence includes selected quoted window")
+        verify("org.androidcontrol" !in evidence && "name=" !in evidence,
+            "$label numeric evidence excludes component/window names")
+        val quotedName = "name='4727ed $COMPONENT'"
+        val stale = "0: name='stale $COMPONENT', id=740, displayId=0, inputConfig=0x0, alpha=1, frame=[0,0][10,10], globalScale=1"
+        val twoWindows = dump.replace(Regex("(?m)^(\\s*\\d+: )name='4727ed")) { match ->
+            "$stale\n${match.groupValues[1]}name='4727ed"
+        }
+        verify(CheckoutInputState.parse(twoWindows) == api33Input, "$label quoted stale same-component window cannot replace exact focused token")
+        val focusedMoved = twoWindows.lineSequence().joinToString("\n") { line ->
+            when {
+                quotedName + ", id=" in line -> line.replace("frame=[0,0][292,640]", "frame=[0,0][10,10]")
+                "name='stale $COMPONENT'" in line -> line.replace("frame=[0,0][10,10]", "frame=[0,0][292,640]")
+                else -> line
+            }
+        }
+        verify(CheckoutInputState.parse(focusedMoved)?.window != api33Input.window,
+            "$label a matching stale frame cannot substitute for the different focused frame")
+        verify(CheckoutInputState.parse(dump.replace("displayId=0, name='4727ed", "displayId=0, name='wrong")) == null,
+            "$label unmatched focused token fails closed")
+        for (badName in listOf("name=4727ed $COMPONENT'", "name='4727ed $COMPONENT", "name=\"4727ed $COMPONENT\"")) {
+            verify(CheckoutInputState.parse(dump.replace(quotedName + ", id=", badName + ", id=")) == null,
+                "$label malformed/unknown quoting fails closed")
+        }
+        for (flag in listOf("PAUSE_DISPATCHING", "DROP_INPUT", "DROP_INPUT_IF_OBSCURED", "NOT_TOUCHABLE", "NO_INPUT_CHANNEL")) {
+            verify(CheckoutInputState.parse(dump.replace("inputConfig=0x0", "inputConfig=$flag")) == null,
+                "$label quoted focused window still rejects $flag")
+        }
+    }
+    verifyApi33(api33Dump, "API33 format fixture")
+    val api33Ready = snapshot().copy(y=264, window=api33Input.window, button=CheckoutRect(32, 240, 608, 288))
+    val api33Gate = CheckoutReadiness()
+    verify(!api33Gate.observe(api33Ready, api33Input, 1000), "API33 quoted window must still settle")
+    verify(!api33Gate.observe(api33Ready.copy(sequence=2, sampleMs=1250), api33Input, 1250), "API33 250 ms remains insufficient")
+    verify(api33Gate.observe(api33Ready.copy(sequence=3, sampleMs=1500), api33Input, 1500), "API33 recorded logical geometry can settle across fresh samples")
+    if (args.isNotEmpty() && args[0].isNotEmpty()) {
         val actual = checkNotNull(CheckoutInputState.parse(File(args[0]).readText()))
         verify(actual == input, "real API35 dump parses to expected logical window/rotation")
     }
+    if (args.size > 1) verifyApi33(File(args[1]).readText(), "actual API33 dump")
     println("PASS: $checks checkout-readiness checks, including fresh positives and stale/mixed-generation sensitivity")
 }
