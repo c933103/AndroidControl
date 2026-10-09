@@ -391,10 +391,28 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
     }
 
     private fun controlService(): IAndroidControlService {
-        openManager()
-        val deadline = SystemClock.uptimeMillis() + 10000
-        while (!Shizuku.pingBinder() && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(100)
-        check(Shizuku.pingBinder())
+        // A live raw binder can precede Shizuku's application-attach callback.
+        // Wait for API readiness before attempting the service bind.
+        val attached = CountDownLatch(1)
+        val received = Shizuku.OnBinderReceivedListener { attached.countDown() }
+        try {
+            Shizuku.addBinderReceivedListenerSticky(received)
+            openManager()
+            val deadline = SystemClock.uptimeMillis() + 10000
+            while (attached.count != 0L) {
+                val remaining = deadline - SystemClock.uptimeMillis()
+                check(remaining > 0) { "Shizuku application attach timed out" }
+                if (attached.await(minOf(remaining, 100L), TimeUnit.MILLISECONDS)) break
+                check(SystemClock.uptimeMillis() < deadline) { "Shizuku application attach timed out" }
+                // The pinned API checks sticky readiness before adding its listener.
+                // Re-register within the same deadline if attach crossed that gap.
+                // Never retry bindUserService: it registers connection state first.
+                Shizuku.removeBinderReceivedListener(received)
+                Shizuku.addBinderReceivedListenerSticky(received)
+            }
+        } finally {
+            Shizuku.removeBinderReceivedListener(received)
+        }
         var service: IAndroidControlService? = null
         val ready = CountDownLatch(1)
         val connection = object : ServiceConnection {
@@ -404,11 +422,19 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
             }
             override fun onServiceDisconnected(name: ComponentName) {}
         }
+        // runOnMainSync does not move a main-thread exception to onStart's catch.
+        // Return it to the instrumentation thread so normal failure dumps survive.
+        var bindFailure: Throwable? = null
         runOnMainSync {
-            Shizuku.bindUserService(Shizuku.UserServiceArgs(ComponentName(BuildConfig.APPLICATION_ID,
-                AndroidControlService::class.java.name)).daemon(true).processNameSuffix("android_control")
-                .debuggable(BuildConfig.DEBUG).version(BuildConfig.VERSION_CODE), connection)
+            try {
+                Shizuku.bindUserService(Shizuku.UserServiceArgs(ComponentName(BuildConfig.APPLICATION_ID,
+                    AndroidControlService::class.java.name)).daemon(true).processNameSuffix("android_control")
+                    .debuggable(BuildConfig.DEBUG).version(BuildConfig.VERSION_CODE), connection)
+            } catch (failure: Throwable) {
+                bindFailure = failure
+            }
         }
+        bindFailure?.let { throw it }
         check(ready.await(15, TimeUnit.SECONDS)) { "Control service bind timed out" }
         return service!!
     }
@@ -741,20 +767,32 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
             ready.contains("display=0;") && ready.contains("buttonVisible=true")
         }
         awaitState("Portrait host remained over the native transaction screen") { activity.isFinishing }
-        // Moving to display 0 can rotate it. A laid-out button is not yet
-        // tappable while WindowManager is freezing input for that transition.
-        awaitState("Native transaction window did not finish its display transition") {
-            val ready = shell("run-as org.androidcontrol.regression.checkout cat files/ready")
-            ready.contains("display=0;") && ready.contains("buttonVisible=true") &&
-                ready.contains("focused=true") &&
-                Regex("DispatchFrozen:\\s*(?:false|0)\\b").containsMatchIn(shell("dumpsys input"))
+        // Accept one fresh geometry generation after rotation/layout has settled.
+        // The retained tuple, rather than a later unchecked read, owns the tap.
+        val readiness = CheckoutReadiness()
+        var tapSnapshot: CheckoutReadySnapshot? = null
+        var tapInput: CheckoutInputState? = null
+        var lastReadinessEvidence = "no sample"
+        try {
+            awaitState("Native transaction window did not finish its display transition") {
+                val sample = CheckoutReadySnapshot.parse(shell("run-as org.androidcontrol.regression.checkout cat files/ready"))
+                val inputDump = shell("dumpsys input")
+                val input = CheckoutInputState.parse(inputDump)
+                lastReadinessEvidence = "${sample?.evidence() ?: "ready-parse-failed"};${CheckoutInputState.numericEvidence(inputDump)}"
+                readiness.observe(sample, input, SystemClock.uptimeMillis()).also { accepted ->
+                    if (accepted) { tapSnapshot = sample; tapInput = input }
+                }
+            }
+        } finally {
+            if (tapSnapshot == null) checkpoint("checkout-readiness-last: $lastReadinessEvidence")
         }
         checkpoint("secure external dialog and its bottom button are visible on the phone display")
         // Exercise the actual bottom control instead of invoking host Back, which
         // must not own/destroy this external activity or its result callback.
-        val ready = shell("run-as org.androidcontrol.regression.checkout cat files/ready")
-        val x = ready.substringAfter(";x=").substringBefore(';').toInt()
-        val y = ready.substringAfter(";y=").toInt()
+        val ready = checkNotNull(tapSnapshot)
+        checkpoint("checkout-tap-ready: $lastReadinessEvidence;${checkNotNull(tapInput).evidence()}")
+        val x = ready.x
+        val y = ready.y
         shell("input -d 0 tap $x $y")
         awaitState("Dismissing the external dialog did not return its result to the target") {
             fixtureFile("checkout-returned").contains("returned")

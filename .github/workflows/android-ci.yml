@@ -112,6 +112,13 @@ jobs:
       - name: Build debug APK
         run: ./gradlew :manager:testDebugUnitTest :manager:assembleDebug
 
+      - name: Check runtime fixture readiness
+        run: |
+          gradle_lib=$(find "${GRADLE_USER_HOME:-$HOME/.gradle}/wrapper/dists/gradle-8.14-bin" -type d -path '*/gradle-8.14/lib' -print -quit)
+          test -n "$gradle_lib"
+          python3 tests/runtime-control-fixture/check.py --gradle-lib "$gradle_lib"
+          python3 tests/run-checkout-readiness-host-checks.py --kotlin-lib "$gradle_lib"
+
       - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
