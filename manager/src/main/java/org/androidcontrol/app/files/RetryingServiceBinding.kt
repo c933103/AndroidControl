@@ -26,9 +26,16 @@ internal class RetryingServiceBinding<T : Any, C : Any>(
         var failure: Throwable? = null
     }
 
+    private class Cleanup {
+        val latch = CountDownLatch(1)
+        var failure: Throwable? = null
+    }
+    private class Retirement<C : Any>(val connection: C) {
+        var cleanup: Cleanup? = null
+    }
     private val lock = Any()
     private var current: Attempt<T, C>? = null
-    private var retiring: CountDownLatch? = null
+    private var retiring: Retirement<C>? = null
 
     fun peek(): T? = synchronized(lock) { current?.service?.takeIf(isAlive) }
 
@@ -38,18 +45,27 @@ internal class RetryingServiceBinding<T : Any, C : Any>(
         val budget = unit.toNanos(timeout.coerceAtLeast(0))
         fun remaining() = (budget - (System.nanoTime() - started)).coerceAtLeast(0)
         while (true) {
-            val cleanup: CountDownLatch?
+            val cleanup: Cleanup?
             val attempt = synchronized(lock) {
                 current?.service?.takeIf(isAlive)?.let { return it }
                 current?.takeIf { it.latch.count == 0L }?.let { retire(it) }
-                cleanup = retiring
+                cleanup = retiring?.let { retirement ->
+                    val previous = retirement.cleanup
+                    if (previous == null || previous.latch.count == 0L) scheduleCleanup(retirement) else previous
+                }
                 if (cleanup != null) null else current ?: start()
             }
             if (attempt == null) {
                 // Cleanup may be stalled in Binder. Callers still have bounded waits;
                 // retries neither bypass it nor enqueue unbounded replacement binds.
-                if (!await(checkNotNull(cleanup), remaining())) {
+                val pendingCleanup = checkNotNull(cleanup)
+                if (!await(pendingCleanup.latch, remaining())) {
                     throw IOException("Timed out connecting to privileged file service")
+                }
+                synchronized(lock) {
+                    pendingCleanup.failure?.let {
+                        throw IOException("Could not disconnect previous privileged file service", it)
+                    }
                 }
                 continue
             }
@@ -116,23 +132,27 @@ internal class RetryingServiceBinding<T : Any, C : Any>(
         current = null
         attempt.service = null
         attempt.latch.countDown()
-        val cleanup = CountDownLatch(1)
-        retiring = cleanup
+        val retirement = Retirement(attempt.connection)
+        retiring = retirement
+        scheduleCleanup(retirement)
+    }
+
+    /** At most one cleanup is active; a failed cleanup is retried by the next caller. */
+    private fun scheduleCleanup(retirement: Retirement<C>): Cleanup {
+        val cleanup = Cleanup()
+        retirement.cleanup = cleanup
         // The same serial worker orders cleanup after even a stalled bind. Shizuku's
-        // non-removing unbind clears ALL callbacks for this service, so the gate stays
-        // closed until cleanup finishes. Neither bind nor unbind holds the state lock.
+        // non-removing unbind clears ALL callbacks for this service, and only after
+        // remote removal succeeds. Keep the gate closed on failure: otherwise a new
+        // callback can be attached to the old Shizuku multiplexer and receive old events.
         worker.execute {
-            try {
-                unbind(attempt.connection)
-            } catch (_: Throwable) {
-                // A stopped backend may reject cleanup; identity checks still protect
-                // future generations from its outstanding callbacks.
-            } finally {
-                synchronized(lock) {
-                    if (retiring === cleanup) retiring = null
-                    cleanup.countDown()
-                }
+            val failure = runCatching { unbind(retirement.connection) }.exceptionOrNull()
+            synchronized(lock) {
+                cleanup.failure = failure
+                if (failure == null && retiring === retirement) retiring = null
+                cleanup.latch.countDown()
             }
         }
+        return cleanup
     }
 }

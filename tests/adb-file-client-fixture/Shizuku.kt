@@ -10,10 +10,21 @@ object Shizuku {
         fun debuggable(value: Boolean) = this
         fun version(value: Int) = this
     }
+    // Model the pinned API's cached multiplexer, including retention when unbind throws.
+    class Multiplexer {
+        val connections = mutableListOf<ServiceConnection>()
+        fun connected(binder: IBinder) {
+            val snapshot = synchronized(Shizuku) { connections.toList() }
+            snapshot.forEach { it.onServiceConnected(ComponentName("fixture", "service"), binder) }
+        }
+    }
+    private var current: Multiplexer? = null
     val callbacks = java.util.concurrent.LinkedBlockingQueue<ServiceConnection>()
-    val registrations = mutableListOf<ServiceConnection>()
-    var running = true
-    var unbinds = 0
+    val registrations get() = synchronized(this) { current?.connections?.toList() ?: emptyList() }
+    fun multiplexer() = synchronized(this) { checkNotNull(current) }
+    @Volatile var running = true
+    @Volatile var unbinds = 0
+    @Volatile var failUnbind = false
     private val backend = object : IBinder {
         override val isBinderAlive get() = running
         override fun pingBinder() = Shizuku.pingBinder()
@@ -24,13 +35,19 @@ object Shizuku {
         return running
     }
     fun bindUserService(args: UserServiceArgs, connection: ServiceConnection) {
-        synchronized(registrations) { registrations.add(connection) }
+        synchronized(this) {
+            val multiplexer = current ?: Multiplexer().also { current = it }
+            multiplexer.connections.add(connection)
+        }
         callbacks.add(connection)
     }
     fun unbindUserService(args: UserServiceArgs, connection: ServiceConnection, remove: Boolean) {
         check(!remove) { "Recovery must not terminate the remote service" }
-        // Pinned Shizuku clears the service's complete callback set, not just connection.
-        synchronized(registrations) { registrations.clear() }
         unbinds++
+        check(!failUnbind) { "Controlled remote cleanup failure" }
+        synchronized(this) {
+            current?.connections?.clear()
+            current = null
+        }
     }
 }

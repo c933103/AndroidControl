@@ -9,7 +9,7 @@ import java.util.concurrent.TimeUnit
 
 private class Service : IAdbFileService, IBinder {
     override fun asBinder(): IBinder = this
-    override val isBinderAlive = true
+    @Volatile override var isBinderAlive = true
     override fun pingBinder(): Boolean {
         check(!java.lang.Boolean.getBoolean("adb.fixture.forbidPing")) { "Synchronous service ping is forbidden" }
         return true
@@ -51,7 +51,27 @@ fun main() {
             check(Shizuku.unbinds == 1)
             check(Shizuku.registrations.single() === fresh)
             check(runCatching { initial.get(1, TimeUnit.SECONDS) }.exceptionOrNull()?.cause is IOException)
-            println("PASS: actual AdbFileClient timeout retry, stale connect/disconnect, registration isolation, main-thread/backend guards and nonblocking liveness")
+
+            // A failed remote removal keeps the actual API's old multiplexer cached.
+            // It must never gain a replacement generation until cleanup has succeeded.
+            val oldMultiplexer = Shizuku.multiplexer()
+            service.isBinderAlive = false
+            Shizuku.failUnbind = true
+            val cleanupError = fails { AdbFileClient.requireService(2) }
+            check(Shizuku.callbacks.isEmpty()) { "Cleanup regression reproduced: replacement callback registered on the old multiplexer" }
+            check(cleanupError.message!!.contains("disconnect previous"))
+            oldMultiplexer.connected(Service())
+            Shizuku.failUnbind = false
+            val recovered = retryExecutor.submit<IAdbFileService> { AdbFileClient.requireService(3) }
+            val newest = checkNotNull(Shizuku.callbacks.poll(1, TimeUnit.SECONDS))
+            check(Shizuku.multiplexer() !== oldMultiplexer)
+            check(oldMultiplexer.connections.isEmpty())
+            oldMultiplexer.connected(Service())
+            check(!recovered.isDone) { "Old registration completed a newer generation" }
+            val newestService = Service()
+            newest.onServiceConnected(name, newestService)
+            check(recovered.get(1, TimeUnit.SECONDS) === newestService)
+            println("PASS: actual AdbFileClient timeout/retry, stale callbacks, failed-cleanup multiplexer isolation, guards and nonblocking liveness")
         } finally { retryExecutor.shutdownNow() }
     } finally { executor.shutdownNow() }
 }

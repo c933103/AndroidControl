@@ -180,7 +180,14 @@ class RetryingServiceBindingTest {
         val old = f.next()
         val service = Service()
         f.onBind = { it.connected(service) }
+        val cleanupFailure = failure { f.binding.requireService(2) }
+        assertEquals("backend still stopped", cleanupFailure.cause?.message)
+        assertTrue("Cleanup failure must not allow a replacement bind", f.bound.isEmpty())
+        old.connected(Service())
+        assertNull(f.binding.peek())
+        f.onUnbind = { }
         assertSame(service, f.binding.requireService(2))
+        assertEquals("Cleanup was retried before the new registration", listOf(old, old), f.unbound)
         old.connected(Service())
         old.disconnected()
         assertSame(service, f.binding.peek())
