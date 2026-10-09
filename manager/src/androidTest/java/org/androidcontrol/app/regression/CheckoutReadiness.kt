@@ -104,7 +104,7 @@ internal data class CheckoutInputState(val rotation: Int, val width: Int, val he
             val line = lines.firstOrNull { Regex("^\\s*\\d+: name=").containsMatchIn(it) &&
                 it.substringAfter("name=").substringBefore(", id=") == focused && it.contains("displayId=0,") } ?: return null
             val flags = line.substringAfter("inputConfig=", "").substringBefore(", alpha=")
-            if (flags.isEmpty() || listOf("NOT_VISIBLE", "NOT_TOUCHABLE", "NO_INPUT_CHANNEL", "DROP_INPUT").any { it in flags }) return null
+            if (flags.isEmpty() || listOf("NOT_VISIBLE", "NOT_TOUCHABLE", "NO_INPUT_CHANNEL", "DROP_INPUT", "PAUSE_DISPATCHING").any { it in flags }) return null
             val rect = Regex("frame=\\[(-?\\d+),(-?\\d+)\\]\\[(-?\\d+),(-?\\d+)\\]").find(line) ?: return null
             val n = rect.groupValues.drop(1).map { it.toIntOrNull() ?: return null }
             val points = listOf(n[0] to n[1], n[0] to n[3], n[2] to n[1], n[2] to n[3]).map { (x, y) ->

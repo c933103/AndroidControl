@@ -107,6 +107,18 @@ fun main(args: Array<String>) {
             inputDump().replace("0 1 0\n-1 0 320", "0 2 0\n-1 0 320"))) {
         verify(CheckoutInputState.parse(bad) == null, "inactive/mismatched focused token or input state rejected")
     }
+    val pausedInput = CheckoutInputState.parse(inputDump().replace("SENSITIVE_FOR_PRIVACY", "PAUSE_DISPATCHING"))
+    val paused = CheckoutReadiness()
+    paused.observe(snapshot(), pausedInput, 1000)
+    paused.observe(snapshot(2, 1250), pausedInput, 1250)
+    verify(!paused.observe(snapshot(3, 1500), pausedInput, 1500),
+        "PAUSE_DISPATCHING must not settle into tappable readiness")
+    verify(pausedInput == null, "paused focused window must be rejected")
+    val resume = CheckoutReadiness()
+    resume.observe(snapshot(), input, 1000)
+    verify(!resume.observe(snapshot(2, 1250), pausedInput, 1250), "per-window pause resets settling")
+    verify(!resume.observe(snapshot(3, 1500), input, 1500), "resumed window must start a fresh stability interval")
+    verify(resume.observe(snapshot(5, 2000), input, 2000), "resumed window can settle normally")
     val reset = CheckoutReadiness()
     reset.observe(snapshot(), input, 1000)
     reset.observe(snapshot(2, 1250), input, 1250)
