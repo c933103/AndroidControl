@@ -2,7 +2,7 @@
 
 `AppOpsPickerRecoveryTest` exercises the production `AppOpsActivity.kt`,
 `AppOpsBackup.kt`, and `AppOpsNames.kt` under Robolectric 4.14.1 on Android API 30
-and 35. Its 21 test methods execute once on each API level.
+and 35. Its 24 test methods execute once on each API level.
 
 ## What is real
 
@@ -41,6 +41,7 @@ privileged files, accesses a live profile, or uses a connected device.
 - Results arriving while recreated startup is still busy
 - A successful queued export or import surviving another recreation
 - Canceled/null callbacks, mismatched request codes, and duplicate callbacks
+- Cancellation without added backend work or an app chooser, including restored startup
 - Duplicate success/cancellation while an accepted URI is still queued
 - Captured profile/package for export enumeration and import catalog reads
 - Import confirmation and writes remaining pinned when the selected user changes

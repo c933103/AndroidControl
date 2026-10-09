@@ -185,6 +185,9 @@ class AppOpsActivity : AppBarActivity() {
     }
     private fun loadApps() {
         val requestedUser = user
+        // A restored picker owns the screen transition, even if it is canceled
+        // before this already-queued startup request completes.
+        val offerAppSelection = pendingDocument == null
         task({
             val loaded = AppOpsClient.request("apps", requestedUser) as JSONArray
             val saved = AppOpsClient.request("rules", requestedUser) as JSONObject
@@ -195,7 +198,7 @@ class AppOpsActivity : AppBarActivity() {
             rules = saved
             selectedPackage = selectedPackage?.takeIf { pkg -> apps.any { it.getString("package") == pkg } }
             status.text = getString(R.string.appops_apps_loaded, apps.size, user)
-            if (selectedPackage != null) loadApp() else if (pendingDocument == null) selectApp()
+            if (selectedPackage != null) loadApp() else if (offerAppSelection && pendingDocument == null) selectApp()
         }
     }
     private fun selectUser() {
@@ -394,9 +397,6 @@ class AppOpsActivity : AppBarActivity() {
         if (resultCode != Activity.RESULT_OK || data?.data == null) {
             pendingDocument = null
             pendingDocumentUri = null
-            if (!busy) {
-                if (selectedPackage != null) loadApp() else selectApp()
-            }
             return
         }
         pendingDocumentUri = data.data

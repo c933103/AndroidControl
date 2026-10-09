@@ -305,6 +305,45 @@ class AppOpsPickerRecoveryTest {
         assertExport(stream, 10)
     }
 
+    @Test fun cancellationWithSelectionDoesNotReloadOrMakeScreenBusy() {
+        val controller = ready()
+        val activity = controller.get()
+        launch(activity, 501)
+        val dialogs = MaterialAlertDialogBuilder.dialogs.size
+        result(activity, 501, result = Activity.RESULT_CANCELED)
+        assertFalse("Cancel must not make an idle screen busy", field(activity, "busy") as Boolean)
+        assertTrue("Cancel must not queue a backend reload", AppOpsClient.queue.isEmpty())
+        assertTrue(AppOpsClient.calls.isEmpty())
+        assertEquals(dialogs, MaterialAlertDialogBuilder.dialogs.size)
+    }
+
+    @Test fun cancellationWithoutSelectionDoesNotOpenAnAppChooser() {
+        val controller = ready()
+        val activity = controller.get()
+        setField(activity, "selectedPackage", null)
+        launch(activity, 501)
+        val dialogs = MaterialAlertDialogBuilder.dialogs.size
+        result(activity, 501, result = Activity.RESULT_CANCELED)
+        assertTrue(AppOpsClient.queue.isEmpty())
+        assertTrue(AppOpsClient.calls.isEmpty())
+        assertEquals("User-wide export cancellation must not ask for an app", dialogs, MaterialAlertDialogBuilder.dialogs.size)
+    }
+
+    @Test fun cancellationDuringRestoredStartupDoesNotOpenAnAppChooserWhenLoadingFinishes() {
+        val first = ready()
+        setField(first.get(), "selectedPackage", null)
+        launch(first.get(), 501)
+        val next = recreate(first)
+        val dialogs = MaterialAlertDialogBuilder.dialogs.size
+        val alreadyQueued = AppOpsClient.queue.size
+        result(next.get(), 501, result = Activity.RESULT_CANCELED)
+        assertEquals("Cancel must not add work to existing startup", alreadyQueued, AppOpsClient.queue.size)
+        drain()
+        assertFalse(field(next.get(), "busy") as Boolean)
+        assertEquals("Finishing startup must respect the canceled picker", dialogs, MaterialAlertDialogBuilder.dialogs.size)
+        assertTrue(AppOpsClient.calls.none { it.operation == "snapshot" || it.operation == "set" })
+    }
+
     @Test fun canceledRecreatedPickerCannotBeResurrectedByLateSuccess() {
         val first = ready()
         launch(first.get(), 501)

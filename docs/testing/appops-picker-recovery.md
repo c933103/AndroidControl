@@ -4,7 +4,7 @@
 
 Before this change, the selected Android user and package existed only in Activity fields. Recreating the Activity while the document picker was open lost the operation context. A result could be silently dropped while startup enumeration marked the screen busy, or export could use the recreated default profile/app cache instead of the profile used to launch the picker.
 
-The Activity now saves its selected user/package and an explicit pending document request. A successful result that arrives during startup is queued, including its URI, until the existing work finishes. Both the request and a queued URI round-trip through saved instance state. A matching result is consumed once, only when work can actually be scheduled. Unrelated results are ignored; cancellation clears the request, and duplicates cannot overwrite or cancel an already queued successful result.
+The Activity now saves its selected user/package and an explicit pending document request. A successful result that arrives during startup is queued, including its URI, until the existing work finishes. Both the request and a queued URI round-trip through saved instance state. A matching result is consumed once, only when work can actually be scheduled. Unrelated results are ignored; cancellation clears the request without a new reload or app chooser (including when restored startup later finishes), and duplicates cannot overwrite or cancel an already queued successful result.
 
 Export enumerates the request's captured user directly rather than trusting the recreated Activity's cache. Import uses the request's captured user/package for validation, names that user in its confirmation and keeps the same target for all subsequent writes even if the displayed selection changes. A missing/failed request never falls back to another user's profile.
 
@@ -24,10 +24,12 @@ Coverage includes framework recreation and parcel-round-trip restoration; import
 
 ## Observed controlled results (9 October 2026)
 
-- Final candidate: all 42 executions passed (21 scenarios on each of API 30 and API 35).
+- Initial candidate `a52238cdc3ffa1e6b12d2fc2f74c2e987c0fc42f`: all 42 executions passed (21 scenarios on each of API 30 and API 35), including the published Maven CI job.
 - Exact baseline `b7c3d000fefd67f8e227c11a5aeb47a2f599e9e3`, against the identical test suite: 34 of 42 executions failed. Failures included empty/dropped exports during recreated startup, wrong-profile export/restore and missing import confirmation after saved-state recreation. The baseline comparison is a controlled reproduction, not an observation of a user's device or backup corruption.
 - The first candidate passed 36 of 40 executions and failed the four queued duplicate-success/cancellation cases. The successful-result guard fixed those cases before the final 42-execution run.
 - The local runner used cached Kotlin 1.9.24, JUnit 4.13.2, Robolectric 4.14.1 and Java 21 with explicit Android framework JARs. This validates the production source and test assertions; the newly added Maven/CI path and native app build must be checked separately on the published head.
+
+- Ready-transition review found an unnecessary reload/app chooser after cancellation. The correction adds three scenarios, making the current suite 24 scenarios / 48 API executions. Its local before/after reruns were interrupted by execution-environment replacement and are not counted as passing. Fresh CI on the combined AC-001 + AC-002 tree is the acceptance gate for this revision.
 
 ## Verification limits
 
