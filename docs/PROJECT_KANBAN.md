@@ -2,6 +2,8 @@
 
 Parent: [private cross-project master](https://github.com/c933103/something-priv-maybe/issues/1) (access restricted).
 
+Discussion and dated evidence: [project-board PR25](https://github.com/c933103/AndroidControl/pull/25).
+
 Snapshot: 10 October 2026, 04:01 UTC / 12:01 UTC+08. Master: `5ccc8ef67373b8a5dfdb351cdcab8c1ce3ca55a8`.
 
 ## Brief and product decisions
