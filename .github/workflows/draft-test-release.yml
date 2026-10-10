@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - master
-      - release/publish-androidcontrol-test-5ccc8ef
   workflow_dispatch:
 
 permissions:
@@ -12,7 +11,6 @@ permissions:
 
 jobs:
   release:
-    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
 
     steps:
@@ -84,26 +82,3 @@ jobs:
         shell: bash
         run: |
           gh release create "${{ steps.meta.outputs.tag }}"             manager/build/outputs/apk/debug/*.apk             --repo "$GITHUB_REPOSITORY"             --target "$GITHUB_SHA"             --title "${{ steps.meta.outputs.title }}"             --notes "Private test build from merged master. Debug APK signed with the verified permanent test key. Portrait container and restoration changes require device validation. Not published."             --draft             --prerelease
-
-  publish-reviewed-prerelease:
-    if: >-
-      github.event_name == 'push' &&
-      github.ref == 'refs/heads/release/publish-androidcontrol-test-5ccc8ef' &&
-      github.event.head_commit.message == 'Publish approved AndroidControl test 5ccc8ef'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    concurrency:
-      group: publish-androidcontrol-test-5ccc8ef
-      cancel-in-progress: false
-    steps:
-      - name: Check out the bounded publication request
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - name: Verify and publish only the reviewed existing test draft
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 .github/release-requests/publish_androidcontrol_test_5ccc8ef.py
