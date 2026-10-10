@@ -757,11 +757,13 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                             // the native display. Preserve their live result chain there.
                             val webHandled = !handoffFile.baseFile.exists() && isPhoneUnlocked() && try {
                                 routePortraitWebLink(tasks, topActivity, displayId)
-                            } catch (_: Exception) {
+                            } catch (inspection: Exception) {
                                 // Unsupported OEM inspection must not strand a browser
                                 // or native screen behind the portrait host.
                                 closingBrowser = null
-                                false
+                                portraitWebRouteReject("INSPECTION_EXCEPTION", displayId) {
+                                    "; exceptionClass=${inspection.javaClass.name}"
+                                }
                             }
                             if (webHandled) {
                                 restoreSessionFocus()
@@ -810,7 +812,9 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
                     BrowserDismissal.REMOVE_TASK -> if (invokeActivityTaskManager(
                         getActivityTaskManagerService(), "removeTask", closing.taskId) != true) {
                         closingBrowser = null
-                        return false
+                        return portraitWebRouteReject("REMOVE_TASK_REJECTED", displayId) {
+                            "; taskId=${closing.taskId}; dismissal=${closing.dismissal.name}"
+                        }
                     }
                     BrowserDismissal.BACK -> {
                         injectEvent(displayId, KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, 0))
@@ -823,32 +827,67 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             }
             if (SystemClock.uptimeMillis() < closing.deadline) return true
             closingBrowser = null
-            return false
+            return portraitWebRouteReject("BROWSER_CLOSE_TIMEOUT", displayId) {
+                "; taskId=${closing.taskId}; dismissal=${closing.dismissal.name}"
+            }
         }
-        if (top == null || top.packageName == targetPackage || portraitBrowserVisible) return false
-        val task = tasks.firstOrNull { getRunningTaskDisplayId(it) == displayId && it.topActivity == top }
-            ?: return false
+        if (top == null) return portraitWebRouteReject("NO_TOP", displayId)
+        if (top.packageName == targetPackage) return portraitWebRouteReject("TOP_IS_TARGET", displayId)
+        if (portraitBrowserVisible) return portraitWebRouteReject("PANEL_ALREADY_VISIBLE", displayId)
+        // Capture the values used by this predicate, never a second system snapshot.
+        val candidates = if (org.androidcontrol.app.BuildConfig.DEBUG) mutableListOf<String>() else null
+        val task = tasks.firstOrNull {
+            val taskDisplayId = getRunningTaskDisplayId(it)
+            val topMatches = if (taskDisplayId == displayId) it.topActivity == top else null
+            candidates?.add("taskId=${it.taskId},displayId=$taskDisplayId,topMatchesRoot=$topMatches")
+            topMatches == true
+        } ?: return portraitWebRouteReject("TASK_SNAPSHOT_NO_MATCH", displayId) {
+            "; candidates=${candidates?.joinToString("|")}"
+        }
         // Only a general-purpose browser qualifies. Verified app links, identity,
         // billing and permission activities keep their live native result chain.
         val probe = android.content.Intent(android.content.Intent.ACTION_VIEW,
             android.net.Uri.parse("https://example.com/"))
             .addCategory(android.content.Intent.CATEGORY_BROWSABLE).setPackage(top.packageName)
         HiddenApiBypass.addHiddenApiExemptions("Landroid/content/pm/ResolveInfo;")
-        if (shellContext.packageManager.queryIntentActivities(probe, 0).none {
+        val handlers = shellContext.packageManager.queryIntentActivities(probe, 0)
+        if (handlers.none {
                 it.javaClass.getField("handleAllWebDataURI").getBoolean(it)
-            }) return false
+            }) return portraitWebRouteReject("NOT_GENERAL_WEB_HANDLER", displayId) {
+                "; taskId=${task.taskId}; resolverCount=${handlers.size}"
+            }
         val launch = PortraitWebLaunch.find(runCommand("/system/bin/dumpsys", "activity", "activities"),
-            task.taskId, top.flattenToShortString(), targetPackage) ?: return false
+            task.taskId, top.flattenToShortString(), targetPackage)
+            ?: return portraitWebRouteReject("LAUNCH_RECORD_NOT_QUALIFIED", displayId) {
+                "; taskId=${task.taskId}"
+            }
         val dismissal = if (task.taskId !in portraitInitialTaskIds && task.numActivities == 1 &&
             task.baseActivity?.packageName == top.packageName) {
             // This browser task was created during this session. Do not remove
             // pre-existing browser tasks, tabs, or a task containing the game.
             BrowserDismissal.REMOVE_TASK
         } else if (task.baseActivity?.packageName == targetPackage) BrowserDismissal.BACK
-        else return false
+        else return portraitWebRouteReject("TASK_OWNERSHIP_NOT_ELIGIBLE", displayId) {
+            "; taskId=${task.taskId}"
+        }
         closingBrowser = BrowserClose(task.taskId, top, launch, SystemClock.uptimeMillis() + 5000,
             dismissal)
         return true
+    }
+
+    // Diagnostic fields are deliberately limited to IDs, booleans, counts, enums
+    // and exception class names. Never log URLs, intents, dump text or exceptions.
+    private inline fun portraitWebRouteReject(
+        reason: String, displayId: Int, details: () -> String = { "" }
+    ): Boolean {
+        if (org.androidcontrol.app.BuildConfig.DEBUG) {
+            // A diagnostic failure must not change the existing routing decision.
+            runCatching {
+                android.util.Log.d("AndroidControlService",
+                    "PortraitWebRouteReject reason=$reason; displayId=$displayId${details()}")
+            }
+        }
+        return false
     }
 
     private fun isActivityInputFocused(displayId: Int, component: android.content.ComponentName): Boolean =
