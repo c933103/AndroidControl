@@ -82,6 +82,10 @@
                 <!--<category android:name="android.intent.category.LEANBACK_LAUNCHER" />-->
             </intent-filter>
         </activity>
+        <activity
+            android:name=".licenses.ComponentLicensesActivity"
+            android:exported="false"
+            android:label="@string/component_licences_title" />
         <activity android:name=".recording.CallRecordingActivity"
             android:exported="false"
             android:label="@string/call_record_title" />
