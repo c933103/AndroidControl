@@ -1,8 +1,11 @@
 /*
  * ShizuCallRecorder: FOSS Call recording powered through ADB/Shizuku!
  *  Copyright (C) 2026-present kitsumed (Med)
+ *  SPDX-FileCopyrightText: 2026-present kitsumed (Med)
+ *  SPDX-License-Identifier: LicenseRef-ShizuCallRecorder-GPL3-Section7
+ *  SPDX-FileComment: GPL-3.0-or-later plus upstream Section 7 terms; see LICENSES/LicenseRef-ShizuCallRecorder-GPL3-Section7.txt
  *  This software is licensed under the GNU General Public License v3 or later, with additional terms as permitted under Section 7.
- *  The full license text is available in the LICENSE file at the root of this project.
+ *  The full GPL-3.0 and Section 7 terms are in LICENSES/LicenseRef-ShizuCallRecorder-GPL3-Section7.txt.
  *  This software is distributed WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
  */
 
