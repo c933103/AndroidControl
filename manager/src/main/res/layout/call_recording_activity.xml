@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:fillViewport="true">
+    <LinearLayout android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:padding="24dp"
+        android:orientation="vertical">
+        <TextView style="@style/CardTitle"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="@string/call_record_setup" android:textSize="20sp"/>
+        <TextView style="@style/CardContent" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginTop="12dp"
+            android:text="@string/call_record_disclaimer"/>
+        <com.google.android.material.checkbox.MaterialCheckBox
+            android:id="@+id/call_record_terms" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginTop="12dp"
+            android:text="@string/call_record_legal_ack"/>
+
+        <TextView style="@style/CardTitle" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginTop="20dp"
+            android:text="@string/call_record_destination"/>
+        <TextView android:id="@+id/call_record_folder_label"
+            style="@style/CardSummary" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:ellipsize="middle"
+            android:maxLines="3" android:textIsSelectable="true"/>
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/call_record_pick_folder" style="@style/CardButton"
+            android:text="@string/call_record_pick_folder"/>
+
+        <TextView style="@style/CardTitle" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginTop="20dp"
+            android:text="@string/call_record_format"/>
+        <RadioGroup android:id="@+id/call_record_codec"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <RadioButton android:id="@+id/call_record_codec_opus"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="@string/call_record_opus"/>
+            <RadioButton android:id="@+id/call_record_codec_aac"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="@string/call_record_aac"/>
+        </RadioGroup>
+
+        <TextView style="@style/CardTitle" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginTop="20dp"
+            android:text="@string/call_record_audio_source"/>
+        <RadioGroup android:id="@+id/call_record_source"
+            android:layout_width="match_parent" android:layout_height="wrap_content">
+            <RadioButton android:id="@+id/call_record_source_call"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="@string/call_record_voice_call"/>
+            <RadioButton android:id="@+id/call_record_source_communication"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="@string/call_record_voice_communication"/>
+        </RadioGroup>
+        <TextView style="@style/CardContent" android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/call_record_source_warning"/>
+        <com.google.android.material.switchmaterial.SwitchMaterial
+            android:id="@+id/call_record_automatic"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/call_record_auto"/>
+        <TextView style="@style/CardContent"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="@string/call_record_auto_warning"/>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/call_record_start" style="@style/CardButton"
+            android:layout_marginTop="20dp"
+            android:text="@string/call_record_start"/>
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/call_record_stop" style="@style/CardButton"
+            android:text="@string/call_record_stop"/>
+        <TextView android:id="@+id/call_record_status" style="@style/CardSummary"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="12dp" android:textIsSelectable="true"/>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/call_record_files" style="@style/CardButton"
+            android:layout_marginTop="20dp"
+            android:text="@string/call_record_files_title"/>
+        <TextView android:id="@+id/call_record_credits"
+            style="@style/CardContent" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginTop="24dp"
+            android:autoLink="none" android:textIsSelectable="true"/>
+    </LinearLayout>
+</ScrollView>

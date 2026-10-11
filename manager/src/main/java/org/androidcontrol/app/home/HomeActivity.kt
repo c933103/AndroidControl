@@ -106,6 +106,8 @@ abstract class HomeActivity : AppBarActivity() {
             R.id.action_about -> {
                 val binding = AboutDialogBinding.inflate(LayoutInflater.from(this), null, false)
                 binding.sourceCode.movementMethod = LinkMovementMethod.getInstance()
+                binding.callRecordingCredit.movementMethod = LinkMovementMethod.getInstance()
+                binding.callRecordingCredit.text = getString(R.string.call_record_upstream_notice).toHtml()
                 binding.sourceCode.text = getString(
                     R.string.about_view_source_code,
                     "<b><a href=\"https://github.com/c933103/AndroidControl\">GitHub</a></b>"
