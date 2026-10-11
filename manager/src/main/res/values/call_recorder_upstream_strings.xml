@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Derived from kitsumed/ShizuCallRecorder at 41d1dc7; GPL-3.0 with Section 7 terms. -->
+<resources>
+    <string name="audio_codec_opus">Opus</string>
+    <string name="audio_codec_aac">AAC</string>
+    <string name="audio_source_voice_comm">Voice communication mic</string>
+    <string name="audio_source_voice_comm_description">Microphone audio source tuned for voice communications. Built-in echo cancellation.</string>
+    <string name="audio_source_voice_call">Voice call</string>
+    <string name="audio_source_voice_call_description">Records both sides of a phone calls. The raw audio, with phone tones.</string>
+    <string name="audio_source_voice_call_uplink">Voice call uplink</string>
+    <string name="audio_source_voice_call_uplink_description">Records only your side of a phone call (uplink).</string>
+    <string name="audio_source_voice_call_downlink">Voice call downlink</string>
+    <string name="audio_source_voice_call_downlink_description">Records only the other person side of a phone call (downlink).</string>
+    <string name="audio_source_output">Audio output (remote submix)</string>
+    <string name="audio_source_output_description">Captures the final, combined audio exactly as it is sent to your speakers.</string>
+    <string name="audio_source_playback">Audio playback</string>
+    <string name="audio_source_playback_description">Capture audio from other apps, except those that restrict recording (respects app opt-out flags).</string>
+    <string name="audio_source_voice_performance">Voice performance</string>
+    <string name="audio_source_voice_performance_description">High-speed microphone mode designed for live music and real-time audio apps.</string>
+    <string name="audio_source_mic">Standard microphone</string>
+    <string name="audio_source_mic_description">Captures audio directly from the device main microphone. Minor noise reduction.</string>
+    <string name="audio_source_mic_unprocessed">Unprocessed mic</string>
+    <string name="audio_source_mic_unprocessed_description">Captures raw, natural microphone audio without any automatic filtering or enhancement.</string>
+    <string name="audio_source_mic_camcorder">Camcorder mic</string>
+    <string name="audio_source_mic_camcorder_description">Tuned for video recording, focusing on audio from the direction of the camera.</string>
+    <string name="audio_source_mic_voice_recognition">Voice recognition mic</string>
+    <string name="audio_source_mic_voice_recognition_description">Microphone with processing tuned for speech recognition (reduced noise).</string>
+</resources>
