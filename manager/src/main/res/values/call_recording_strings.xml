@@ -16,8 +16,8 @@
     <string name="call_record_voice_call">Voice call (uplink and downlink)</string>
     <string name="call_record_voice_communication">Voice communication (compatibility alternative)</string>
     <string name="call_record_source_warning">The actual audio captured depends on firmware. Test both voices and the saved file before relying on it.</string>
-    <string name="call_record_auto">Automatically record connected cellular calls</string>
-    <string name="call_record_auto_warning">Off by default. Requires phone-state permission, an accessible folder and active Shizuku. Android may prevent background starts; automatic recording is best-effort.</string>
+    <string name="call_record_auto">Automatically record cellular calls when off-hook</string>
+    <string name="call_record_auto_warning">Off by default. Off-hook includes outgoing dialing before the other party answers. Requires phone-state permission, a writable folder and active Shizuku. Android may block background starts.</string>
     <string name="call_record_start">Start recording current call</string>
     <string name="call_record_stop">Stop recording and save</string>
     <string name="call_record_notification">Recording an active cellular call</string>

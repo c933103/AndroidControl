@@ -11,7 +11,7 @@ The interface is reachable by a **Call recording** card on the main screen and o
 - Destination folder chosen through Android's Storage Access Framework (SAF), with persisted read/write grants; recordings kept locally.
 - Opus/OGG (default) and AAC/M4A, and voice-call vs. compatibility source selection.
 - Manually starting/stopping a recording **during** an active cellular call.
-- Optional automatic recording on an `OFFHOOK` state broadcast; disabled by default.
+- Optional automatic recording on an `OFFHOOK` state broadcast; disabled by default. `OFFHOOK` also occurs during outgoing dialing **before the other party answers**, so this is not strictly a connected-call detector.
 - A saved-file selector that opens recordings in the user's installed audio player.
 - Foreground notification while capturing with an explicit Stop action. On Android 13+, grant notification permission so recording stays visible in the notification shade.
 
@@ -35,7 +35,7 @@ This software does not announce recording to other participants. Confirm applica
 - Server v4.0's SHA-256 is pinned to `84924bd564a1eb6089c872c7521f968058977f91f5ff02514a8c74aff3210f3a`. The build fails if download verification fails; the runtime also validates before execution. The server is stored in shared app external files storage to permit privileged shell access.
 - Foreground service and ongoing notification ensure that the user can stop a session. The service tries to drain buffered audio and close `MediaMuxer` before finalizing.
 - Audio is written through user-granted SAF URIs. AndroidControl does not upload recordings; **a user-selected cloud-backed storage provider may sync them**, so choose a local folder for strictly local storage. No telephone number or contact label is included.
-- A `PHONE_STATE` receiver only starts an automatic session if the user explicitly enabled it, consent was acknowledged and a destination exists.
+- A `PHONE_STATE` receiver only starts an automatic session if the user explicitly enabled it, consent was acknowledged and a destination exists. Its OFFHOOK state may include outgoing dialing.
 - The service also polls active call state every 2.5 seconds and closes recording after two consecutive non-active readings, protecting against missed hang-up broadcasts or revoked phone-state permission. If consent is withdrawn, privileged capture is intended to shut down. Validate these behaviors through controlled tests before deployment.
 - Risks to investigate include a time-of-check/time-of-use window between server-jar validation and shell execution, concurrent stop/start ordering, user-service reconnects, destination-provider failures and OS-specific foreground restrictions.
 

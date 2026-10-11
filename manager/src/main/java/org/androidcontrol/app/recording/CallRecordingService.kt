@@ -110,7 +110,11 @@ class CallRecordingService : Service() {
             val permission = ContextCompat.checkSelfPermission(
                 this@CallRecordingService, Manifest.permission.READ_PHONE_STATE
             ) == PackageManager.PERMISSION_GRANTED
-            val offHook = permission && runCatching {
+            val notificationsVisible = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                ContextCompat.checkSelfPermission(
+                    this@CallRecordingService, Manifest.permission.POST_NOTIFICATIONS
+                ) == PackageManager.PERMISSION_GRANTED
+            val offHook = permission && notificationsVisible && runCatching {
                 getSystemService(TelephonyManager::class.java).callState ==
                     TelephonyManager.CALL_STATE_OFFHOOK
             }.getOrDefault(false)
@@ -143,7 +147,13 @@ class CallRecordingService : Service() {
                 completedStop = false
                 consecutiveInactivePolls = 0
                 publish(State.STARTING)
-                showForeground()
+                try {
+                    showForeground()
+                } catch (e: RuntimeException) {
+                    AppLogger.e("Failed to enter recording foreground state", e)
+                    errorAndStop(e.message ?: "Could not create a visible recording notification")
+                    return START_NOT_STICKY
+                }
                 mainHandler.removeCallbacks(callGuard)
                 mainHandler.postDelayed(callGuard, 2500)
                 worker.execute { startSession() }

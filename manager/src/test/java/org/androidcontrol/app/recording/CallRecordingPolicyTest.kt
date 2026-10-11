@@ -14,7 +14,7 @@ class CallRecordingPolicyTest {
     private fun file(): File {
         val root = temp.newFolder("user-emulated")
         return File(root, "Android/data/org.androidcontrol.app/files/scrcpy-4.0-server.jar").also {
-            check(it.parentFile.mkdirs())
+            check(checkNotNull(it.parentFile).mkdirs())
             it.writeText("fixture: never execute")
         }
     }
@@ -56,10 +56,10 @@ class CallRecordingPolicyTest {
 
     @Test fun `wrong paths and missing jars rejected`() {
         val p = file()
-        val external = File(p.parentFile.parentFile, "scrcpy-4.0-server.jar")
+        val external = File(checkNotNull(checkNotNull(p.parentFile).parentFile), "scrcpy-4.0-server.jar")
         external.writeText("wrong")
         val evil = File(temp.root, "Android/data/other.app/files/scrcpy-4.0-server.jar")
-        evil.parentFile.mkdirs()
+        checkNotNull(evil.parentFile).mkdirs()
         evil.writeText("wrong")
         assertThrows(IllegalArgumentException::class.java) { check(external.absolutePath) }
         assertThrows(IllegalArgumentException::class.java) { check(evil.absolutePath) }
