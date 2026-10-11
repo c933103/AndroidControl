@@ -199,8 +199,11 @@ class CallRecordingService : Service() {
                 bridge.ownerToken, serverPath, source, codec.cliKey, codec.defaultBitRate
             ) ?: error("The privileged recorder could not capture call audio")
 
-            val actualPipe = audioPipe
-            val actualMuxer = muxer
+            val activeBridge = checkNotNull(bridge)
+            val activeDocument = checkNotNull(outputDocument)
+            val activeOutput = checkNotNull(output)
+            val actualPipe = checkNotNull(audioPipe)
+            val actualMuxer = checkNotNull(muxer)
             val actualCodec = codec
             val frames = AtomicInteger(0)
             val streamSession = AtomicReference<Session>()
@@ -229,7 +232,7 @@ class CallRecordingService : Service() {
                     }
                 }
             })
-            val running = Session(bridge, outputDocument.uri, output, actualPipe, muxer, client, frames)
+            val running = Session(activeBridge, activeDocument.uri, activeOutput, actualPipe, actualMuxer, client, frames)
             running.reader = Thread({ client.start() }, "AndroidControl-AudioPipe")
             streamSession.set(running)
             session = running
