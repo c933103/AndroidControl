@@ -112,6 +112,9 @@ jobs:
       - name: Build debug APK
         run: ./gradlew :manager:testDebugUnitTest :manager:assembleDebug
 
+      - name: Verify scrcpy executable bytes and bundled GPL/Apache notices
+        run: python3 tests/verify-call-recording-apk.py manager/build/outputs/apk/debug/*.apk
+
       - name: Check runtime fixture readiness
         run: |
           gradle_lib=$(find "${GRADLE_USER_HOME:-$HOME/.gradle}/wrapper/dists/gradle-8.14-bin" -type d -path '*/gradle-8.14/lib' -print -quit)

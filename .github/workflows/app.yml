@@ -63,6 +63,9 @@ jobs:
           test -f "${releaseApk[0]}"
           releaseName=$(basename "${releaseApk[0]}" -release.apk)
           echo "releaseName=$releaseName" >> "$GITHUB_OUTPUT"
+      - name: Verify scrcpy executable bytes and bundled GPL/Apache notices
+        run: python3 tests/verify-call-recording-apk.py manager/build/outputs/apk/release/*.apk
+
       - name: Upload release
         if: success()
         uses: actions/upload-artifact@v4

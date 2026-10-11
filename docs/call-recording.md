@@ -56,4 +56,4 @@ Source provenance: [upstream ShizuCallRecorder revision 41d1dc7](https://github.
 
 ## Build
 
-`./gradlew :manager:testDebugUnitTest :manager:assembleDebug` checks the host unit suite and creates an installable APK. The build task `prepareCallRecorderScrcpyServer` obtains a fixed release asset over HTTPS, validates SHA-256 and places it in the APK's `assets/scrcpy-server`. Do not disable these integrity checks in CI.
+`./gradlew :manager:testDebugUnitTest :manager:assembleDebug` checks the host unit suite and creates an installable APK. Then run `python3 tests/verify-call-recording-apk.py manager/build/outputs/apk/debug/*.apk` to verify that the trusted scrcpy server and both required licence notices are in the APK. This check also runs in GitHub Actions for debug/release builds. The build task `prepareCallRecorderScrcpyServer` obtains a fixed release asset over HTTPS, validates SHA-256 and places it in the APK's `assets/scrcpy-server`. Do not disable these integrity checks in CI.
