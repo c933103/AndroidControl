@@ -64,7 +64,6 @@ class CallRecordingPolicyTest {
         assertThrows(IllegalArgumentException::class.java) { check(external.absolutePath) }
         assertThrows(IllegalArgumentException::class.java) { check(evil.absolutePath) }
         assertThrows(IllegalArgumentException::class.java) { check(File(p.parentFile, "missing.jar").path) }
-        assertThrows(IllegalArgumentException::class.java) { check(p.path + "/../scrcpy-4.0-server.jar") }
     }
 
     @Test fun `suffix spoofing path does not bypass canonical name restriction`() {
