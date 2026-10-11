@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.UserManager
 import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
 import org.androidcontrol.app.recording.utils.AppLogger
@@ -31,6 +32,10 @@ class PhoneStateCallReceiver : BroadcastReceiver() {
         }
         if (state != TelephonyManager.EXTRA_STATE_OFFHOOK) return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        // The application is Direct-Boot aware, but recorder preferences and
+        // its user-selected destination live in credential-protected storage.
+        // Wait for the first unlock; never copy consent/configuration into DE.
+        if (context.getSystemService(UserManager::class.java)?.isUserUnlocked != true) return
         val preferences = CallRecordingPreferences(context)
         if (!preferences.automatic || !preferences.isConfigured() ||
             CallRecordingService.activeOrPreparing
