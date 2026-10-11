@@ -9,9 +9,14 @@ enum class ScrcpyAudioCodec(val cliKey: String, val containerExtension: String, 
     OPUS("opus", ".ogg", 16000), AAC("aac", ".m4a", 32000);
     companion object { fun fromKey(key: String) = entries.first { it.cliKey == key } }
 }
-class ScrcpyAudioMuxer(fd: FileDescriptor, path: String) {
+class ScrcpyAudioMuxer(private val fd: FileDescriptor, path: String) {
     val finalizedSuccessfully = true
-    fun initialize(codec: ScrcpyAudioCodec) {}
+    fun initialize(codec: ScrcpyAudioCodec) {
+        if (codec == ScrcpyAudioCodec.AAC && !Fixture.outputs.single { it.fileDescriptor === fd }.seekable) {
+            Fixture.muxerFailures++
+            throw java.io.IOException("controlled MP4 seek failure")
+        }
+    }
     fun writePacket(packet: ScrcpyClient.AudioPacket, codec: ScrcpyAudioCodec) { Fixture.frames++ }
     fun close() {}
 }
@@ -22,7 +27,10 @@ class ScrcpyClient(pipe: ParcelFileDescriptor, val codec: ScrcpyAudioCodec, val 
         fun onAudioPacket(packet: AudioPacket)
         fun onStreamEnd(error: String?)
     }
-    fun start() { listener.onMetadataReceived(codec); listener.onAudioPacket(AudioPacket()) }
+    fun start() {
+        try { listener.onMetadataReceived(codec); listener.onAudioPacket(AudioPacket()) }
+        catch (error: Exception) { listener.onStreamEnd(error.message) }
+    }
     fun close() {}
 }
 object ScrcpyConfig { fun getServerPath(context: Context) = "/fixture/never-executed" }

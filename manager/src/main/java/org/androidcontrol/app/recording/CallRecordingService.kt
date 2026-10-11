@@ -20,6 +20,9 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.telephony.TelephonyManager
+import android.system.ErrnoException
+import android.system.Os
+import android.system.OsConstants
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.documentfile.provider.DocumentFile
@@ -254,8 +257,19 @@ class CallRecordingService : Service() {
             val mimeType = if (codec == ScrcpyAudioCodec.OPUS) "audio/ogg" else "audio/mp4"
             outputDocument = folder.createFile(mimeType, "Call-${dateFormat.format(Date())}-UTC$extension")
                 ?: error("Could not create a recording document")
-            output = contentResolver.openFileDescriptor(outputDocument.uri, "w")
+            // AAC/MP4 patches container offsets and needs random access. Exclusive
+            // SAF "w" may return a pipe; never silently fall back to it for AAC.
+            // This descriptor belongs only to the newly created document above.
+            val outputMode = if (codec == ScrcpyAudioCodec.AAC) "rw" else "w"
+            output = contentResolver.openFileDescriptor(outputDocument.uri, outputMode)
                 ?: error("Could not open the recording document for writing")
+            if (codec == ScrcpyAudioCodec.AAC) {
+                try {
+                    Os.lseek(output.fileDescriptor, 0L, OsConstants.SEEK_SET)
+                } catch (e: ErrnoException) {
+                    throw IOException("The selected provider does not support seekable AAC output; choose another recording folder", e)
+                }
+            }
             muxer = ScrcpyAudioMuxer(output.fileDescriptor, outputDocument.uri.toString())
             // Preparation may wait for the provider or Binder. Recheck the live
             // indicator and a queued stop before starting the privileged producer.

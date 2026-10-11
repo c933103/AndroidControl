@@ -17,9 +17,12 @@ object Fixture {
     var hideDuringSetup = false
     val folder = Uri("content://fixture/folder")
     var codec = "opus"
+    var provider = "seekable"
+    var rejectProducer = false
     @Volatile var begins = 0
     @Volatile var ends = 0
     @Volatile var frames = 0
+    @Volatile var muxerFailures = 0
     var foregrounds = 0
     var documents = 0
     var deletes = 0
@@ -42,6 +45,7 @@ class CallRecordingBridge {
     class Remote {
         fun beginCallRecording(owner: Any, path: String, source: String, codec: String, rate: Int): ParcelFileDescriptor {
             Fixture.begins++
+            check(!Fixture.rejectProducer) { "controlled producer failure" }
             return ParcelFileDescriptor("pipe").also { Fixture.pipes.add(it) }
         }
         fun endCallRecording(owner: Any) { Fixture.ends++ }
@@ -56,6 +60,10 @@ fun main(args: Array<String>) {
     val scenario = args.single()
     val service = CallRecordingService()
     service.onCreate()
+    if (scenario.startsWith("storage-")) {
+        storageScenario(service, scenario)
+        return
+    }
     val blocked = scenario !in listOf("visible-api31", "visible-api35", "visible-group", "revoke-app", "revoke-channel", "revoke-group")
     when (scenario) {
         "blocked-app-api31" -> { Build.VERSION.SDK_INT = 31; Fixture.notifications.enabled = false }
@@ -102,5 +110,43 @@ fun main(args: Array<String>) {
             }
         }
         println("PASS $scenario: starts=${Fixture.begins}, stops=${Fixture.ends}, created=${Fixture.documents}, deleted=${Fixture.deletes}")
+    } finally { service.onDestroy() }
+}
+
+fun storageScenario(service: CallRecordingService, scenario: String) {
+    Fixture.codec = if (scenario == "storage-opus-stream") "opus" else "aac"
+    when (scenario) {
+        "storage-aac-seekable" -> Fixture.provider = "seekable"
+        "storage-aac-w-streams", "storage-opus-stream" -> Fixture.provider = "w-streams"
+        "storage-aac-no-rw" -> Fixture.provider = "no-rw"
+        "storage-aac-bad-rw" -> Fixture.provider = "bad-rw"
+        "storage-open-null" -> Fixture.provider = "null"
+        "storage-producer-failure" -> Fixture.rejectProducer = true
+        else -> error("Unknown storage scenario")
+    }
+    val failBeforeCapture = scenario in listOf("storage-aac-no-rw", "storage-aac-bad-rw", "storage-open-null")
+    try {
+        service.onStartCommand(Intent(CallRecordingService.ACTION_START), 0, 1)
+        eventually { CallRecordingService.state != CallRecordingService.State.STARTING }
+        eventually { Fixture.frames > 0 || Fixture.muxerFailures > 0 || CallRecordingService.state == CallRecordingService.State.ERROR }
+        val expectedMode = if (Fixture.codec == "aac") "rw" else "w"
+        if (!java.lang.Boolean.getBoolean("fixture.legacyModeControl")) {
+            check(Fixture.modes == listOf(expectedMode)) { "Wrong output mode: ${Fixture.modes}" }
+        }
+        if (failBeforeCapture || Fixture.rejectProducer) {
+            check(Fixture.begins == if (failBeforeCapture) 0 else 1) { "capture began with an unusable output" }
+            check(CallRecordingService.state == CallRecordingService.State.ERROR)
+            check(Fixture.outputs.all { it.closed }) { "failed output descriptor leaked" }
+            check(Fixture.documents == 1 && Fixture.deletes == 1) { "failed new document was not deleted" }
+        } else {
+            check(Fixture.muxerFailures == 0) { "AAC muxer received a streaming descriptor" }
+            eventually { Fixture.frames == 1 }
+            check(Fixture.begins == 1)
+            service.onStartCommand(Intent(CallRecordingService.ACTION_STOP), 0, 2)
+            eventually { !CallRecordingService.activeOrPreparing }
+            check(Fixture.outputs.all { it.closed } && Fixture.pipes.all { it.closed })
+            check(Fixture.deletes == 0) { "successful output deleted" }
+        }
+        println("PASS $scenario: mode=${Fixture.modes}, starts=${Fixture.begins}, created=${Fixture.documents}, deleted=${Fixture.deletes}")
     } finally { service.onDestroy() }
 }

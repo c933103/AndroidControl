@@ -10,7 +10,7 @@ class Handler(looper: Looper) {
     fun postDelayed(callback: Runnable, delay: Long) {}
     fun removeCallbacks(callback: Runnable) {}
 }
-class ParcelFileDescriptor(val kind: String) {
+class ParcelFileDescriptor(val kind: String, val seekable: Boolean = true) {
     val fileDescriptor = FileDescriptor()
     var closed = false
     fun close() { closed = true }

@@ -22,9 +22,32 @@ not modified by this code.
 
 To reproduce the review baseline, supply `--source /path/to/CallRecordingService.kt`
 from commit `ece3e6923d1f211286c07f462b9d1e15fb34bacc` and
-`--expect-baseline-failure`. Exactly eleven notification scenarios fail on that
+`--suite notifications --expect-baseline-failure`. Exactly eleven notification scenarios fail on that
 source; the fixed source passes all fifteen. Android CI also runs this fixture.
 
 This models the documented [channel/app/group notification contract](https://developer.android.com/reference/android/app/NotificationChannel#getImportance()).
 It supplements Android CI and does not establish installed notification, Binder,
 SAF, muxer or telephony behavior. The original device and release gates remain.
+
+## AAC/SAF output contract
+
+Seven additional cases cover a seekable provider, a provider whose `w` output
+streams while `rw` supports seeking, unsupported `rw`, a provider that incorrectly
+returns a streaming descriptor for `rw`, a null open result, a producer-start
+failure after allocation, and unchanged Opus streaming output. Failed new outputs
+must be closed/deleted; the privileged producer must not start with an unusable
+AAC descriptor. Successful outputs must be retained. The muxer stub explicitly
+rejects streaming AAC descriptors, and the client reports that controlled failure.
+
+Run `--suite storage` to isolate these cases. Supply the source at notification-fix
+commit `cad480adca5db858cfd5f0d5cfe6bc0f6c30d8ba` plus `--suite storage
+--expect-baseline-failure` to reproduce three streaming-provider failures. This
+negative control permits the legacy output-mode string only so seekable-provider,
+null-open and producer-failure controls retain their prior behavior; fixed-source
+runs also require the exact `rw`/`w` mode contract. Full runs execute all 22 cases.
+
+The [ContentResolver contract](https://developer.android.com/reference/android/content/ContentResolver#openFileDescriptor(android.net.Uri,%20java.lang.String))
+permits pipes/sockets for exclusive `w`; `rw` implies random-access disk storage.
+The fixture models descriptors and does not generate or validate MP4/OGG media.
+Provider deletion remains best-effort as before; no staging/copy/commit protocol or
+private temporary audio files are added by this fix.

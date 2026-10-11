@@ -30,6 +30,13 @@ class ContentResolver {
     val persistedUriPermissions = listOf(UriPermission(Fixture.folder))
     fun openFileDescriptor(uri: Uri, mode: String): ParcelFileDescriptor? {
         Fixture.modes.add(mode)
-        return ParcelFileDescriptor("output").also { Fixture.outputs.add(it) }
+        if (Fixture.provider == "no-rw" && mode != "w") throw java.io.FileNotFoundException("rw unsupported")
+        if (Fixture.provider == "null") return null
+        val seekable = when (Fixture.provider) {
+            "w-streams", "no-rw" -> mode == "rw"
+            "bad-rw" -> false
+            else -> true
+        }
+        return ParcelFileDescriptor("output", seekable).also { Fixture.outputs.add(it) }
     }
 }
