@@ -13,7 +13,7 @@ The interface is reachable by a **Call recording** card on the main screen and o
 - Manually starting/stopping a recording **during** an active cellular call.
 - Optional automatic recording on an `OFFHOOK` state broadcast; disabled by default.
 - A saved-file selector that opens recordings in the user's installed audio player.
-- Foreground notification while capturing with an explicit Stop action.
+- Foreground notification while capturing with an explicit Stop action. On Android 13+, grant notification permission so recording stays visible in the notification shade.
 
 The app does not collect phone numbers or contacts, implement voice/audio upload, or ask for `READ_CALL_LOG` or `READ_CONTACTS`. Upstream's contact exclusion rules, recording overlays, per-contact naming, debugging switches and in-call UI are **not yet ported**.
 
@@ -22,7 +22,7 @@ The app does not collect phone numbers or contacts, implement voice/audio upload
 1. Start the AndroidControl Shizuku service (wireless ADB or other existing startup method) and grant appropriate existing manager permissions.
 2. On Android 12+, open Call recording and acknowledge the jurisdiction-specific consent obligations.
 3. Choose a writable, persistable folder. Recordings receive UTC timestamps without names/numbers.
-4. Grant **Phone state** permission to detect a connected cellular call.
+4. Grant **Phone state** permission to detect a connected cellular call. On Android 13+, also grant **Notifications** for visible recording status.
 5. Place/receive a normal cellular call and tap **Start recording current call**. Finish via **Stop recording and save** or the notification, or end the call.
 6. Optionally turn on **Automatically record connected cellular calls**, understanding that Android may block background foreground-service launches. After reboot, restart AndroidControl's privileged service.
 
@@ -34,9 +34,9 @@ This software does not announce recording to other participants. Confirm applica
 - Privileged AIDL methods are scoped by AndroidControl app UID, owner Binder token and minimal allowlists (source, codec, bitrate, verified scrcpy jar path). Owner Binder death stops the recorder.
 - Server v4.0's SHA-256 is pinned to `84924bd564a1eb6089c872c7521f968058977f91f5ff02514a8c74aff3210f3a`. The build fails if download verification fails; the runtime also validates before execution. The server is stored in shared app external files storage to permit privileged shell access.
 - Foreground service and ongoing notification ensure that the user can stop a session. The service tries to drain buffered audio and close `MediaMuxer` before finalizing.
-- Audio is written through user-granted SAF URIs to the chosen local destination; no telephone number, contact label or upload is implemented.
+- Audio is written through user-granted SAF URIs. AndroidControl does not upload recordings; **a user-selected cloud-backed storage provider may sync them**, so choose a local folder for strictly local storage. No telephone number or contact label is included.
 - A `PHONE_STATE` receiver only starts an automatic session if the user explicitly enabled it, consent was acknowledged and a destination exists.
-- If the user revokes consent or stops the app, privileged capture is intended to shut down. Validate through controlled tests before deployment.
+- The service also polls active call state every 2.5 seconds and closes recording after two consecutive non-active readings, protecting against missed hang-up broadcasts or revoked phone-state permission. If consent is withdrawn, privileged capture is intended to shut down. Validate these behaviors through controlled tests before deployment.
 - Risks to investigate include a time-of-check/time-of-use window between server-jar validation and shell execution, concurrent stop/start ordering, user-service reconnects, destination-provider failures and OS-specific foreground restrictions.
 
 ## Validation and release gate

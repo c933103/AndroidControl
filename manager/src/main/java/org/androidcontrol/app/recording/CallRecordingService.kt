@@ -99,6 +99,31 @@ class CallRecordingService : Service() {
     }
     private var session: Session? = null
     private var completedStop = false
+    private var consecutiveInactivePolls = 0
+
+    // PHONE_STATE broadcasts can be missed, especially across OEM call state
+    // transitions. Independently detect a finished call or permission revocation
+    // and stop the privileged producer even if no IDLE broadcast was delivered.
+    private val callGuard = object : Runnable {
+        override fun run() {
+            if (state != State.STARTING && state != State.RECORDING) return
+            val permission = ContextCompat.checkSelfPermission(
+                this@CallRecordingService, Manifest.permission.READ_PHONE_STATE
+            ) == PackageManager.PERMISSION_GRANTED
+            val offHook = permission && runCatching {
+                getSystemService(TelephonyManager::class.java).callState ==
+                    TelephonyManager.CALL_STATE_OFFHOOK
+            }.getOrDefault(false)
+
+            consecutiveInactivePolls = if (offHook) 0 else consecutiveInactivePolls + 1
+            if (consecutiveInactivePolls >= 2) {
+                publish(State.STOPPING)
+                worker.execute { finishSession(null) }
+                return
+            }
+            mainHandler.postDelayed(this, 2500)
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -116,8 +141,11 @@ class CallRecordingService : Service() {
             ACTION_START -> {
                 if (activeOrPreparing) return START_NOT_STICKY
                 completedStop = false
+                consecutiveInactivePolls = 0
                 publish(State.STARTING)
                 showForeground()
+                mainHandler.removeCallbacks(callGuard)
+                mainHandler.postDelayed(callGuard, 2500)
                 worker.execute { startSession() }
             }
             ACTION_STOP -> {
@@ -136,7 +164,12 @@ class CallRecordingService : Service() {
         val stopPending = PendingIntent.getService(
             this, 1, stop, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+        val settingsIntent = Intent(this, CallRecordingActivity::class.java)
+        val settingsPending = PendingIntent.getActivity(
+            this, 2, settingsIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentIntent(settingsPending)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle(getString(R.string.call_record_title))
             .setContentText(getString(R.string.call_record_notification))
@@ -166,6 +199,12 @@ class CallRecordingService : Service() {
             val telephony = getSystemService(TelephonyManager::class.java)
             check(telephony.callState == TelephonyManager.CALL_STATE_OFFHOOK) {
                 "No active cellular call to record"
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                check(ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+                    PackageManager.PERMISSION_GRANTED) {
+                    "Allow recording notifications before beginning capture"
+                }
             }
             val preferences = CallRecordingPreferences(this)
             check(preferences.isConfigured()) { "Accept the disclaimer and select a recording folder" }
@@ -298,6 +337,7 @@ class CallRecordingService : Service() {
     }
 
     private fun shutdown() {
+        mainHandler.removeCallbacks(callGuard)
         completedStop = true
         mainHandler.post {
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -312,6 +352,7 @@ class CallRecordingService : Service() {
     }
 
     override fun onDestroy() {
+        mainHandler.removeCallbacks(callGuard)
         // Cleanup must remain serialized behind an in-progress start operation.
         if (!worker.isShutdown) {
             worker.execute {

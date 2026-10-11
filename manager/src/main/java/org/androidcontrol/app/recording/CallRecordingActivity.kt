@@ -33,6 +33,7 @@ class CallRecordingActivity : AppBarActivity() {
     companion object {
         private const val REQUEST_FOLDER = 529
         private const val REQUEST_PHONE = 530
+        private const val REQUEST_NOTIFICATIONS = 531
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -90,9 +91,9 @@ class CallRecordingActivity : AppBarActivity() {
             } else if (!checkConfiguration()) {
                 preferences.automatic = false
                 binding.callRecordAutomatic.isChecked = false
-            } else if (!hasPhonePermission()) {
+            } else if (!hasRequiredPermissions()) {
                 binding.callRecordAutomatic.isChecked = false
-                requestPhonePermission()
+                requestMissingPermission()
             } else {
                 preferences.automatic = true
             }
@@ -101,8 +102,8 @@ class CallRecordingActivity : AppBarActivity() {
 
         binding.callRecordStart.setOnClickListener {
             if (!checkConfiguration()) return@setOnClickListener
-            if (!hasPhonePermission()) {
-                requestPhonePermission()
+            if (!hasRequiredPermissions()) {
+                requestMissingPermission()
                 return@setOnClickListener
             }
             if (!Shizuku.pingBinder()) {
@@ -176,18 +177,35 @@ class CallRecordingActivity : AppBarActivity() {
         ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE) ==
             PackageManager.PERMISSION_GRANTED
 
-    private fun requestPhonePermission() {
-        requestPermissions(arrayOf(Manifest.permission.READ_PHONE_STATE), REQUEST_PHONE)
+    private fun hasNotificationPermission() =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+
+    private fun hasRequiredPermissions() = hasPhonePermission() && hasNotificationPermission()
+
+    private fun requestMissingPermission() {
+        when {
+            !hasPhonePermission() -> requestPermissions(
+                arrayOf(Manifest.permission.READ_PHONE_STATE), REQUEST_PHONE
+            )
+            !hasNotificationPermission() -> requestPermissions(
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS
+            )
+        }
     }
 
     override fun onRequestPermissionsResult(
         requestCode: Int, permissions: Array<out String>, grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQUEST_PHONE) {
+        if (requestCode == REQUEST_PHONE || requestCode == REQUEST_NOTIFICATIONS) {
             if (grantResults.firstOrNull() != PackageManager.PERMISSION_GRANTED) {
                 preferences.automatic = false
-                message(R.string.call_record_phone_permission)
+                message(if (requestCode == REQUEST_PHONE) R.string.call_record_phone_permission
+                    else R.string.call_record_notification_permission)
+            } else if (requestCode == REQUEST_PHONE && !hasNotificationPermission()) {
+                requestMissingPermission()
             }
             refresh()
         }
