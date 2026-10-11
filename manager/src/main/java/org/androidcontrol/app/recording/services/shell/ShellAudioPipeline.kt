@@ -76,12 +76,10 @@ class ShellAudioPipeline {
     }
 
     /**
-     * Atomic flag that controls the relay loop and prevents concurrent sessions.
+     * Atomic ownership flag for both starting and active sessions.
      *
-     * Why [java.util.concurrent.atomic.AtomicBoolean]?  [stopRecording] can be called from any thread (e.g. the AIDL
-     * thread pool) while [spawnAudioRelayCoroutine]'s loop runs on a coroutine.  AtomicBoolean
-     * provides a lock-free compare-and-set operation that is visible across threads without
-     * needing a `synchronized` block.
+     * Lifecycle methods serialize allocation/cleanup. The atomic value is also read
+     * by the background helpers, which must see startup ownership and shutdown.
      */
     private val isRecordingActive = AtomicBoolean(false)
 
@@ -141,6 +139,7 @@ class ShellAudioPipeline {
      * @param isDebuggingModeEnabled  When true, logs relay throughput every second.
      * @return The read-end [ParcelFileDescriptor] of the audio pipe, or null on failure.
      */
+    @Synchronized
     fun startCapture(
         audioSource: String,
         audioCodec: String,
@@ -148,11 +147,15 @@ class ShellAudioPipeline {
         serverPath: String,
         isDebuggingModeEnabled: Boolean
     ): ParcelFileDescriptor?  {
-        if (isRecordingActive.get()) {
+        if (!isRecordingActive.compareAndSet(false, true)) {
             AppLogger.w("startCapture() rejected: a session is already active")
             return null
         }
 
+        // Own all allocations before the first one can fail. Only transfer the
+        // read end to the caller after startup has completed successfully.
+        var pendingReadEnd: ParcelFileDescriptor? = null
+        var transferred = false
         try {
             AppLogger.i("Initialising the ShellService recording pipeline...")
 
@@ -169,6 +172,7 @@ class ShellAudioPipeline {
             // We send readEnd to the app process and keep writeEnd here.
             val pipe = ParcelFileDescriptor.createPipe()
             val pipeReadEnd  = pipe[0] // --> returned to app process
+            pendingReadEnd = pipeReadEnd
             val pipeWriteEnd = pipe[1] // --> written by ShellService relay coroutine
             audioWriteEnd = pipeWriteEnd
 
@@ -203,7 +207,6 @@ class ShellAudioPipeline {
                 redirectErrorStream(true)
             }
             scrcpyProcess = scrcpyBuilder.start()
-            isRecordingActive.set(true)
             AppLogger.i("scrcpy-server launched successfully")
 
             // 5. Start Helper coroutines
@@ -211,11 +214,16 @@ class ShellAudioPipeline {
             spawnProcessMonitorCoroutine(scrcpyProcess!!)
 
             AppLogger.i("Recording pipeline established. Returning pipe read-end to app process.")
+            transferred = true
             return pipeReadEnd // ← returned to RecordingForegroundService via Binder
         } catch (e: Exception) {
             AppLogger.e("Critical failure during pipeline startup: ${e.message}", e)
-            stopCapture() // Best-effort cleanup of any partially-allocated resources.
             return null
+        } finally {
+            if (!transferred) {
+                runCatching { pendingReadEnd?.close() }
+                stopCapture() // Includes partial startup and hash-check early returns.
+            }
         }
 
     }
@@ -224,13 +232,14 @@ class ShellAudioPipeline {
      * Stops the recording pipeline and releases all resources.
      *
      * Cleanup order matters:
-     *  1. Set the atomic flag to false first so the relay loop exits on its next iteration.
+     *  1. Clear session ownership while preventing a new start during cleanup.
      *  2. Destroy scrcpy-server; give it a grace period to flush its last audio bytes.
-     *  3. Cancel the coroutine scope (interrupts blocking I/O calls in relay/log/monitor).
+     *  3. Cancel the coroutine scope; close sockets below to unblock blocking I/O.
      *  4. Close the client connection so the relay coroutine's read() unblocks.
      *  5. Close the server socket.
      *  6. Close the pipe write-end LAST so scrcpy-server can write its final bytes first.
      */
+    @Synchronized
     fun stopCapture() {
         // compareAndSet(true, false): atomically checks that we ARE recording and clears the flag.
         // Returns false (and skips the body) if we were already stopped, preventing double-free.
@@ -252,7 +261,7 @@ class ShellAudioPipeline {
 
         // Wait for the relay job to copy remaining socket data to the pipe for downstream app (Time-bounded).
         AppLogger.d("Waiting for relay coroutine to finish copying late bytes...")
-        runCatching {
+        if (scrcpyProcess != null) runCatching {
             runBlocking {
                 // Time-bounded wait to strictly prevent any infinite loop if EOF is never reached or take too long
                 withTimeoutOrNull(2000L) { // 2s timeout
@@ -289,6 +298,13 @@ class ShellAudioPipeline {
 
     }
 
+    // A cancelled old coroutine can finish after the next session starts. Its
+    // completion must not tear down resources now owned by that new session.
+    @Synchronized
+    private fun stopCapture(owner: CoroutineScope) {
+        if (shellScope === owner) stopCapture()
+    }
+
     // Private couroutine helpers
 
     /**
@@ -300,16 +316,22 @@ class ShellAudioPipeline {
      * @param verbose When true, logs relay throughput roughly every second.
      */
     private fun spawnAudioRelayCoroutine(verbose: Boolean) {
-        audioPipeRelayJob = shellScope?.launch(Dispatchers.IO) {
+        val owner = shellScope ?: return
+        val listeningSocket = serverSocket ?: return
+        val writeEnd = audioWriteEnd ?: return
+        audioPipeRelayJob = owner.launch(Dispatchers.IO) {
             try {
                 // accept() blocks until scrcpy-server dials our socket.
                 // This is safe on Dispatchers.IO because IO threads are designed for blocking calls.
                 AppLogger.d("AudioRelayCoroutine: waiting for scrcpy-server connection...")
-                val connection = serverSocket?.accept() ?: run {
-                    AppLogger.w( "AudioRelayCoroutine: server socket was null or closed")
-                    return@launch
+                val connection = listeningSocket.accept()
+                synchronized(this@ShellAudioPipeline) {
+                    if (shellScope !== owner || !isRecordingActive.get()) {
+                        connection.close()
+                        return@launch
+                    }
+                    clientConnection = connection
                 }
-                clientConnection = connection
                 AppLogger.i("AudioRelayCoroutine: scrcpy-server connected to our socket server")
 
                 val sourceStream = connection.inputStream
@@ -317,7 +339,7 @@ class ShellAudioPipeline {
                 // will tell make it so the ReadPipe we returned to the downstream app reports EOF.
                 // We do NOT use .use{} here because audioWriteEnd is shared – it is closed
                 // explicitly in stopRecording() AFTER the scrscpy-server process exits.
-                val destinationStream = ParcelFileDescriptor.AutoCloseOutputStream(audioWriteEnd)
+                val destinationStream = ParcelFileDescriptor.AutoCloseOutputStream(writeEnd)
 
                 val buffer = ByteArray(RELAY_BUFFER_SIZE)
                 var lastLogTimeMs = System.currentTimeMillis()
@@ -354,7 +376,7 @@ class ShellAudioPipeline {
                 // If we exit the relay (e.g. server crash), trigger a full stop so the app-side
                 // muxer finalises the file.
                 AppLogger.d("AudioRelayCoroutine finished")
-                stopCapture()
+                if (isRecordingActive.get()) stopCapture(owner)
             }
         }
     }
@@ -396,13 +418,14 @@ class ShellAudioPipeline {
      * @param process The running scrcpy-server [Process] to monitor.
      */
     private fun spawnProcessMonitorCoroutine(process: Process) {
-        shellScope?.launch(Dispatchers.IO) {
+        val owner = shellScope ?: return
+        owner.launch(Dispatchers.IO) {
             try {
                 // waitFor() blocks until the child process exits.
                 val exitCode = process.waitFor()
                 if (exitCode != 0 && isRecordingActive.get()) {
                     AppLogger.e("ProcessMonitorCoroutine: scrcpy-server crashed (exit code $exitCode)")
-                    stopCapture() // Trigger cleanup and file finalisation.
+                    stopCapture(owner) // Trigger cleanup and file finalisation.
                 } else {
                     AppLogger.i("ProcessMonitorCoroutine: scrcpy-server exited normally (code $exitCode)")
                 }

@@ -122,6 +122,7 @@ jobs:
         run: |
           gradle_lib=$(find "${GRADLE_USER_HOME:-$HOME/.gradle}/wrapper/dists/gradle-8.14-bin" -type d -path '*/gradle-8.14/lib' -print -quit)
           test -n "$gradle_lib"
+          python3 tests/call-recording-lifecycle-fixture/check.py --gradle-lib "$gradle_lib"
           python3 tests/runtime-control-fixture/check.py --gradle-lib "$gradle_lib"
           python3 tests/run-checkout-readiness-host-checks.py --kotlin-lib "$gradle_lib"
 
