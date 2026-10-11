@@ -16,6 +16,8 @@ ASSETS = (
     "assets/scrcpy-server",
     "assets/licenses/ShizuCallRecorder-GPL-3.0.txt",
     "assets/licenses/scrcpy-Apache-2.0.txt",
+    "assets/licenses/Shizuku-Apache-2.0.txt",
+    "assets/licenses/AppOpsX-MIT.txt",
 )
 
 
@@ -43,7 +45,13 @@ def check(apk: pathlib.Path) -> None:
             raise ValueError(f"{apk.name}: GPL-3 with Section 7 notices incomplete")
         if "Apache License" not in apache or "Version 2.0" not in apache:
             raise ValueError(f"{apk.name}: scrcpy Apache-2.0 licence incomplete")
-    print(f"{apk.name}: verified scrcpy v4.0 ({len(data)} bytes) and both licences")
+        shizuku = package.read(ASSETS[3]).decode("utf-8")
+        appops = package.read(ASSETS[4]).decode("utf-8")
+        if "Apache License" not in shizuku or "Version 2.0" not in shizuku:
+            raise ValueError(f"{apk.name}: Shizuku Apache-2.0 licence incomplete")
+        if "Copyright (c) 2016 Zheng li" not in appops or "Permission is hereby granted" not in appops:
+            raise ValueError(f"{apk.name}: AppOpsX MIT licence incomplete")
+    print(f"{apk.name}: verified scrcpy v4.0 ({len(data)} bytes), Apache-2.0, MIT and GPLv3+Section 7 notices")
 
 
 def main() -> int:
