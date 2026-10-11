@@ -20,6 +20,7 @@ import org.androidcontrol.app.appops.AppOpsClient
 import org.androidcontrol.app.ktx.toHtml
 import org.androidcontrol.app.management.appsViewModel
 import org.androidcontrol.app.settings.SettingsActivity
+import org.androidcontrol.app.licenses.ComponentLicensesActivity
 import org.androidcontrol.app.utils.AppIconCache
 import rikka.core.ktx.unsafeLazy
 import rikka.lifecycle.Status
@@ -108,6 +109,9 @@ abstract class HomeActivity : AppBarActivity() {
                 binding.sourceCode.movementMethod = LinkMovementMethod.getInstance()
                 binding.callRecordingCredit.movementMethod = LinkMovementMethod.getInstance()
                 binding.callRecordingCredit.text = getString(R.string.call_record_upstream_notice).toHtml()
+                binding.componentLicencesButton.setOnClickListener {
+                    startActivity(Intent(this, ComponentLicensesActivity::class.java))
+                }
                 binding.sourceCode.text = getString(
                     R.string.about_view_source_code,
                     "<b><a href=\"https://github.com/c933103/AndroidControl\">GitHub</a></b>"
