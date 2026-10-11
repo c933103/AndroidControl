@@ -61,6 +61,13 @@ class ScrcpyAudioMuxer(
      */
     private var isMuxerStarted = false
 
+    // AndroidControl adaptation: never report a recording as saved merely because
+    // scrcpy delivered frames. MediaMuxer must write samples AND finalize its
+    // output container successfully.
+    private var samplesWritten = 0
+    var finalizedSuccessfully: Boolean = false
+        private set
+
     /**
      * Wall-clock timestamp (from [System.nanoTime]) captured when the first audio frame
      * is written.  Used as the origin for the Linear Wall-Clock Mapper.
@@ -175,7 +182,8 @@ class ScrcpyAudioMuxer(
         lastWrittenPtsUs = normalizedPtsUs
 
         // ByteBuffer.wrap() creates a view over the existing array with no copy.
-        muxer?.writeSampleData(audioTrackIndex, ByteBuffer.wrap(packet.data), bufferInfo)
+        checkNotNull(muxer).writeSampleData(audioTrackIndex, ByteBuffer.wrap(packet.data), bufferInfo)
+        samplesWritten++
     }
 
     /**
@@ -186,13 +194,20 @@ class ScrcpyAudioMuxer(
      * [close] must therefore be called even if only a single audio frame was written.
      */
     override fun close() {
+        if (muxer == null) return
+        finalizedSuccessfully = false
         if (isMuxerStarted) {
             AppLogger.d( "Finalising muxer for '$outputDisplayPath'")
-            runCatching { muxer?.stop() }.onFailure { e ->
-                AppLogger.e( "Muxer stop failed (file may be incomplete): ${e.message}")
+            try {
+                muxer?.stop()
+                finalizedSuccessfully = samplesWritten > 0
+            } catch (e: Exception) {
+                AppLogger.e("Muxer stop failed (file is incomplete): ${e.message}", e)
             }
         }
-        runCatching { muxer?.release() }
+        runCatching { muxer?.release() }.onFailure { e ->
+            AppLogger.e("Muxer release failed: ${e.message}", e)
+        }
         muxer                  = null
         isMuxerStarted         = false
         audioTrackIndex        = -1

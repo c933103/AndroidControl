@@ -318,6 +318,9 @@ class CallRecordingService : Service() {
             runCatching { current.audioPipe.close() }
             runCatching { current.muxer.close() }
                 .onFailure { failure = it.message ?: "Could not finalize audio file" }
+            if (!current.muxer.finalizedSuccessfully) {
+                failure = failure ?: "Recording container was not finalized correctly"
+            }
             runCatching { current.output.close() }
             current.bridge.close()
             session = null

@@ -46,7 +46,7 @@ This software does not announce recording to other participants. Confirm applica
 - [ ] Debug and release builds compile and package licence notices.
 - [ ] Existing orientation/AppOps, updates and signing regressions remain green.
 - [ ] Android 12/13/14/15/16 service start, permissions, binder death, cancellation, notification and saved-file finalization tested where accessible.
-- [ ] Controlled injected scrcpy streams: codec mismatch, invalid/oversize packets, EOF, early hang-up, corrupt asset, stopped server, SAF lost permission/full storage and simulated mid-call restart.
+- [ ] Controlled injected scrcpy streams: codec mismatch, invalid/oversize packets, EOF, early hang-up, corrupt asset, stopped server, SAF lost permission/full storage and simulated mid-call restart. Check the added finalize-success flag refuses to claim success when the muxer never wrote audio or failed to stop.
 - [ ] Android background auto-start works or shows accurate non-functional status; do not silently claim an automatic recording occurred.
 - [ ] Audio from **both sides**, Bluetooth/headset, VoLTE, Wi-Fi calling and multiple-SIM scenarios tested on real devices.
 - [ ] GPL Section 7 fork/branding notice and corresponding source requirements reviewed; upstream scrcpy Apache-2.0 attribution/NOTICE packaged.

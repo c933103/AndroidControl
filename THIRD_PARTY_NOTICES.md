@@ -24,4 +24,4 @@ The AndroidControl **Call recording** module includes modified source files deri
 
 The recording module uses [Genymobile/scrcpy](https://github.com/Genymobile/scrcpy) server binary v4.0. It is downloaded at build time from a pinned official release and verified before bundling and again before running. Required SHA-256: `84924bd564a1eb6089c872c7521f968058977f91f5ff02514a8c74aff3210f3a`.
 
-**License:** Apache License 2.0; source and licence are available in the [official scrcpy repository](https://github.com/Genymobile/scrcpy). Preserve any third-party notices required by the actual scrcpy distribution when releasing APKs. Verify that the exact binary's NOTICE/licensing materials are bundled before release.
+**License:** Apache License 2.0; [licence copy](licenses/scrcpy-Apache-2.0.txt) bundled in the app under `manager/src/main/assets/licenses/scrcpy-Apache-2.0.txt`. Source and applicable copyright information are available in the [official scrcpy repository](https://github.com/Genymobile/scrcpy). Review any additional third-party notices required by the actual scrcpy distribution before release.
