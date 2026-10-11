@@ -11,6 +11,25 @@ on:
   workflow_dispatch:
 
 jobs:
+  appops-picker-lifecycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: tests/appops-picker-fixture/pom.xml
+      - name: Test AppOps picker recreation with controlled backend on API 30 and 35
+        run: mvn -B -f tests/appops-picker-fixture/pom.xml test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: appops-picker-lifecycle-results
+          path: tests/appops-picker-fixture/target/surefire-reports
+
   android-runtime:
     strategy:
       fail-fast: false
