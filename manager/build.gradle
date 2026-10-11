@@ -22,6 +22,14 @@ android {
             }
         }
     }
+
+    // GPL-3-derived call recorder uses scrcpy's Apache-2.0 server, pinned by SHA-256.
+    defaultConfig {
+        buildConfigField 'String', 'SCRCPY_VERSION', '"4.0"'
+        buildConfigField 'String', 'SCRCPY_SERVER_SHA256', '"84924bd564a1eb6089c872c7521f968058977f91f5ff02514a8c74aff3210f3a"'
+        buildConfigField 'String', 'SCRCPY_SERVER_ASSET_NAME', '"scrcpy-server"'
+    }
+    sourceSets.main.assets.srcDir(layout.buildDirectory.dir('generated/scrcpy').get().asFile)
     buildFeatures {
         aidl true
         buildConfig true
@@ -198,3 +206,44 @@ dependencies {
 }
 
 apply from: rootProject.file('signing.gradle')
+
+ 
+// Deterministic, integrity-checked upstream scrcpy 4.0 asset for call recording.
+// Never execute an unverified download. A failed download fails the build closed.
+def scrcpyAsset = layout.buildDirectory.file('generated/scrcpy/scrcpy-server')
+tasks.register('prepareCallRecorderScrcpyServer') {
+    outputs.file(scrcpyAsset)
+    doLast {
+        def expected = '84924bd564a1eb6089c872c7521f968058977f91f5ff02514a8c74aff3210f3a'
+        def target = scrcpyAsset.get().asFile
+        def sha256 = { File input ->
+            def digest = java.security.MessageDigest.getInstance('SHA-256')
+            input.withInputStream { stream ->
+                byte[] buffer = new byte[8192]
+                int len
+                while ((len = stream.read(buffer)) != -1) digest.update(buffer, 0, len)
+            }
+            digest.digest().encodeHex().toString()
+        }
+        if (target.isFile() && sha256(target).equalsIgnoreCase(expected)) return
+        target.parentFile.mkdirs()
+        def temp = new File(target.parentFile, 'scrcpy-server.part')
+        try {
+            def connection = new URI('https://github.com/Genymobile/scrcpy/releases/download/v4.0/scrcpy-server-v4.0').toURL().openConnection()
+            connection.setConnectTimeout(20000)
+            connection.setReadTimeout(40000)
+            connection.getInputStream().withCloseable { input ->
+                temp.withOutputStream { out -> out << input }
+            }
+            if (!sha256(temp).equalsIgnoreCase(expected)) throw new GradleException('scrcpy server SHA-256 mismatch')
+            java.nio.file.Files.move(temp.toPath(), target.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+        } finally {
+            temp.delete()
+        }
+    }
+}
+tasks.configureEach {
+    if (name.startsWith('merge') && name.endsWith('Assets')) dependsOn 'prepareCallRecorderScrcpyServer'
+}
