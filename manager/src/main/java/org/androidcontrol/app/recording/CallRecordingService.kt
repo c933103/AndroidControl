@@ -113,11 +113,12 @@ class CallRecordingService : Service() {
             val permission = ContextCompat.checkSelfPermission(
                 this@CallRecordingService, Manifest.permission.READ_PHONE_STATE
             ) == PackageManager.PERMISSION_GRANTED
-            val notificationsVisible = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-                ContextCompat.checkSelfPermission(
-                    this@CallRecordingService, Manifest.permission.POST_NOTIFICATIONS
-                ) == PackageManager.PERMISSION_GRANTED
-            val offHook = permission && notificationsVisible && runCatching {
+            if (!recordingNotificationVisible()) {
+                publish(State.STOPPING)
+                worker.execute { finishSession("Recording notifications are blocked") }
+                return
+            }
+            val offHook = permission && runCatching {
                 getSystemService(TelephonyManager::class.java).callState ==
                     TelephonyManager.CALL_STATE_OFFHOOK
             }.getOrDefault(false)
@@ -151,6 +152,7 @@ class CallRecordingService : Service() {
                 consecutiveInactivePolls = 0
                 publish(State.STARTING)
                 try {
+                    check(recordingNotificationVisible()) { "Allow recording notifications before beginning capture" }
                     showForeground()
                 } catch (e: RuntimeException) {
                     AppLogger.e("Failed to enter recording foreground state", e)
@@ -171,6 +173,19 @@ class CallRecordingService : Service() {
         }
         return START_NOT_STICKY
     }
+
+    private fun recordingNotificationVisible(): Boolean = runCatching {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return@runCatching false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED) return@runCatching false
+        val manager = getSystemService(NotificationManager::class.java) ?: return@runCatching false
+        if (!manager.areNotificationsEnabled()) return@runCatching false
+        val channel = manager.getNotificationChannel(CHANNEL_ID) ?: return@runCatching false
+        if (channel.importance == NotificationManager.IMPORTANCE_NONE) return@runCatching false
+        val groupId = channel.group
+        groupId == null || manager.getNotificationChannelGroup(groupId)?.isBlocked == false
+    }.getOrDefault(false)
 
     private fun showForeground() {
         val stop = Intent(this, CallRecordingService::class.java).setAction(ACTION_STOP)
@@ -213,12 +228,7 @@ class CallRecordingService : Service() {
             check(telephony.callState == TelephonyManager.CALL_STATE_OFFHOOK) {
                 "No active cellular call to record"
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                check(ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
-                    PackageManager.PERMISSION_GRANTED) {
-                    "Allow recording notifications before beginning capture"
-                }
-            }
+            check(recordingNotificationVisible()) { "Allow recording notifications before beginning capture" }
             val preferences = CallRecordingPreferences(this)
             check(preferences.isConfigured()) { "Accept the disclaimer and select a recording folder" }
             val folderUri = preferences.folder ?: error("Recording folder is not configured")
@@ -247,6 +257,11 @@ class CallRecordingService : Service() {
             output = contentResolver.openFileDescriptor(outputDocument.uri, "w")
                 ?: error("Could not open the recording document for writing")
             muxer = ScrcpyAudioMuxer(output.fileDescriptor, outputDocument.uri.toString())
+            // Preparation may wait for the provider or Binder. Recheck the live
+            // indicator and a queued stop before starting the privileged producer.
+            check(state == State.STARTING && recordingNotificationVisible()) {
+                "Recording stopped or notifications became unavailable during setup"
+            }
             audioPipe = bridge.remote.beginCallRecording(
                 bridge.ownerToken, serverPath, source, codec.cliKey, codec.defaultBitRate
             ) ?: error("The privileged recorder could not capture call audio")
