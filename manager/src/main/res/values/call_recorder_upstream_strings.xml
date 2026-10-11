@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026-present kitsumed (Med) -->
+<!-- SPDX-License-Identifier: LicenseRef-ShizuCallRecorder-GPL3-Section7 -->
 <!-- Derived from kitsumed/ShizuCallRecorder at 41d1dc7; GPL-3.0 with Section 7 terms. -->
 <resources>
     <string name="audio_codec_opus">Opus</string>

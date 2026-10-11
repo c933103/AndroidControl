@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 AndroidControl contributors -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 <resources>
     <string name="call_record_title">Call recording</string>
     <string name="call_record_home_description">Record cellular calls locally with the Shizuku audio service. Configure consent, destination, format and automatic capture.</string>
