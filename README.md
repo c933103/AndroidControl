@@ -4,6 +4,8 @@ AndroidControl is an Android toolbox for app operations, portrait display sessio
 
 **App name:** AndroidControl · **Package:** `org.androidcontrol.app` · **Minimum Android:** 7.0 (API 24).
 
+**Licensing is per component, not a blanket root licence:** Shizuku/core source is Apache-2.0, the AppOpsX-derived backup adapter is MIT, and ShizuCallRecorder-derived audio code is GPL-3.0-or-later with additional Section 7 terms. **The integrated APK must satisfy GPLv3 combined-work requirements.** See [Component licences](LICENSING.md).
+
 Download AndroidControl from this repository’s [Releases](https://github.com/c933103/AndroidControl/releases) or successful [Actions builds](https://github.com/c933103/AndroidControl/actions). Upstream Shizuku downloads are a different application.
 
 ## Features
@@ -58,6 +60,6 @@ The APK is under `manager/build/outputs/apk/debug/`. Set `ANDROID_HOME` or `sdk.
 | `api/` | Pinned upstream Shizuku API submodule |
 | `tests/` | Host and Android runtime regressions |
 | `docs/` | Behavior and format documentation |
-| `manager/src/main/java/org/androidcontrol/app/recording/` | GPL-3-derived local recording feature and privileged audio pipeline |
+| `manager/src/main/java/org/androidcontrol/app/recording/` | Apache-2.0 first-party recording glue **and** GPL-derived upstream audio stack (file-level SPDX tags) |
 
-The inherited Shizuku implementation retains [Apache-2.0](LICENSE), and AppOpsX backup compatibility is [MIT](licenses/AppOpsX-MIT.txt). **The incorporated ShizuCallRecorder-derived feature is GPL-3.0 with additional Section 7 terms**, and combining it with AndroidControl affects the licence obligations for distributions of the combined application. Preserve the full [ShizuCallRecorder GPL-3.0 licence and extra terms](licenses/ShizuCallRecorder-GPL-3.0.txt), corresponding source, source provenance and visible fork attribution when redistributing APKs. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). AndroidControl uses its own identity and artwork and does not claim upstream endorsement.
+The inherited Shizuku implementation retains [Apache-2.0](LICENSE), the AppOpsX backup adapter is [MIT](licenses/AppOpsX-MIT.txt), and first-party recording UI/glue source is Apache-2.0. **The imported ShizuCallRecorder audio stack is GPL-3.0-or-later with additional Section 7 terms**, and combining it with AndroidControl affects the licence obligations for distributions of the combined application. Preserve the full [ShizuCallRecorder GPL-3.0 licence and extra terms](licenses/ShizuCallRecorder-GPL-3.0.txt), corresponding source, source provenance and visible fork attribution when redistributing APKs. See [LICENSING.md](LICENSING.md) for precise file scopes, [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for credits, and **About → Component licences** inside the app for licence texts. AndroidControl uses its own identity and artwork and does not claim upstream endorsement.

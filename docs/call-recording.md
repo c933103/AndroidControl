@@ -2,6 +2,8 @@
 
 ## Scope and design
 
+This module contains **two differently licensed kinds of source**: independently written AndroidControl UI/orchestration (**Apache-2.0**) and adapted ShizuCallRecorder audio components (**GPL-3.0-or-later with Section 7 terms**). The resulting combined APK is GPL-covered for distribution purposes. See the [component licence map](../LICENSING.md); the source licences do not become identical merely because the code runs in one APK.
+
 The feature integrates a **modified subset** of [ShizuCallRecorder](https://github.com/kitsumed/ShizuCallRecorder) (GPL-3.0 with additional Section 7 terms), not an unmodified second APK. It uses scrcpy-server v4.0, the existing AndroidControl Shizuku server/user service, and a foreground audio writer. No second Shizuku provider or manager process is installed.
 
 **Android 12+ (API 31+)** required for capture. The remainder of AndroidControl continues supporting its earlier Android versions.
