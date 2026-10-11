@@ -55,6 +55,11 @@
             android:textColor="?android:textColorSecondary"
             android:textSize="12sp" />
 
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/component_licences_button"
+            style="@style/CardButton"
+            android:layout_marginTop="8dp"
+            android:text="@string/component_licences_title" />
         <TextView android:id="@+id/call_recording_credit"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
