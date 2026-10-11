@@ -1,6 +1,6 @@
 # Component-specific licensing in AndroidControl
 
-**The repository has multiple licences.** An individual source file can retain its original Apache-2.0, MIT, or GPL licence. This is different from the legal conditions for **distributing one combined executable**. The root [LICENSE](LICENSE) reproduces the original Shizuku Apache-2.0 text; it is **not** a claim that every new or imported component is Apache-2.0.
+**The repository has multiple licences.** An individual source file can retain its original Apache-2.0, MIT, or GPL licence. This is different from the legal conditions for **distributing one combined executable**. The **combined AndroidControl APK** generally must satisfy GPLv3 distribution requirements due to its directly integrated ShizuCallRecorder-derived code. The root [LICENSE](LICENSE) reproduces the original Shizuku Apache-2.0 text; it is **not** a claim that every new or imported component is Apache-2.0.
 
 ## Source components
 
