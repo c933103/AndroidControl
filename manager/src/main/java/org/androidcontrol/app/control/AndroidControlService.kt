@@ -196,6 +196,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     }
 
     override fun destroy() {
+        synchronized(recordingLock) { stopCallCaptureLocked() }
         System.exit(0)
     }
 
@@ -207,6 +208,72 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
             { runSettings("get", "system", "user_rotation").trim().toIntOrNull() ?: 0 },
             { getPortraitRotation() }
         )
+    }
+
+
+    // Call-recording capture is isolated from orientation operations. No arbitrary
+    // executable path, codec, arguments or outside callers are accepted.
+    private val recordingLock = Any()
+    private val callPipeline by lazy {
+        org.androidcontrol.app.recording.services.shell.ShellAudioPipeline()
+    }
+    private var recordingOwner: IBinder? = null
+    private var recordingOwnerDeath: IBinder.DeathRecipient? = null
+
+    override fun beginCallRecording(
+        ownerToken: IBinder,
+        serverPath: String,
+        audioSource: String,
+        codec: String,
+        bitRate: Int
+    ): android.os.ParcelFileDescriptor = synchronized(recordingLock) {
+        val context = serviceContext ?: error("Privileged service context not available")
+        val uid = context.packageManager.getPackageUid(org.androidcontrol.app.BuildConfig.APPLICATION_ID, 0)
+        org.androidcontrol.app.recording.CallRecordingPolicy.validateRequest(
+            android.os.Binder.getCallingUid(), uid, serverPath, audioSource, codec, bitRate
+        )
+        check(recordingOwner == null) { "Call recorder is already in use" }
+        val death = IBinder.DeathRecipient {
+            synchronized(recordingLock) {
+                if (recordingOwner == ownerToken) stopCallCaptureLocked()
+            }
+        }
+        ownerToken.linkToDeath(death, 0)
+        try {
+            val pipe = callPipeline.startCapture(audioSource, codec, bitRate, serverPath, false)
+                ?: error("Privileged audio capture failed to initialise")
+            recordingOwner = ownerToken
+            recordingOwnerDeath = death
+            pipe
+        } catch (error: Throwable) {
+            ownerToken.unlinkToDeath(death, 0)
+            callPipeline.stopCapture()
+            throw error
+        }
+    }
+
+    override fun endCallRecording(ownerToken: IBinder) = synchronized(recordingLock) {
+        val context = serviceContext ?: error("Privileged service context not available")
+        val uid = context.packageManager.getPackageUid(org.androidcontrol.app.BuildConfig.APPLICATION_ID, 0)
+        if (android.os.Binder.getCallingUid() != uid) {
+            throw SecurityException("Only AndroidControl may stop its recording")
+        }
+        if (recordingOwner != null && recordingOwner != ownerToken) {
+            throw SecurityException("Wrong recording session owner")
+        }
+        stopCallCaptureLocked()
+    }
+
+    private fun stopCallCaptureLocked() {
+        try {
+            callPipeline.stopCapture()
+        } finally {
+            recordingOwnerDeath?.let { recipient ->
+                runCatching { recordingOwner?.unlinkToDeath(recipient, 0) }
+            }
+            recordingOwner = null
+            recordingOwnerDeath = null
+        }
     }
 
     override fun setForcePortrait(enabled: Boolean) = systemPortrait.setEnabled(enabled)

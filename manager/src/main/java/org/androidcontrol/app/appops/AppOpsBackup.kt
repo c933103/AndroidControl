@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2016 Zheng li (AppOpsX upstream)
+// SPDX-FileCopyrightText: 2026 AndroidControl contributors
+// SPDX-License-Identifier: MIT
+
 package org.androidcontrol.app.appops
 
 import org.json.JSONArray
