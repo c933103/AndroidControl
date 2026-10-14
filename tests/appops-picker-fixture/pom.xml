@@ -31,7 +31,7 @@
             <resources><resource>
               <directory>${project.basedir}/../../manager/src/main/java/org/androidcontrol/app/appops</directory>
               <filtering>false</filtering>
-              <includes><include>AppOpsActivity.kt</include><include>AppOpsBackup.kt</include><include>AppOpsNames.kt</include></includes>
+              <includes><include>AppOpsActivity.kt</include><include>AppOpsBackup.kt</include><include>AppOpsNames.kt</include><include>AppOpsLabels.kt</include></includes>
             </resource></resources>
           </configuration>
         </execution></executions>

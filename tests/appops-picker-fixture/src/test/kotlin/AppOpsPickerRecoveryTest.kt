@@ -175,6 +175,19 @@ class AppOpsPickerRecoveryTest {
         assertEquals(1, json.getJSONArray("apps").getJSONObject(0).getJSONArray("ops").length())
     }
 
+    @Test fun appOpsLabelsArePresentationOnlyAndUnknownOperationsFallbackToStableNames() {
+        val controller = ready()
+        val labels = AppOpsLabels(controller.get())
+        assertEquals("Read clipboard", labels.operation("android:read_clipboard"))
+        assertEquals("Read clipboard · android:read_clipboard",
+            labels.operationWithIdentifier("android:read_clipboard"))
+        assertEquals("camera", labels.operation("android:camera"))
+        assertEquals("Other", labels.group("Other"))
+        // Display labels must not replace the identifier in saved rules or Binder calls.
+        val operation = AppOpsClient.catalog().getJSONObject(0).getString("name")
+        assertEquals("android:camera", operation)
+    }
+
     @Test fun controllerConfigurationRecreationRestoresProfileAndSelectedPackage() {
         val first = ready()
         val old = first.get()

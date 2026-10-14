@@ -51,5 +51,10 @@ for language in LANGUAGES:
 assert "labels.operationWithIdentifier" in (
     ROOT / "manager/src/main/java/org/androidcontrol/app/appops/AppOpsActivity.kt"
 ).read_text(encoding="utf-8"), "Localized operation choice not connected to UI"
+fixture = (ROOT / "tests/appops-picker-fixture/pom.xml").read_text(encoding="utf-8")
+assert "<include>AppOpsLabels.kt</include>" in fixture, "Lifecycle fixture omits production label helper"
+fixture_resources = (ROOT / "tests/appops-picker-fixture/src/test/kotlin/R.kt").read_text(encoding="utf-8")
+for key in operations + ["appops_group_other"]:
+    assert "const val " + key + " " in fixture_resources, f"Lifecycle fixture lacks {key}"
 print(f"AppOps localization: {len(LANGUAGES)} locales, {len(english)} keys, "
       f"{len(operations)} mapped historical operation labels; placeholders OK")
