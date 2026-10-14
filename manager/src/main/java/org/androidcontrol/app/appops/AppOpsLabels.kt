@@ -69,7 +69,7 @@ internal class AppOpsLabels(private val context: Context) {
                 platform
             } else {
                 val resource = when (group) {
-                    "Other" -> R.string.appops_group_other
+                    "Other", "Other operations" -> R.string.appops_group_other
                     "android.permission-group.ACTIVITY_RECOGNITION" -> R.string.appops_group_activity_recognition
                     "android.permission-group.SENSORS" -> R.string.appops_group_sensors
                     "android.permission-group.PHONE" -> R.string.appops_group_phone

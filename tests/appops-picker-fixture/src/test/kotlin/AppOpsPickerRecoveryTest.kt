@@ -203,6 +203,10 @@ class AppOpsPickerRecoveryTest {
             labels.operationWithIdentifier("android:read_clipboard"))
         assertEquals("camera", labels.operation("android:camera"))
         assertEquals("Other", labels.group("Other"))
+        assertEquals("Other", labels.group("Other operations"))
+        assertEquals("Other", labels.groupWithIdentifier("Other operations").substringBefore(" · "))
+        assertTrue("Permissionless backend group is localized",
+            labels.groupWithIdentifier("Other operations").startsWith("Other"))
         // Display labels must not replace the identifier in saved rules or Binder calls.
         val operation = AppOpsClient.catalog().getJSONObject(0).getString("name")
         assertEquals("android:camera", operation)

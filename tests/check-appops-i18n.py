@@ -91,6 +91,11 @@ for language in PARTIAL_LANGUAGES:
 korean = strings("values-ko")
 assert korean["appops_ignore"] == "무시", "Korean Ignore must mean silent ignore"
 assert korean["appops_deny"] == "거부", "Korean Deny must mean rejection"
+backend = (ROOT / "manager/src/main/java/org/androidcontrol/app/appops/AppOpsService.kt").read_text(encoding="utf-8")
+assert '"Other operations"' in backend, "AppOps backend permissionless-group sentinel changed"
+assert '"Other", "Other operations" -> R.string.appops_group_other' in mapping, (
+    "Permissionless operations must use localized Other group"
+)
 assert "labels.operationWithIdentifier" in (
     ROOT / "manager/src/main/java/org/androidcontrol/app/appops/AppOpsActivity.kt"
 ).read_text(encoding="utf-8"), "Localized operation choice not connected to UI"
