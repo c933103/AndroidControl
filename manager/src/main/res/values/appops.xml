@@ -48,4 +48,27 @@
     <string name="appops_last_reject">Last rejected access: %1$s</string>
     <string name="appops_effective_mode">Effective AppOps mode: %1$s</string>
     <string name="appops_credits" translatable="false">AppOpsX · MIT · Zheng li (2016)</string>
+    <!-- Operation labels derived from AppOpsX (MIT, see THIRD_PARTY_NOTICES.md). -->
+    <string name="appops_op_post_notification">Post notification</string>
+    <string name="appops_op_play_audio">Play audio</string>
+    <string name="appops_op_read_clipboard">Read clipboard</string>
+    <string name="appops_op_write_clipboard">Modify clipboard</string>
+    <string name="appops_op_turn_screen_on">Turn screen on</string>
+    <string name="appops_op_run_in_background">Run background</string>
+    <string name="appops_op_monitor_location">Monitor location</string>
+    <string name="appops_op_monitor_location_high_power">Monitor high power location</string>
+    <string name="appops_op_neighboring_cells">Coarse location</string>
+    <string name="appops_op_audio_master_volume">Master volume</string>
+    <string name="appops_op_audio_voice_volume">Voice volume</string>
+    <string name="appops_op_audio_ring_volume">Ring volume</string>
+    <string name="appops_op_audio_media_volume">Media volume</string>
+    <string name="appops_op_audio_alarm_volume">Alarm volume</string>
+    <string name="appops_op_audio_notification_volume">Notification volume</string>
+    <string name="appops_op_audio_bluetooth_volume">Bluetooth volume</string>
+    <string name="appops_op_toast_window">Display toasts</string>
+    <string name="appops_op_activate_vpn">Activate VPN</string>
+    <string name="appops_op_take_audio_focus">Audio focus</string>
+    <string name="appops_op_access_mobile_network_data">Mobile network</string>
+    <string name="appops_op_access_wifi_network_data">WiFi network</string>
+    <string name="appops_group_other">Other</string>
 </resources>

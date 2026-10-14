@@ -45,6 +45,7 @@ class AppOpsActivity : AppBarActivity() {
     private var busy = false
     private var generation = 0
     private val adapter = OpsAdapter()
+    private val labels by lazy(LazyThreadSafetyMode.NONE) { AppOpsLabels(this) }
     private var showAll = false
     private var group: String? = null
     private val chosen = linkedSetOf<String>()
@@ -256,15 +257,22 @@ class AppOpsActivity : AppBarActivity() {
     private fun filter() {
         val query = if (::search.isInitialized) search.text.toString() else ""
         shownOps = operations.filter {
-            (showAll || it.getBoolean("relevant")) && (group == null || it.getString("group") == group) &&
-                listOf(it.getString("name"), it.getString("permission"), it.getString("group")).any { value -> value.contains(query, true) }
+            val name = it.getString("name")
+            val permission = it.getString("permission")
+            val operationGroup = it.getString("group")
+            (showAll || it.getBoolean("relevant")) && (group == null || operationGroup == group) &&
+                (query.isBlank() ||
+                    listOf(name, permission, operationGroup).any { value -> value.contains(query, true) } ||
+                    labels.operation(name).contains(query, true) ||
+                    labels.permission(permission).contains(query, true) ||
+                    labels.group(operationGroup).contains(query, true))
         }
         adapter.notifyDataSetChanged()
     }
     private fun selectGroup() {
         val groups = operations.map { it.getString("group") }.distinct().sorted()
-        val labels = listOf(getString(R.string.appops_all_groups), getString(R.string.appops_apps_by_op)) + groups
-        MaterialAlertDialogBuilder(this).setTitle(R.string.appops_group).setItems(labels.toTypedArray()) { _, index ->
+        val options = listOf(getString(R.string.appops_all_groups), getString(R.string.appops_apps_by_op)) + groups.map(labels::group)
+        MaterialAlertDialogBuilder(this).setTitle(R.string.appops_group).setItems(options.toTypedArray()) { _, index ->
             if (index == 1) selectAppsByOperation() else {
                 group = if (index == 0) null else groups[index - 2]
                 filter()
@@ -272,12 +280,13 @@ class AppOpsActivity : AppBarActivity() {
         }.show()
     }
     private fun selectAppsByOperation() {
-        val names = operations.map { it.getString("name") }.sorted()
-        MaterialAlertDialogBuilder(this).setTitle(R.string.appops_apps_by_op).setItems(names.toTypedArray()) { _, index ->
+        val names = operations.map { it.getString("name") }.distinct().sortedBy(labels::operation)
+        MaterialAlertDialogBuilder(this).setTitle(R.string.appops_apps_by_op)
+            .setItems(names.map(labels::operationWithIdentifier).toTypedArray()) { _, index ->
             val name = names[index]
             task({ AppOpsClient.request("appsForOp", user) { it.put("op", name) } }) { result ->
                 val matches = jsonList(result as JSONArray).sortedBy { it.getString("label").lowercase() }
-                MaterialAlertDialogBuilder(this).setTitle(name).setItems(matches.map {
+                MaterialAlertDialogBuilder(this).setTitle(labels.operationWithIdentifier(name)).setItems(matches.map {
                     "${it.getString("label")} · ${modeLabel(it.getInt("effective"))}\n${it.getString("package")}" }.toTypedArray()) { _, i ->
                     selectedPackage = matches[i].getString("package")
                     group = null
@@ -300,7 +309,7 @@ class AppOpsActivity : AppBarActivity() {
         if (busy) return
         val pkg = selectedPackage ?: return
         val modes = if (Build.VERSION.SDK_INT >= 29) (0..4).toList() else (0..3).toList()
-        MaterialAlertDialogBuilder(this).setTitle(op.getString("name"))
+        MaterialAlertDialogBuilder(this).setTitle(labels.operationWithIdentifier(op.getString("name")))
             .setSingleChoiceItems(modes.map(::modeLabel).toTypedArray(), modes.indexOf(op.getInt("mode"))) { dialog, index ->
                 dialog.dismiss()
                 task({ AppOpsClient.request("set", user, pkg) { it.put("op", op.getString("name")).put("mode", modes[index]) } }) { result ->
@@ -345,7 +354,8 @@ class AppOpsActivity : AppBarActivity() {
         root.addView(enabled)
         val picker = android.widget.ListView(this).apply {
             choiceMode = android.widget.ListView.CHOICE_MODE_MULTIPLE
-            adapter = ArrayAdapter(this@AppOpsActivity, android.R.layout.simple_list_item_multiple_choice, names)
+            adapter = ArrayAdapter(this@AppOpsActivity, android.R.layout.simple_list_item_multiple_choice,
+                names.map(labels::operationWithIdentifier))
         }
         names.forEachIndexed { i, name -> picker.setItemChecked(i, name in selected) }
         picker.setOnItemClickListener { _, _, i, _ -> if (picker.isItemChecked(i)) selected.add(names[i]) else selected.remove(names[i]) }
@@ -492,14 +502,15 @@ class AppOpsActivity : AppBarActivity() {
         override fun onBindViewHolder(holder: OpsHolder, position: Int) {
             val op = shownOps[position]
             val name = op.getString("name")
-            holder.name.text = name.removePrefix("android:")
+            holder.name.text = labels.operation(name)
             holder.name.setOnCheckedChangeListener(null)
             holder.name.isChecked = name in chosen
             holder.name.setOnCheckedChangeListener { _, selected -> if (selected) chosen.add(name) else chosen.remove(name) }
             val times = listOf("access" to R.string.appops_last_access, "reject" to R.string.appops_last_reject).mapNotNull { (key, label) ->
                 op.getLong(key).takeIf { it > 0 }?.let { getString(label, DateFormat.getDateFormat(this@AppOpsActivity).format(Date(it)) + " " + DateFormat.getTimeFormat(this@AppOpsActivity).format(Date(it))) }
             }
-            holder.detail.text = (listOf(op.getString("permission"), op.getString("group")) + times +
+            holder.detail.text = (listOf(name, labels.permissionWithIdentifier(op.getString("permission")),
+                labels.groupWithIdentifier(op.getString("group"))) + times +
                 getString(R.string.appops_effective_mode, modeLabel(op.getInt("effective")))).filter { it.isNotEmpty() }.joinToString("\n")
             holder.mode.text = modeLabel(op.getInt("mode"))
             holder.mode.setOnClickListener { changeMode(op) }
