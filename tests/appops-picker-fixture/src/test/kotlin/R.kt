@@ -45,6 +45,40 @@ object R { object string {
     const val appops_user = 2131820586
     const val appops_user_number = 2131820587
     const val appops_working = 2131820588
+    const val appops_group_activity_recognition = 2131820611
+    const val appops_group_sensors = 2131820612
+    const val appops_group_phone = 2131820613
+    const val appops_group_sms = 2131820614
+    const val appops_group_contacts = 2131820615
+    const val appops_group_camera = 2131820616
+    const val appops_group_location = 2131820617
+    const val appops_group_calendar = 2131820618
+    const val appops_group_microphone = 2131820619
+    const val appops_group_storage = 2131820620
+    const val appops_group_clipboard = 2131820621
+    const val appops_group_device_identifiers = 2131820622
+    const val appops_op_post_notification = 2131820589
+    const val appops_op_play_audio = 2131820590
+    const val appops_op_read_clipboard = 2131820591
+    const val appops_op_write_clipboard = 2131820592
+    const val appops_op_turn_screen_on = 2131820593
+    const val appops_op_run_in_background = 2131820594
+    const val appops_op_monitor_location = 2131820595
+    const val appops_op_monitor_location_high_power = 2131820596
+    const val appops_op_neighboring_cells = 2131820597
+    const val appops_op_audio_master_volume = 2131820598
+    const val appops_op_audio_voice_volume = 2131820599
+    const val appops_op_audio_ring_volume = 2131820600
+    const val appops_op_audio_media_volume = 2131820601
+    const val appops_op_audio_alarm_volume = 2131820602
+    const val appops_op_audio_notification_volume = 2131820603
+    const val appops_op_audio_bluetooth_volume = 2131820604
+    const val appops_op_toast_window = 2131820605
+    const val appops_op_activate_vpn = 2131820606
+    const val appops_op_take_audio_focus = 2131820607
+    const val appops_op_access_mobile_network_data = 2131820608
+    const val appops_op_access_wifi_network_data = 2131820609
+    const val appops_group_other = 2131820610
 } }
 object FixtureStrings { val values = mapOf(
     R.string.appops_all_groups to "All permission groups",
@@ -92,4 +126,38 @@ object FixtureStrings { val values = mapOf(
     R.string.appops_user to "User",
     R.string.appops_user_number to "User %1\$d",
     R.string.appops_working to "Working…",
+    R.string.appops_group_activity_recognition to "Physical activity",
+    R.string.appops_group_sensors to "Sensors",
+    R.string.appops_group_phone to "Phone",
+    R.string.appops_group_sms to "SMS",
+    R.string.appops_group_contacts to "Contacts",
+    R.string.appops_group_camera to "Camera",
+    R.string.appops_group_location to "Location",
+    R.string.appops_group_calendar to "Calendar",
+    R.string.appops_group_microphone to "Microphone",
+    R.string.appops_group_storage to "Storage",
+    R.string.appops_group_clipboard to "Clipboard",
+    R.string.appops_group_device_identifiers to "Device identifiers",
+    R.string.appops_op_post_notification to "Post notification",
+    R.string.appops_op_play_audio to "Play audio",
+    R.string.appops_op_read_clipboard to "Read clipboard",
+    R.string.appops_op_write_clipboard to "Modify clipboard",
+    R.string.appops_op_turn_screen_on to "Turn screen on",
+    R.string.appops_op_run_in_background to "Run background",
+    R.string.appops_op_monitor_location to "Monitor location",
+    R.string.appops_op_monitor_location_high_power to "Monitor high power location",
+    R.string.appops_op_neighboring_cells to "Coarse location",
+    R.string.appops_op_audio_master_volume to "Master volume",
+    R.string.appops_op_audio_voice_volume to "Voice volume",
+    R.string.appops_op_audio_ring_volume to "Ring volume",
+    R.string.appops_op_audio_media_volume to "Media volume",
+    R.string.appops_op_audio_alarm_volume to "Alarm volume",
+    R.string.appops_op_audio_notification_volume to "Notification volume",
+    R.string.appops_op_audio_bluetooth_volume to "Bluetooth volume",
+    R.string.appops_op_toast_window to "Display toasts",
+    R.string.appops_op_activate_vpn to "Activate VPN",
+    R.string.appops_op_take_audio_focus to "Audio focus",
+    R.string.appops_op_access_mobile_network_data to "Mobile network",
+    R.string.appops_op_access_wifi_network_data to "WiFi network",
+    R.string.appops_group_other to "Other",
 ) }

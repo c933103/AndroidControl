@@ -175,6 +175,43 @@ class AppOpsPickerRecoveryTest {
         assertEquals(1, json.getJSONArray("apps").getJSONObject(0).getJSONArray("ops").length())
     }
 
+    @Test fun frameworkPermissionAndGroupLabelsAreDisplayOnly() {
+        val controller = ready()
+        val labels = AppOpsLabels(controller.get())
+        val group = "android.permission-group.CAMERA"
+        assertTrue("Framework or conventional localized group label must be shown",
+            labels.group(group).isNotBlank())
+        assertTrue("Known group should not be left as an opaque identifier",
+            labels.group(group) != group)
+        val identifier = "android:camera"
+        val localized = labels.operationWithIdentifier(identifier, "android.permission.CAMERA")
+        assertTrue("Platform operation name must not be empty", localized.isNotBlank())
+        val semanticLabel = labels.operation(identifier, "android.permission.CAMERA")
+        if (semanticLabel != identifier.removePrefix("android:")) {
+            assertTrue("A distinct translated label should preserve the stable identifier",
+                localized.contains(identifier))
+        }
+        assertEquals("Binder and backup identifiers are not localized", "android:camera",
+            AppOpsClient.catalog().getJSONObject(0).getString("name"))
+    }
+
+    @Test fun appOpsLabelsArePresentationOnlyAndUnknownOperationsFallbackToStableNames() {
+        val controller = ready()
+        val labels = AppOpsLabels(controller.get())
+        assertEquals("Read clipboard", labels.operation("android:read_clipboard"))
+        assertEquals("Read clipboard · android:read_clipboard",
+            labels.operationWithIdentifier("android:read_clipboard"))
+        assertEquals("camera", labels.operation("android:camera"))
+        assertEquals("Other", labels.group("Other"))
+        assertEquals("Other", labels.group("Other operations"))
+        assertEquals("Other", labels.groupWithIdentifier("Other operations").substringBefore(" · "))
+        assertTrue("Permissionless backend group is localized",
+            labels.groupWithIdentifier("Other operations").startsWith("Other"))
+        // Display labels must not replace the identifier in saved rules or Binder calls.
+        val operation = AppOpsClient.catalog().getJSONObject(0).getString("name")
+        assertEquals("android:camera", operation)
+    }
+
     @Test fun controllerConfigurationRecreationRestoresProfileAndSelectedPackage() {
         val first = ready()
         val old = first.get()

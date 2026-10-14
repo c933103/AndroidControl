@@ -111,7 +111,31 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
     private fun testPreferences() = targetContext.createDeviceProtectedStorageContext()
         .getSharedPreferences("runtime_regression", Context.MODE_PRIVATE)
 
+    /** Exercise the installed APK's actual Android resource configuration, not fixture stubs. */
+    private fun checkAppOpsLocaleResources() {
+        val translations = listOf(
+            Triple("ja", R.string.appops_allow, "許可"),
+            Triple("ko", R.string.appops_ignore, "무시"),
+            Triple("ko", R.string.appops_deny, "거부"),
+            Triple("de", R.string.appops_allow, "Zulassen"),
+            Triple("fr", R.string.appops_default, "Par défaut"),
+            Triple("ar", R.string.appops_ignore, "تجاهل"),
+            Triple("zh-TW", R.string.appops_allow, "允許"),
+            Triple("zh-CN", R.string.appops_allow, "允许")
+        )
+        for ((tag, resource, expected) in translations) {
+            val configuration = android.content.res.Configuration(targetContext.resources.configuration)
+            configuration.setLocale(java.util.Locale.forLanguageTag(tag))
+            val localized = targetContext.createConfigurationContext(configuration)
+            val actual = localized.getString(resource)
+            check(actual == expected) {
+                "AppOps resource lookup in $tag returned '$actual' instead of '$expected'"
+            }
+        }
+    }
+
     private fun checkAppOps() {
+        checkAppOpsLocaleResources()
         controlService()
         val client = org.androidcontrol.app.appops.AppOpsClient
         val user = android.os.Process.myUid() / 100000

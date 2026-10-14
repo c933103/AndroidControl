@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Short App Ops terms; other AppOps strings fall back to English. -->
+<resources>
+    <string name="appops_allow">Permitir</string>
+    <string name="appops_ignore">Ignorar</string>
+    <string name="appops_deny">Negar</string>
+    <string name="appops_default">Padrão</string>
+    <string name="appops_foreground">Permitir apenas enquanto o app estiver em uso</string>
+    <string name="appops_user">Usuário</string>
+    <string name="appops_save">Salvar</string>
+    <string name="appops_group_other">Outros</string>
+    <string name="appops_group_activity_recognition">Atividade física</string>
+    <string name="appops_group_sensors">Sensores</string>
+    <string name="appops_group_phone">Telefone</string>
+    <string name="appops_group_sms">SMS</string>
+    <string name="appops_group_contacts">Contatos</string>
+    <string name="appops_group_camera">Câmera</string>
+    <string name="appops_group_location">Localização</string>
+    <string name="appops_group_calendar">Calendário</string>
+    <string name="appops_group_microphone">Microfone</string>
+    <string name="appops_group_storage">Armazenamento</string>
+    <string name="appops_group_clipboard">Área de transferência</string>
+    <string name="appops_group_device_identifiers">Identificadores do dispositivo</string>
+</resources>

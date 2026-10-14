@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Short App Ops terms; other AppOps strings fall back to English. -->
+<resources>
+    <string name="appops_allow">許可</string>
+    <string name="appops_ignore">無視</string>
+    <string name="appops_deny">拒否</string>
+    <string name="appops_default">既定</string>
+    <string name="appops_foreground">アプリの使用中のみ許可</string>
+    <string name="appops_user">ユーザー</string>
+    <string name="appops_save">保存</string>
+    <string name="appops_group_other">その他</string>
+    <string name="appops_group_activity_recognition">身体活動</string>
+    <string name="appops_group_sensors">センサー</string>
+    <string name="appops_group_phone">電話</string>
+    <string name="appops_group_sms">SMS</string>
+    <string name="appops_group_contacts">連絡先</string>
+    <string name="appops_group_camera">カメラ</string>
+    <string name="appops_group_location">位置情報</string>
+    <string name="appops_group_calendar">カレンダー</string>
+    <string name="appops_group_microphone">マイク</string>
+    <string name="appops_group_storage">ストレージ</string>
+    <string name="appops_group_clipboard">クリップボード</string>
+    <string name="appops_group_device_identifiers">デバイス ID</string>
+</resources>

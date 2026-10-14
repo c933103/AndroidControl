@@ -1,8 +1,8 @@
 # AC-002 document picker lifecycle fixture
 
 `AppOpsPickerRecoveryTest` exercises the production `AppOpsActivity.kt`,
-`AppOpsBackup.kt`, and `AppOpsNames.kt` under Robolectric 4.14.1 on Android API 30
-and 35. Its 24 test methods execute once on each API level.
+`AppOpsBackup.kt`, `AppOpsNames.kt` and `AppOpsLabels.kt` under Robolectric 4.14.1 on Android API 30
+and 35. Its 25 test methods execute once on each API level.
 
 ## What is real
 
@@ -48,6 +48,7 @@ privileged files, accesses a live profile, or uses a connected device.
 - Startup failure, output failure, malformed input, and fresh-picker retry
 - Separate primary/secondary-profile export contents and daemon read/write calls
 - No writes before import approval or after declining the import confirmation
+- Operation labels are presentation-only: translated display labels and raw identifier fallbacks
 
 This is controlled Android framework lifecycle evidence. It is not native device
 instrumentation, a live Storage Access Framework/provider test, a privileged
