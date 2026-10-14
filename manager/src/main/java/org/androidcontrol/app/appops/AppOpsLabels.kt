@@ -14,7 +14,13 @@ internal class AppOpsLabels(private val context: Context) {
     private val groupLabels = mutableMapOf<String, String>()
     private val permissionLabels = mutableMapOf<String, String>()
 
-    fun operation(name: String): String {
+    fun operation(name: String, permissionName: String = ""): String {
+        // Prefer Android's current, device-localized permission label where possible.
+        // Permissionless operations fall back to historical AppOpsX labels.
+        if (permissionName.isNotBlank()) {
+            val platform = permission(permissionName)
+            if (platform.isNotBlank() && platform != permissionName) return platform
+        }
         val resource = when (name) {
             "android:post_notification" -> R.string.appops_op_post_notification
             "android:play_audio" -> R.string.appops_op_play_audio
@@ -45,21 +51,41 @@ internal class AppOpsLabels(private val context: Context) {
         return if (resource == 0) name.removePrefix("android:") else context.getString(resource)
     }
 
-    fun operationWithIdentifier(name: String): String {
-        val display = operation(name)
+    fun operationWithIdentifier(name: String, permissionName: String = ""): String {
+        val display = operation(name, permissionName)
         return if (display == name || display == name.removePrefix("android:")) display else "$display · $name"
     }
 
     fun group(group: String): String {
-        if (group == "Other") return context.getString(R.string.appops_group_other)
         if (group.isBlank()) return ""
         return groupLabels.getOrPut(group) {
+            // Prefer the running platform's label, including for vendor groups.
             @Suppress("DEPRECATION")
-            val label = runCatching {
+            val platform = runCatching {
                 context.packageManager.getPermissionGroupInfo(group, 0)
                     .loadLabel(context.packageManager).toString()
             }.getOrNull()
-            label?.takeIf { it.isNotBlank() } ?: group
+            if (!platform.isNullOrBlank() && platform != group) {
+                platform
+            } else {
+                val resource = when (group) {
+                    "Other" -> R.string.appops_group_other
+                    "android.permission-group.ACTIVITY_RECOGNITION" -> R.string.appops_group_activity_recognition
+                    "android.permission-group.SENSORS" -> R.string.appops_group_sensors
+                    "android.permission-group.PHONE" -> R.string.appops_group_phone
+                    "android.permission-group.SMS" -> R.string.appops_group_sms
+                    "android.permission-group.CONTACTS" -> R.string.appops_group_contacts
+                    "android.permission-group.CAMERA" -> R.string.appops_group_camera
+                    "android.permission-group.LOCATION" -> R.string.appops_group_location
+                    "android.permission-group.CALENDAR" -> R.string.appops_group_calendar
+                    "android.permission-group.MICROPHONE" -> R.string.appops_group_microphone
+                    "android.permission-group.STORAGE" -> R.string.appops_group_storage
+                    "android.permission-group.CLIPBOARD" -> R.string.appops_group_clipboard
+                    "android.permission-group.DEVICE_IDENTIFIERS" -> R.string.appops_group_device_identifiers
+                    else -> 0
+                }
+                if (resource != 0) context.getString(resource) else group
+            }
         }
     }
 

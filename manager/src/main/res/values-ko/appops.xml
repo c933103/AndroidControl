@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Short App Ops terms; other AppOps strings fall back to English. -->
+<resources>
+    <string name="appops_allow">허용</string>
+    <string name="appops_ignore">무시</string>
+    <string name="appops_deny">거부</string>
+    <string name="appops_default">기본</string>
+    <string name="appops_user">사용자</string>
+    <string name="appops_save">저장</string>
+    <string name="appops_group_other">기타</string>
+    <string name="appops_group_activity_recognition">신체활동</string>
+    <string name="appops_group_sensors">센서</string>
+    <string name="appops_group_phone">전화</string>
+    <string name="appops_group_sms">SMS</string>
+    <string name="appops_group_contacts">연락처</string>
+    <string name="appops_group_camera">카메라</string>
+    <string name="appops_group_location">위치</string>
+    <string name="appops_group_calendar">캘린더</string>
+    <string name="appops_group_microphone">마이크</string>
+    <string name="appops_group_storage">저장소</string>
+    <string name="appops_group_clipboard">클립보드</string>
+    <string name="appops_group_device_identifiers">장치식별</string>
+</resources>

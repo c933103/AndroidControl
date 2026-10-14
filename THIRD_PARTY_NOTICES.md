@@ -16,4 +16,14 @@ New AndroidControl-specific warnings and menu text are independently translated.
 
 The legacy backup decoder adapts the `v: 1`, `opbacks`, `pkg`, and comma-separated `ops` compatibility behavior from AppOpsX’s `ConfigPresenter` and `PreAppInfo`. The UI/backend are implemented within AndroidControl; AppOpsX’s old socket server, API stubs, and starter script are not bundled. The full MIT notice is also shipped in `manager/src/main/assets/licenses/AppOpsX-MIT.txt`, and attribution appears in About.
 
+## Additional App Ops localization terminology
+
+[RikkaApps/AppOps-Localization](https://github.com/RikkaApps/AppOps-Localization/tree/071eab5b984c41ee4dec44bb55dc9cd402e2ad06)
+is a separate localization project for Rikka's App Ops product and is **not**
+the AppOpsX project. It is used as a reference for conventional short UI
+terms (permission groups and mode names) in 16 additional languages.
+The inspected repository does not include a root LICENSE file; AndroidControl
+does not assume blanket permission to redistribute its entire XML corpus.
+No long-form messages, feature-specific text or application assets are included.
+
 Other existing dependencies retain their original licenses and notices.

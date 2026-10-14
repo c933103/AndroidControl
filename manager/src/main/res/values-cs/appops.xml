@@ -70,4 +70,17 @@
     <string name="appops_op_access_mobile_network_data">Mobilní sítě</string>
     <string name="appops_op_access_wifi_network_data">Wi-Fi sítě</string>
     <string name="appops_group_other">Ostatní</string>
+    <!-- Common Android permission-group labels. -->
+    <string name="appops_group_activity_recognition">Fyzická aktivita</string>
+    <string name="appops_group_sensors">Senzory</string>
+    <string name="appops_group_phone">Telefon</string>
+    <string name="appops_group_sms">SMS</string>
+    <string name="appops_group_contacts">Kontakty</string>
+    <string name="appops_group_camera">Fotoaparát</string>
+    <string name="appops_group_location">Poloha</string>
+    <string name="appops_group_calendar">Kalendář</string>
+    <string name="appops_group_microphone">Mikrofon</string>
+    <string name="appops_group_storage">Úložiště</string>
+    <string name="appops_group_clipboard">Schránka</string>
+    <string name="appops_group_device_identifiers">Identifikátory zařízení</string>
 </resources>

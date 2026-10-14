@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Short App Ops terms; other AppOps strings fall back to English. -->
+<resources>
+    <string name="appops_allow">Toestaan</string>
+    <string name="appops_deny">Weigeren</string>
+    <string name="appops_default">Standaard</string>
+    <string name="appops_user">Gebruiker</string>
+    <string name="appops_save">Opslaan</string>
+    <string name="appops_group_phone">Telefoon</string>
+    <string name="appops_group_sms">SMS</string>
+    <string name="appops_group_contacts">Contacten</string>
+    <string name="appops_group_camera">Camera</string>
+    <string name="appops_group_location">Locatie</string>
+    <string name="appops_group_calendar">Kalender</string>
+    <string name="appops_group_microphone">Microfoon</string>
+    <string name="appops_group_storage">Opslag</string>
+</resources>

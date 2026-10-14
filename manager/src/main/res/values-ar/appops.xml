@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Short, conventional terms aligned with Rikka Apps' separate App Ops translations; other AppOps strings fall back to English. -->
+<resources>
+    <string name="appops_allow">سماح</string>
+    <string name="appops_ignore">تجاهل</string>
+    <string name="appops_deny">رفض</string>
+    <string name="appops_default">افتراضي</string>
+    <string name="appops_foreground">السماح فقط أثناء استخدام التطبيق</string>
+    <string name="appops_user">المستخدم</string>
+    <string name="appops_save">حفظ</string>
+    <string name="appops_group_other">أخرى</string>
+    <string name="appops_group_activity_recognition">النشاط البدني</string>
+    <string name="appops_group_sensors">أجهزة الاستشعار</string>
+    <string name="appops_group_phone">الهاتف</string>
+    <string name="appops_group_sms">رسالة SMS</string>
+    <string name="appops_group_contacts">جهات الاتصال</string>
+    <string name="appops_group_camera">الكاميرا</string>
+    <string name="appops_group_location">الموقع</string>
+    <string name="appops_group_calendar">التقويم</string>
+    <string name="appops_group_microphone">الميكرفون</string>
+    <string name="appops_group_storage">التخزين</string>
+    <string name="appops_group_clipboard">الحافظة</string>
+    <string name="appops_group_device_identifiers">معرفات id الجهاز</string>
+</resources>

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Short, conventional terms aligned with Rikka Apps' separate App Ops translations; other AppOps strings fall back to English. -->
+<resources>
+    <string name="appops_allow">Zulassen</string>
+    <string name="appops_ignore">Ignorieren</string>
+    <string name="appops_deny">Verweigern</string>
+    <string name="appops_default">Standard</string>
+    <string name="appops_foreground">Nur während die App verwendet wird</string>
+    <string name="appops_user">Benutzer</string>
+    <string name="appops_save">Speichern</string>
+    <string name="appops_group_other">Anderes</string>
+    <string name="appops_group_phone">Telefon</string>
+    <string name="appops_group_sms">SMS</string>
+    <string name="appops_group_contacts">Kontakte</string>
+    <string name="appops_group_camera">Kamera</string>
+    <string name="appops_group_location">Standort</string>
+    <string name="appops_group_calendar">Kalender</string>
+    <string name="appops_group_microphone">Mikrofon</string>
+    <string name="appops_group_storage">Speicher</string>
+</resources>

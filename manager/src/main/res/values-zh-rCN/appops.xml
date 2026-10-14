@@ -70,4 +70,17 @@
     <string name="appops_op_access_mobile_network_data">允许所有移动数据访问</string>
     <string name="appops_op_access_wifi_network_data">允许所有Wi-Fi数据访问</string>
     <string name="appops_group_other">其他</string>
+    <!-- Common Android permission-group labels. -->
+    <string name="appops_group_activity_recognition">身体活动</string>
+    <string name="appops_group_sensors">传感器</string>
+    <string name="appops_group_phone">电话</string>
+    <string name="appops_group_sms">短信</string>
+    <string name="appops_group_contacts">通讯录</string>
+    <string name="appops_group_camera">相机</string>
+    <string name="appops_group_location">位置</string>
+    <string name="appops_group_calendar">日历</string>
+    <string name="appops_group_microphone">麦克风</string>
+    <string name="appops_group_storage">存储空间</string>
+    <string name="appops_group_clipboard">剪贴板</string>
+    <string name="appops_group_device_identifiers">设备识别码</string>
 </resources>

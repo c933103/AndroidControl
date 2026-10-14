@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Short App Ops terms; other AppOps strings fall back to English. -->
+<resources>
+    <string name="appops_allow">Permite</string>
+    <string name="appops_ignore">Ignoră</string>
+    <string name="appops_deny">Refuză</string>
+    <string name="appops_default">Implicit</string>
+    <string name="appops_foreground">Permite numai când folosești aplicația</string>
+    <string name="appops_save">Salvează</string>
+    <string name="appops_group_other">Altele</string>
+    <string name="appops_group_activity_recognition">Activitate fizică</string>
+    <string name="appops_group_sensors">Senzori</string>
+    <string name="appops_group_phone">Telefon</string>
+    <string name="appops_group_sms">SMS</string>
+    <string name="appops_group_contacts">Contacte</string>
+    <string name="appops_group_camera">Camera foto</string>
+    <string name="appops_group_location">Locație</string>
+    <string name="appops_group_calendar">Calendar</string>
+    <string name="appops_group_microphone">Microfon</string>
+    <string name="appops_group_storage">Stocare</string>
+    <string name="appops_group_clipboard">Clipboard</string>
+    <string name="appops_group_device_identifiers">Identificatori dispozitiv</string>
+</resources>

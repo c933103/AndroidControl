@@ -263,7 +263,7 @@ class AppOpsActivity : AppBarActivity() {
             (showAll || it.getBoolean("relevant")) && (group == null || operationGroup == group) &&
                 (query.isBlank() ||
                     listOf(name, permission, operationGroup).any { value -> value.contains(query, true) } ||
-                    labels.operation(name).contains(query, true) ||
+                    labels.operation(name, permission).contains(query, true) ||
                     labels.permission(permission).contains(query, true) ||
                     labels.group(operationGroup).contains(query, true))
         }
@@ -280,13 +280,17 @@ class AppOpsActivity : AppBarActivity() {
         }.show()
     }
     private fun selectAppsByOperation() {
-        val names = operations.map { it.getString("name") }.distinct().sortedBy(labels::operation)
+        val entries = operations.distinctBy { it.getString("name") }
+            .sortedBy { labels.operation(it.getString("name"), it.getString("permission")) }
         MaterialAlertDialogBuilder(this).setTitle(R.string.appops_apps_by_op)
-            .setItems(names.map(labels::operationWithIdentifier).toTypedArray()) { _, index ->
-            val name = names[index]
+            .setItems(entries.map {
+                labels.operationWithIdentifier(it.getString("name"), it.getString("permission"))
+            }.toTypedArray()) { _, index ->
+            val op = entries[index]
+            val name = op.getString("name")
             task({ AppOpsClient.request("appsForOp", user) { it.put("op", name) } }) { result ->
                 val matches = jsonList(result as JSONArray).sortedBy { it.getString("label").lowercase() }
-                MaterialAlertDialogBuilder(this).setTitle(labels.operationWithIdentifier(name)).setItems(matches.map {
+                MaterialAlertDialogBuilder(this).setTitle(labels.operationWithIdentifier(name, op.getString("permission"))).setItems(matches.map {
                     "${it.getString("label")} · ${modeLabel(it.getInt("effective"))}\n${it.getString("package")}" }.toTypedArray()) { _, i ->
                     selectedPackage = matches[i].getString("package")
                     group = null
@@ -309,7 +313,7 @@ class AppOpsActivity : AppBarActivity() {
         if (busy) return
         val pkg = selectedPackage ?: return
         val modes = if (Build.VERSION.SDK_INT >= 29) (0..4).toList() else (0..3).toList()
-        MaterialAlertDialogBuilder(this).setTitle(labels.operationWithIdentifier(op.getString("name")))
+        MaterialAlertDialogBuilder(this).setTitle(labels.operationWithIdentifier(op.getString("name"), op.getString("permission")))
             .setSingleChoiceItems(modes.map(::modeLabel).toTypedArray(), modes.indexOf(op.getInt("mode"))) { dialog, index ->
                 dialog.dismiss()
                 task({ AppOpsClient.request("set", user, pkg) { it.put("op", op.getString("name")).put("mode", modes[index]) } }) { result ->
@@ -355,7 +359,10 @@ class AppOpsActivity : AppBarActivity() {
         val picker = android.widget.ListView(this).apply {
             choiceMode = android.widget.ListView.CHOICE_MODE_MULTIPLE
             adapter = ArrayAdapter(this@AppOpsActivity, android.R.layout.simple_list_item_multiple_choice,
-                names.map(labels::operationWithIdentifier))
+                names.map { name ->
+                    val permission = operations.firstOrNull { it.getString("name") == name }?.getString("permission").orEmpty()
+                    labels.operationWithIdentifier(name, permission)
+                })
         }
         names.forEachIndexed { i, name -> picker.setItemChecked(i, name in selected) }
         picker.setOnItemClickListener { _, _, i, _ -> if (picker.isItemChecked(i)) selected.add(names[i]) else selected.remove(names[i]) }
@@ -502,7 +509,7 @@ class AppOpsActivity : AppBarActivity() {
         override fun onBindViewHolder(holder: OpsHolder, position: Int) {
             val op = shownOps[position]
             val name = op.getString("name")
-            holder.name.text = labels.operation(name)
+            holder.name.text = labels.operation(name, op.getString("permission"))
             holder.name.setOnCheckedChangeListener(null)
             holder.name.isChecked = name in chosen
             holder.name.setOnCheckedChangeListener { _, selected -> if (selected) chosen.add(name) else chosen.remove(name) }

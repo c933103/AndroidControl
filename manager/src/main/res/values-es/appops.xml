@@ -70,4 +70,17 @@
     <string name="appops_op_access_mobile_network_data">Permite todo el acceso de datos móviles</string>
     <string name="appops_op_access_wifi_network_data">Permite acceso a todos los datos Wi-Fi</string>
     <string name="appops_group_other">Otros</string>
+    <!-- Common Android permission-group labels. -->
+    <string name="appops_group_activity_recognition">Actividad física</string>
+    <string name="appops_group_sensors">Sensores</string>
+    <string name="appops_group_phone">Teléfono</string>
+    <string name="appops_group_sms">SMS</string>
+    <string name="appops_group_contacts">Contactos</string>
+    <string name="appops_group_camera">Cámara</string>
+    <string name="appops_group_location">Ubicación</string>
+    <string name="appops_group_calendar">Calendario</string>
+    <string name="appops_group_microphone">Micrófono</string>
+    <string name="appops_group_storage">Almacenamiento</string>
+    <string name="appops_group_clipboard">Portapapeles</string>
+    <string name="appops_group_device_identifiers">Identificadores del dispositivo</string>
 </resources>

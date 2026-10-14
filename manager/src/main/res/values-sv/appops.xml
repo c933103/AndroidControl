@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Short App Ops terms; other AppOps strings fall back to English. -->
+<resources>
+    <string name="appops_allow">Tillåt</string>
+    <string name="appops_ignore">Ignorera</string>
+    <string name="appops_deny">Tillåt inte</string>
+    <string name="appops_foreground">Tillåt endast när appen används</string>
+    <string name="appops_save">Spara</string>
+    <string name="appops_group_other">Andra</string>
+    <string name="appops_group_phone">Telefon</string>
+    <string name="appops_group_sms">SMS</string>
+    <string name="appops_group_contacts">Kontakter</string>
+    <string name="appops_group_camera">Kamera</string>
+    <string name="appops_group_location">Plats</string>
+    <string name="appops_group_calendar">Kalender</string>
+    <string name="appops_group_microphone">Mikrofon</string>
+    <string name="appops_group_storage">Lagring</string>
+</resources>

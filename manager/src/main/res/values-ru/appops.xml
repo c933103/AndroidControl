@@ -70,4 +70,17 @@
     <string name="appops_op_access_mobile_network_data">Доступ к мобильной сети</string>
     <string name="appops_op_access_wifi_network_data">Доступ к сети Wi-Fi</string>
     <string name="appops_group_other">Прочее</string>
+    <!-- Common Android permission-group labels. -->
+    <string name="appops_group_activity_recognition">Физическая активность</string>
+    <string name="appops_group_sensors">Сенсоры</string>
+    <string name="appops_group_phone">Телефон</string>
+    <string name="appops_group_sms">СМС</string>
+    <string name="appops_group_contacts">Контакты</string>
+    <string name="appops_group_camera">Камера</string>
+    <string name="appops_group_location">Местоположение</string>
+    <string name="appops_group_calendar">Календарь</string>
+    <string name="appops_group_microphone">Микрофон</string>
+    <string name="appops_group_storage">Хранилище</string>
+    <string name="appops_group_clipboard">Буфер обмена</string>
+    <string name="appops_group_device_identifiers">Идентификаторы устройства</string>
 </resources>
