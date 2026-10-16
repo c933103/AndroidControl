@@ -1,6 +1,7 @@
 """No network, credentials, release writes or APK builds are used by these tests."""
 
 import copy
+import http.client
 import importlib.util
 import io
 import json
@@ -107,6 +108,21 @@ class PublicationTests(unittest.TestCase):
         p.publish(api)
         self.assertIn("Already published", p.publish(api))
         self.assertEqual(1, len(api.writes))
+
+    def test_already_published_still_requires_accepted_ci_and_review(self):
+        for mutation in ("failed_ci", "stale_review", "missing_review", "wrong_merge"):
+            with self.subTest(mutation=mutation):
+                api = FakeGitHub(draft=False)
+                if mutation == "failed_ci":
+                    api.data[f"actions/runs/{next(iter(p.RUNS))}"]["conclusion"] = "failure"
+                elif mutation == "stale_review":
+                    api.review["code_review"]["commit_sha"] = "0" * 40
+                    api.update_review()
+                elif mutation == "missing_review":
+                    api.data[f"issues/comments/{p.REVIEW_COMMENT_ID}"]["body"] = ""
+                else:
+                    api.data["pulls/29"]["merge_commit_sha"] = "0" * 40
+                self.assert_blocked(api)
 
     def test_already_published_requires_intact_tag_and_notes(self):
         for mutation in ("missing_tag", "wrong_tag", "changed_notes", "missing_time"):
@@ -237,8 +253,9 @@ class PublicationTests(unittest.TestCase):
     def test_uncertain_write_is_not_retried(self):
         api = FakeGitHub()
         api.write_error = True
-        with self.assertRaisesRegex(RuntimeError, "Uncertain"):
+        with self.assertRaisesRegex(RuntimeError, "Publication may have occurred") as result:
             p.publish(api)
+        self.assertIn("Inspect the release before retrying", str(result.exception))
         self.assertEqual(1, len(api.writes))
 
     def test_wrong_postpublication_tag_is_reported_without_further_mutation(self):
@@ -286,6 +303,59 @@ class TransportTests(unittest.TestCase):
             else:
                 with self.assertRaisesRegex(RuntimeError, f"HTTP {code}"):
                     api.request(p.TAG_PATH, authenticated=True, missing_ok=True)
+
+    def test_patch_transport_failures_are_uncertain_and_never_retried(self):
+        errors = (
+            urllib.error.HTTPError("https://api.github.com", 500, "error", {}, None),
+            urllib.error.URLError("connection failed"),
+            TimeoutError("timed out"),
+            ConnectionResetError("reset"),
+            ValueError("invalid JSON"),
+            http.client.IncompleteRead(b"never-print-partial-response", 100),
+            http.client.BadStatusLine("never-print-status-response"),
+        )
+        for error in errors:
+            with self.subTest(error=type(error).__name__):
+                api = p.GitHub("test-token")
+                fixture = FakeGitHub()
+                writes = []
+                def open_request(request, timeout):
+                    path = request.full_url.split(f"/repos/{p.REPOSITORY}/", 1)[1]
+                    if request.method == "PATCH":
+                        writes.append(request)
+                        # The server may have applied the mutation before transport failed.
+                        fixture.data[p.RELEASE_PATH]["draft"] = False
+                        raise error
+                    return io.BytesIO(json.dumps(fixture.data[path]).encode())
+                api.opener.open = open_request
+                with self.assertRaisesRegex(RuntimeError, "Publication may have occurred") as result:
+                    p.publish(api)
+                self.assertIn("Inspect the release before retrying", str(result.exception))
+                self.assertNotIn("test-token", str(result.exception))
+                self.assertNotIn("never-print", str(result.exception))
+                self.assertFalse(fixture.data[p.RELEASE_PATH]["draft"])
+                self.assertEqual(1, len(writes))
+
+    def test_patch_wrong_shape_json_is_uncertain_and_never_retried(self):
+        for response in (None, [], "never-print-response"):
+            with self.subTest(response=response):
+                api = p.GitHub("test-token")
+                fixture = FakeGitHub()
+                writes = []
+                def open_request(request, timeout):
+                    path = request.full_url.split(f"/repos/{p.REPOSITORY}/", 1)[1]
+                    if request.method == "PATCH":
+                        writes.append(request)
+                        fixture.data[p.RELEASE_PATH]["draft"] = False
+                        return io.BytesIO(json.dumps(response).encode())
+                    return io.BytesIO(json.dumps(fixture.data[path]).encode())
+                api.opener.open = open_request
+                with self.assertRaisesRegex(RuntimeError, "Publication may have occurred") as result:
+                    p.publish(api)
+                self.assertIn("Inspect the release before retrying", str(result.exception))
+                self.assertNotIn("never-print", str(result.exception))
+                self.assertFalse(fixture.data[p.RELEASE_PATH]["draft"])
+                self.assertEqual(1, len(writes))
 
     def test_no_missing_token_or_unexpected_write_target(self):
         for client, path in ((p.GitHub(""), p.RELEASE_PATH), (p.GitHub("test"), "releases/1")):

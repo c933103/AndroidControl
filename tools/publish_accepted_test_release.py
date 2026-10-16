@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Publish only the accepted fd94daf draft, without rebuilding its APK."""
 
+import http.client
 import json
 import os
 import re
@@ -78,6 +79,12 @@ class GitHub:
                 return None
             # Do not print request headers or token values, and never retry a write blindly.
             raise RuntimeError(f"GitHub {request.method} {path}: HTTP {error.code}") from None
+        except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError) as error:
+            # Timeouts, connection failures and malformed responses can follow a
+            # successful server-side write. Do not echo transport details or retry.
+            raise RuntimeError(
+                f"GitHub {request.method} {path}: {type(error).__name__}"
+            ) from None
 
 
 def validate_release(release):
@@ -144,30 +151,32 @@ def publish(api):
     validate_release(release)
     validate_tag(api.request(TAG_PATH, authenticated=True, missing_ok=True),
                  required=not release["draft"])
-    if not release["draft"]:
-        return "Already published; accepted release and tag verified."
     validate_acceptance(api)
+    if not release["draft"]:
+        return "Already published; accepted release, tag and CI/review evidence verified."
     # Complete other preflights before the final release snapshot. GitHub does not
     # document conditional PATCH support; this is not an atomic compare-and-swap.
     validate_tag(api.request(TAG_PATH, authenticated=True, missing_ok=True), required=False)
     release = api.request(RELEASE_PATH, authenticated=True)
     validate_release(release)
     attempted_publish = release["draft"]
-    if attempted_publish:
-        result = api.request(RELEASE_PATH, authenticated=True, payload={
-            "draft": False, "prerelease": True, "make_latest": "false",
-        })
     try:
         if attempted_publish:
+            result = api.request(RELEASE_PATH, authenticated=True, payload={
+                "draft": False, "prerelease": True, "make_latest": "false",
+            })
             validate_release(result)
             require(result["draft"] is False, "GitHub did not publish the release")
         result = api.request(RELEASE_PATH, authenticated=True)
         validate_release(result)
         require(result["draft"] is False, "Release is still a draft")
         validate_tag(api.request(TAG_PATH, authenticated=True), required=True)
-    except RuntimeError as error:
+    except Exception as error:
+        # The mutation may have succeeded even for an unexpected response shape.
+        # Preserve only our sanitized errors; do not echo arbitrary response data.
+        detail = str(error) if isinstance(error, RuntimeError) else type(error).__name__
         raise RuntimeError(
-            f"Publication may have occurred, but verification failed: {error}. "
+            f"Publication may have occurred, but verification failed: {detail}. "
             "Inspect the release before retrying; no automatic rollback was attempted."
         ) from None
     return f"Published and verified https://github.com/{REPOSITORY}/releases/tag/{TAG}"

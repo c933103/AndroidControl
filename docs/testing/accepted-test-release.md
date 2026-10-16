@@ -48,7 +48,7 @@ PATCH contains only `draft: false`, `prerelease: true` and `make_latest: "false"
 It never rewrites notes, targets, tags or assets. This preserves the original
 caveat and leaves the stale `Not published.` sentence unchanged. It verifies the
 published record and tag afterward. An already matching published record is a
-no-op.
+no-op only after revalidating the pinned CI/review evidence as well.
 
 An observed preflight mismatch prevents mutation, but this is **not atomic**.
 [GitHub documents](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api#use-conditional-requests-if-appropriate)
@@ -58,7 +58,10 @@ documents no such exception. The script does not assume `If-Match` works. Anothe
 writer can still change a draft, tag or asset between the final read and PATCH.
 Such drift may be detected only after publication has happened. The workflow's
 concurrency group serializes its own runs, not other repository writers. Notes
-are never overwritten, including in that interval. Post-write failure reports
+are never overwritten, including in that interval. The PATCH itself and all
+post-write verification are covered by the uncertainty handler. HTTP failures,
+timeouts, connection resets, truncated responses and unexpected JSON shapes are
+not retried. Failure reports
 that publication may already have occurred, and makes no automatic rollback or
 retry. Inspect the release before any retry. Tests explicitly demonstrate both
 note preservation and the remaining asset/target race rather than claiming
@@ -74,7 +77,7 @@ accepted target or substituting another APK. Report the error for review.
 
 At base `fd94dafa153245163f404c330a6b902deb76ea53`:
 
-- `python3 -m unittest discover -s tests -p 'test_publish_accepted_test_release.py' -v`: 22 tests pass, including identity/digest drift, missing/stale/failed evidence, wrong tags, preflight changes, post-read note preservation/residual artifact race, idempotency, uncertain writes and transport guards.
+- `python3 -m unittest discover -s tests -p 'test_publish_accepted_test_release.py' -v`: 25 tests pass, including identity/digest drift, missing/stale/failed evidence, wrong tags, preflight changes, post-read note preservation/residual artifact race, idempotency, uncertain writes (including simulated server-side success followed by transport failure), published-state CI/review validation and transport guards.
 - `python3 -m py_compile tools/publish_accepted_test_release.py`: passes.
 - YAML parse and explicit trigger/permission assertions: pass.
 - Current connector-fetched release, PR29/Codex summary and run snapshots pass the production read-only guards.
