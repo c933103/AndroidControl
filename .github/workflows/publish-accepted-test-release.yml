@@ -1,0 +1,51 @@
+name: Publish accepted fd94daf test release
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/publish-accepted-test-release.yml'
+      - 'tools/publish_accepted_test_release.py'
+      - 'tests/test_publish_accepted_test_release.py'
+      - 'docs/testing/accepted-test-release.md'
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/publish-accepted-test-release.yml'
+      - 'tools/publish_accepted_test_release.py'
+      - 'tests/test_publish_accepted_test_release.py'
+      - 'docs/testing/accepted-test-release.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-accepted-androidcontrol-test-fd94daf
+  cancel-in-progress: false
+
+jobs:
+  publisher-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test publication guards without network or credentials
+        run: python3 -m unittest discover -s tests -p 'test_publish_accepted_test_release.py' -v
+
+  publish:
+    if: github.event_name == 'push' && github.repository == 'c933103/AndroidControl' && github.ref == 'refs/heads/master'
+    needs: publisher-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Publish only the accepted existing APK as a prerelease
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 tools/publish_accepted_test_release.py
