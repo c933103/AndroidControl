@@ -16,7 +16,7 @@ caveats, change signing, or alter repository access.
 - The signed draft build verified permanent certificate SHA-256 `5f3ab2f36ce4a7856c12b1744b799ff775e6f74f05c0bd2c9d8db824674b7ef1`.
 
 The existing installed API33/API35 suite passed. The new explicit
- enabled/disabled/absent restoration matrix was exercised with production Java
+enabled/disabled/absent restoration matrix was exercised with production Java
 and controlled dependencies, not separately demonstrated on-device. The release
 notes retain the portrait-container/restoration device-validation caveat.
 
@@ -42,12 +42,27 @@ All authenticated calls stay on the fixed GitHub API host; redirects are refused
 
 Before mutation the script checks exact release metadata, asset ID/size/digest,
 notes, prerelease state, any existing tag, PR29 merge identity, exact Codex review,
-and all three accepted run identities and outcomes. It then rechecks the draft
-and tag, and PATCHes only publication status, preserved prerelease state, the
-explicit non-latest setting, and removal of the final `Not published.` sentence.
-It verifies the published record and tag afterward. Missing evidence or a changed
-artifact fails closed. An uncertain write is not blindly retried: inspect the
-release and rerun only after reconciliation; the successful state is idempotent.
+and all three accepted run identities and outcomes. All other preflight reads
+finish before a final release GET immediately preceding the status PATCH. The
+PATCH contains only `draft: false`, `prerelease: true` and `make_latest: "false"`.
+It never rewrites notes, targets, tags or assets. This preserves the original
+caveat and leaves the stale `Not published.` sentence unchanged. It verifies the
+published record and tag afterward. An already matching published record is a
+no-op.
+
+An observed preflight mismatch prevents mutation, but this is **not atomic**.
+[GitHub documents](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api#use-conditional-requests-if-appropriate)
+conditional writes as unsupported unless an endpoint explicitly says otherwise;
+[release update](https://docs.github.com/en/rest/releases/releases#update-a-release)
+documents no such exception. The script does not assume `If-Match` works. Another
+writer can still change a draft, tag or asset between the final read and PATCH.
+Such drift may be detected only after publication has happened. The workflow's
+concurrency group serializes its own runs, not other repository writers. Notes
+are never overwritten, including in that interval. Post-write failure reports
+that publication may already have occurred, and makes no automatic rollback or
+retry. Inspect the release before any retry. Tests explicitly demonstrate both
+note preservation and the remaining asset/target race rather than claiming
+atomic protection.
 
 GitHub can require workflow-write authority when a release target adds/modifies
 workflow files relative to the default branch. This patch adds a separate file
@@ -59,7 +74,7 @@ accepted target or substituting another APK. Report the error for review.
 
 At base `fd94dafa153245163f404c330a6b902deb76ea53`:
 
-- `python3 -m unittest discover -s tests -p 'test_publish_accepted_test_release.py' -v`: 19 tests pass, including identity/digest drift, missing/stale/failed evidence, wrong tags, concurrent changes, idempotency, uncertain writes and transport guards.
+- `python3 -m unittest discover -s tests -p 'test_publish_accepted_test_release.py' -v`: 22 tests pass, including identity/digest drift, missing/stale/failed evidence, wrong tags, preflight changes, post-read note preservation/residual artifact race, idempotency, uncertain writes and transport guards.
 - `python3 -m py_compile tools/publish_accepted_test_release.py`: passes.
 - YAML parse and explicit trigger/permission assertions: pass.
 - Current connector-fetched release, PR29/Codex summary and run snapshots pass the production read-only guards.

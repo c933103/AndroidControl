@@ -22,12 +22,11 @@ ASSET = {
     "digest": "sha256:5add6cc78bf7e2d9ba85abd7bdb1658c65e1b54403dea80c815d2968220a71f7",
     "state": "uploaded",
 }
-PUBLISHED_BODY = (
+RELEASE_BODY = (
     "Private test build from merged master. Debug APK signed with the verified "
     "permanent test key. Portrait container and restoration changes require "
-    "device validation."
+    "device validation. Not published."
 )
-DRAFT_BODY = PUBLISHED_BODY + " Not published."
 RUNS = {
     38840328632: ".github/workflows/android-ci.yml",
     38840329526: ".github/workflows/app.yml",
@@ -92,8 +91,7 @@ def validate_release(release):
         require(release.get(field) == value, f"Release {field} mismatch")
     require(release.get("prerelease") is True, "Release is not a prerelease")
     require(type(release.get("draft")) is bool, "Missing draft state")
-    body = DRAFT_BODY if release["draft"] else PUBLISHED_BODY
-    require(release.get("body") == body, "Release notes changed; review before publishing")
+    require(release.get("body") == RELEASE_BODY, "Release notes differ from the accepted snapshot")
     assets = release.get("assets", [])
     require(len(assets) == 1, "Expected exactly the accepted APK asset")
     for field, value in ASSET.items():
@@ -149,21 +147,29 @@ def publish(api):
     if not release["draft"]:
         return "Already published; accepted release and tag verified."
     validate_acceptance(api)
-    # Recheck immediately before the only mutation; never clobber a changed draft.
+    # Complete other preflights before the final release snapshot. GitHub does not
+    # document conditional PATCH support; this is not an atomic compare-and-swap.
+    validate_tag(api.request(TAG_PATH, authenticated=True, missing_ok=True), required=False)
     release = api.request(RELEASE_PATH, authenticated=True)
     validate_release(release)
-    validate_tag(api.request(TAG_PATH, authenticated=True, missing_ok=True),
-                 required=not release["draft"])
-    if release["draft"]:
+    attempted_publish = release["draft"]
+    if attempted_publish:
         result = api.request(RELEASE_PATH, authenticated=True, payload={
-            "draft": False, "prerelease": True, "make_latest": "false", "body": PUBLISHED_BODY,
+            "draft": False, "prerelease": True, "make_latest": "false",
         })
+    try:
+        if attempted_publish:
+            validate_release(result)
+            require(result["draft"] is False, "GitHub did not publish the release")
+        result = api.request(RELEASE_PATH, authenticated=True)
         validate_release(result)
-        require(result["draft"] is False, "GitHub did not publish the release")
-    result = api.request(RELEASE_PATH, authenticated=True)
-    validate_release(result)
-    require(result["draft"] is False, "Release is still a draft")
-    validate_tag(api.request(TAG_PATH, authenticated=True), required=True)
+        require(result["draft"] is False, "Release is still a draft")
+        validate_tag(api.request(TAG_PATH, authenticated=True), required=True)
+    except RuntimeError as error:
+        raise RuntimeError(
+            f"Publication may have occurred, but verification failed: {error}. "
+            "Inspect the release before retrying; no automatic rollback was attempted."
+        ) from None
     return f"Published and verified https://github.com/{REPOSITORY}/releases/tag/{TAG}"
 
 

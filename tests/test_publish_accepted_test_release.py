@@ -19,7 +19,7 @@ def accepted_release(draft=True):
     return {
         "id": p.RELEASE_ID, "tag_name": p.TAG, "target_commitish": p.TARGET_SHA,
         "name": "AndroidControl test fd94daf", "draft": draft, "prerelease": True,
-        "body": p.DRAFT_BODY if draft else p.PUBLISHED_BODY,
+        "body": p.RELEASE_BODY,
         "assets": [copy.deepcopy(p.ASSET)],
         "published_at": None if draft else "2026-10-16T04:00:00Z",
     }
@@ -54,6 +54,7 @@ class FakeGitHub:
         self.calls = []
         self.writes = []
         self.before_write_recheck = None
+        self.before_patch = None
         self.release_reads = 0
         self.write_error = False
         self.bad_published_tag = False
@@ -68,6 +69,8 @@ class FakeGitHub:
             self.writes.append((path, copy.deepcopy(payload)))
             if self.write_error:
                 raise RuntimeError("Uncertain write response")
+            if self.before_patch:
+                self.before_patch(self)
             self.data[path].update(payload)
             self.data[path]["published_at"] = "2026-10-16T04:00:00Z"
             self.data[p.TAG_PATH] = accepted_tag()
@@ -90,7 +93,7 @@ class PublicationTests(unittest.TestCase):
         api = FakeGitHub()
         self.assertIn("Published and verified", p.publish(api))
         self.assertEqual([(p.RELEASE_PATH, {
-            "draft": False, "prerelease": True, "make_latest": "false", "body": p.PUBLISHED_BODY,
+            "draft": False, "prerelease": True, "make_latest": "false",
         })], api.writes)
         self.assertIn("require device validation", api.data[p.RELEASE_PATH]["body"])
         self.assertEqual([p.ASSET], api.data[p.RELEASE_PATH]["assets"])
@@ -114,7 +117,7 @@ class PublicationTests(unittest.TestCase):
                 elif mutation == "wrong_tag":
                     api.data[p.TAG_PATH]["object"]["sha"] = "0" * 40
                 elif mutation == "changed_notes":
-                    api.data[p.RELEASE_PATH]["body"] = p.DRAFT_BODY
+                    api.data[p.RELEASE_PATH]["body"] = "Unexpected notes"
                 else:
                     api.data[p.RELEASE_PATH]["published_at"] = None
                 self.assert_blocked(api)
@@ -188,6 +191,39 @@ class PublicationTests(unittest.TestCase):
         api = FakeGitHub()
         api.before_write_recheck = lambda a: a.data[p.RELEASE_PATH].update(body="Edited by owner")
         self.assert_blocked(api)
+
+    def test_final_release_read_is_immediately_before_patch(self):
+        api = FakeGitHub()
+        p.publish(api)
+        write_index = next(i for i, call in enumerate(api.calls) if call[2] is not None)
+        self.assertEqual((p.RELEASE_PATH, True, None), api.calls[write_index - 1])
+
+    def test_owner_note_edit_after_final_read_is_preserved_and_reported(self):
+        api = FakeGitHub()
+        owner_notes = p.RELEASE_BODY + " Owner: pause further distribution."
+        api.before_patch = lambda a: a.data[p.RELEASE_PATH].update(body=owner_notes)
+        with self.assertRaisesRegex(RuntimeError, "Publication may have occurred"):
+            p.publish(api)
+        self.assertEqual(owner_notes, api.data[p.RELEASE_PATH]["body"])
+        self.assertNotIn("body", api.writes[0][1])
+        self.assertFalse(api.data[p.RELEASE_PATH]["draft"])
+        self.assertEqual(1, len(api.writes))
+
+    def test_asset_or_target_drift_after_final_read_is_detected_after_publication(self):
+        # This demonstrates the API's residual non-atomic race, not prevention.
+        for drift in ("asset", "target"):
+            with self.subTest(drift=drift):
+                api = FakeGitHub()
+                def mutate(a):
+                    if drift == "asset":
+                        a.data[p.RELEASE_PATH]["assets"][0]["id"] = 1
+                    else:
+                        a.data[p.RELEASE_PATH]["target_commitish"] = "0" * 40
+                api.before_patch = mutate
+                with self.assertRaisesRegex(RuntimeError, "Publication may have occurred"):
+                    p.publish(api)
+                self.assertFalse(api.data[p.RELEASE_PATH]["draft"])
+                self.assertEqual(1, len(api.writes))
 
     def test_concurrent_matching_publication_is_not_written_again(self):
         api = FakeGitHub()
