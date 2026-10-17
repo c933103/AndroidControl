@@ -1,5 +1,7 @@
 # AndroidControl
 
+[Project brief and kanban](docs/PROJECT_KANBAN.md) tracks current work, next actions and linked PR evidence.
+
 AndroidControl is an Android toolbox for app operations, portrait display sessions, system rotation, privileged file access, and shell access. Its privileged backend is derived from [Shizuku](https://github.com/RikkaApps/Shizuku); the integrated operation controls bring [AppOpsX](https://github.com/8enet/AppOpsX) functionality into the same app.
 
 **App name:** AndroidControl · **Package:** `org.androidcontrol.app` · **Minimum Android:** 7.0 (API 24).
