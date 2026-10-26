@@ -1,7 +1,5 @@
 package org.androidcontrol.app.regression
 
-import android.app.Activity
-import android.app.Application
 import android.app.Instrumentation
 import android.app.Notification
 import android.app.NotificationManager
@@ -11,17 +9,22 @@ import android.content.ServiceConnection
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.content.Context
+import android.content.ActivityNotFoundException
 import android.content.Intent
-import android.content.IntentFilter
 import android.provider.Settings
 import android.os.Bundle
 import android.os.SystemClock
+import android.view.ContextThemeWrapper
+import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.SurfaceView
 import android.view.View
 import android.widget.TextView
 import org.androidcontrol.app.ShizukuSettings
 import org.androidcontrol.app.MainActivity
+import org.androidcontrol.app.databinding.HomeItemContainerBinding
+import org.androidcontrol.app.databinding.HomeServerStatusBinding
+import org.androidcontrol.app.home.ServerStatusViewHolder
 import org.androidcontrol.app.BuildConfig
 import org.androidcontrol.app.control.AndroidControlService
 import org.androidcontrol.app.control.IAndroidControlService
@@ -921,60 +924,44 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
     }
 
     private fun checkAdbSettingsShortcut() {
-        // The plain Context launch can be suppressed by background-activity
-        // restrictions on API 33/35; an instrumentation ActivityMonitor does
-        // not necessarily observe a launch initiated through ContextImpl.
-        // Launch through the ADB shell (the same path as the runtime harness)
-        // and record the real Activity lifecycle within the installed APK.
-        val app = targetContext.applicationContext as Application
-        val visible = CountDownLatch(1)
-        var home: MainActivity? = null
-        val lifecycle = object : Application.ActivityLifecycleCallbacks {
-            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
-            override fun onActivityStarted(activity: Activity) {}
-            override fun onActivityResumed(activity: Activity) {
-                if (activity is MainActivity) {
-                    home = activity
-                    visible.countDown()
-                }
-            }
-            override fun onActivityPaused(activity: Activity) {}
-            override fun onActivityStopped(activity: Activity) {}
-            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
-            override fun onActivityDestroyed(activity: Activity) {}
-        }
-        // Intercept Developer options so that the test never changes device
-        // debug settings or leaves its own app for a Settings activity.
-        val developerMonitor = addMonitor(
-            IntentFilter(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS), null, true)
-        app.registerActivityLifecycleCallbacks(lifecycle)
-        try {
-            val launch = shell("am start -W --activity-new-task --activity-clear-task -n " +
-                "${BuildConfig.APPLICATION_ID}/.MainActivity")
-            check(!launch.contains("Error:")) { "Cannot open manager home: $launch" }
-            check(visible.await(10, TimeUnit.SECONDS)) {
-                "Manager home did not resume after shell launch: $launch"
-            }
-            val activity = checkNotNull(home)
-            try {
-                awaitState("Home ADB settings button was not available") {
-                    var present = false
-                    runOnMainSync {
-                        present = activity.findViewById<View>(R.id.open_adb_settings)?.isShown == true
+        // Exercise the production home-card view holder and its actual button
+        // callback. Android's background-activity restrictions make launching
+        // the full home task from a headless instrumentation phase unreliable.
+        // A recording themed Context verifies the requested system destination
+        // without granting/toggling ADB or depending on OEM Settings UI.
+        fun click(denyDeveloperOptions: Boolean): List<String?> {
+            val actions = mutableListOf<String?>()
+            val recordingContext = object : ContextThemeWrapper(targetContext, R.style.AppTheme) {
+                override fun startActivity(intent: Intent) {
+                    actions.add(intent.action)
+                    if (denyDeveloperOptions &&
+                        intent.action == Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS) {
+                        throw ActivityNotFoundException("Developer options unavailable in test")
                     }
-                    present
                 }
-                runOnMainSync { activity.findViewById<View>(R.id.open_adb_settings).performClick() }
-                awaitState("ADB shortcut did not open Developer options") {
-                    developerMonitor.hits > 0
-                }
-            } finally {
-                runOnMainSync { activity.finish() }
             }
-        } finally {
-            app.unregisterActivityLifecycleCallbacks(lifecycle)
-            removeMonitor(developerMonitor)
+            runOnMainSync {
+                val inflater = LayoutInflater.from(recordingContext)
+                val outer = HomeItemContainerBinding.inflate(inflater, null, false)
+                val inner = HomeServerStatusBinding.inflate(inflater, outer.root, true)
+                ServerStatusViewHolder(inner, outer.root)
+                check(inner.openAdbSettings.visibility == View.VISIBLE) {
+                    "ADB settings button missing from the home status card"
+                }
+                check(inner.openAdbSettings.performClick()) {
+                    "ADB settings shortcut was not clickable"
+                }
+            }
+            return actions
         }
+
+        check(click(false) == listOf(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)) {
+            "ADB settings did not open Developer options"
+        }
+        check(click(true) == listOf(
+            Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS,
+            Settings.ACTION_SETTINGS
+        )) { "Missing Developer options did not fall back to system settings" }
     }
 
     private fun checkPortraitToolbar(activity: TargetPortraitDisplayActivity) {
