@@ -922,10 +922,21 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         // Block external navigation while verifying the actual system intent.
         val monitor = addMonitor(IntentFilter(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS), null, true)
         try {
-            // NEW_TASK alone may reuse the existing home, causing
-            // startActivitySync to wait until the instrumentation times out.
-            val home = startActivitySync(Intent(targetContext, MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as MainActivity
+            // The manager home already has a live task. startActivitySync on
+            // an existing task can block the entire installed regression until
+            // the shell timeout, even with CLEAR_TASK. Launch a separate task
+            // asynchronously and wait with a bounded ActivityMonitor.
+            val homeMonitor = addMonitor(MainActivity::class.java.name, null, false)
+            val home = try {
+                runOnMainSync {
+                    targetContext.startActivity(Intent(targetContext, MainActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK))
+                }
+                waitForMonitorWithTimeout(homeMonitor, 10_000L) as? MainActivity
+                    ?: error("Separate manager home did not launch within 10 seconds")
+            } finally {
+                removeMonitor(homeMonitor)
+            }
             try {
                 awaitState("Home ADB settings button was not available") {
                     var present = false
