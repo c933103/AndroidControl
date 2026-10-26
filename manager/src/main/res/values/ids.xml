@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="target_portrait_controls_bar" type="id" />
+    <item name="target_portrait_hide_controls" type="id" />
+    <item name="target_portrait_show_controls" type="id" />
+</resources>

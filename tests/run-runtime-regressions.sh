@@ -89,6 +89,7 @@ run_phase key-failure || result=1
 run_phase fresh || result=1
 run_phase fresh-reopen || result=1
 run_phase key-recovery || result=1
+run_phase adb-settings || result=1
 
 adb install "$test_dir/aligned.apk"
 adb install "$test_dir/other-aligned.apk"
