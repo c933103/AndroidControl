@@ -1,6 +1,10 @@
 package org.androidcontrol.app.home
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.provider.Settings
 import android.text.TextUtils
+import android.widget.Toast
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -31,6 +35,32 @@ class ServerStatusViewHolder(private val binding: HomeServerStatusBinding, root:
     private inline val textView get() = binding.text1
     private inline val summaryView get() = binding.text2
     private inline val iconView get() = binding.icon
+
+    init {
+        binding.openAdbSettings.setOnClickListener { view ->
+            val context = view.context
+            // Developer options contains both USB debugging and, on Android 11+,
+            // wireless debugging. AndroidControl must not toggle either silently.
+            val destinations = listOf(
+                Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS,
+                Settings.ACTION_SETTINGS
+            )
+            for ((index, action) in destinations.withIndex()) {
+                try {
+                    context.startActivity(Intent(action))
+                    if (index > 0) {
+                        Toast.makeText(context, R.string.home_adb_settings_fallback, Toast.LENGTH_LONG).show()
+                    }
+                    return@setOnClickListener
+                } catch (_: ActivityNotFoundException) {
+                    // Some OEMs remove the standard Developer options activity.
+                } catch (_: SecurityException) {
+                    // An OEM may restrict direct entry to this settings screen.
+                }
+            }
+            Toast.makeText(context, R.string.home_adb_settings_unavailable, Toast.LENGTH_LONG).show()
+        }
+    }
 
     override fun onBind() {
         val context = itemView.context

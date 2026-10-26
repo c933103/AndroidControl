@@ -9,15 +9,22 @@ import android.content.ServiceConnection
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.content.Context
+import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.provider.Settings
 import android.os.Bundle
 import android.os.SystemClock
+import android.view.ContextThemeWrapper
+import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.SurfaceView
 import android.view.View
 import android.widget.TextView
 import org.androidcontrol.app.ShizukuSettings
 import org.androidcontrol.app.MainActivity
+import org.androidcontrol.app.databinding.HomeItemContainerBinding
+import org.androidcontrol.app.databinding.HomeServerStatusBinding
+import org.androidcontrol.app.home.ServerStatusViewHolder
 import org.androidcontrol.app.BuildConfig
 import org.androidcontrol.app.control.AndroidControlService
 import org.androidcontrol.app.control.IAndroidControlService
@@ -64,8 +71,11 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
                 "key-recovery" -> checkKeyRecovery()
                 "display" -> {
                     PortraitTarget.save(fixturePackage)
-                    closeDisplay(checkDisplay())
+                    val activity = checkDisplay()
+                    checkPortraitToolbar(activity)
+                    closeDisplay(activity)
                 }
+                "adb-settings" -> checkAdbSettingsShortcut()
                 "select-target" -> selectTarget()
                 "separate-controls" -> checkSeparateControls()
                 "appops" -> checkAppOps()
@@ -911,6 +921,134 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         checkpoint("lock/unlock restored frames and input; Home remained usable")
         // Cleanup through the retained host instance, without waiting for another Activity onCreate.
         closeDisplay(activity)
+    }
+
+    private fun checkAdbSettingsShortcut() {
+        // Exercise the production home-card view holder and its actual button
+        // callback. Android's background-activity restrictions make launching
+        // the full home task from a headless instrumentation phase unreliable.
+        // A recording themed Context verifies the requested system destination
+        // without granting/toggling ADB or depending on OEM Settings UI.
+        fun click(denyDeveloperOptions: Boolean): List<String?> {
+            val actions = mutableListOf<String?>()
+            val recordingContext = object : ContextThemeWrapper(targetContext, R.style.AppTheme) {
+                override fun startActivity(intent: Intent) {
+                    actions.add(intent.action)
+                    if (denyDeveloperOptions &&
+                        intent.action == Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS) {
+                        throw ActivityNotFoundException("Developer options unavailable in test")
+                    }
+                }
+            }
+            runOnMainSync {
+                val inflater = LayoutInflater.from(recordingContext)
+                val outer = HomeItemContainerBinding.inflate(inflater, null, false)
+                val inner = HomeServerStatusBinding.inflate(inflater, outer.root, true)
+                ServerStatusViewHolder(inner, outer.root)
+                check(inner.openAdbSettings.visibility == View.VISIBLE) {
+                    "ADB settings button missing from the home status card"
+                }
+                check(inner.openAdbSettings.performClick()) {
+                    "ADB settings shortcut was not clickable"
+                }
+            }
+            return actions
+        }
+
+        check(click(false) == listOf(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)) {
+            "ADB settings did not open Developer options"
+        }
+        check(click(true) == listOf(
+            Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS,
+            Settings.ACTION_SETTINGS
+        )) { "Missing Developer options did not fall back to system settings" }
+    }
+
+    private fun checkPortraitToolbar(activity: TargetPortraitDisplayActivity) {
+        val controls = activity.findViewById<View>(R.id.target_portrait_controls_bar)
+        val hide = activity.findViewById<View>(R.id.target_portrait_hide_controls)
+        val show = activity.findViewById<View>(R.id.target_portrait_show_controls)
+        val surface = activity.javaClass.getDeclaredField("surfaceView").apply { isAccessible = true }
+            .get(activity) as SurfaceView
+        val ready = activity.javaClass.getDeclaredField("surfaceReady").apply { isAccessible = true }
+        val pid = shell("pidof $fixturePackage")
+        var originalHeight = 0
+
+        var collapsedAt = 0L
+        runOnMainSync {
+            check(controls.visibility == View.VISIBLE && show.visibility == View.GONE)
+            originalHeight = surface.height
+            check(originalHeight > 0)
+            collapsedAt = SystemClock.uptimeMillis()
+            hide.performClick()
+            check(controls.visibility == View.GONE && show.visibility == View.VISIBLE &&
+                show.alpha == 1f && show.isClickable)
+        }
+        awaitState("Collapsing the toolbar did not release display space and reattach the surface") {
+            var expanded = false
+            runOnMainSync {
+                expanded = surface.height > originalHeight && surface.holder.surface.isValid &&
+                    ready.getBoolean(activity)
+            }
+            expanded
+        }
+        val beforeHiddenTap = fixtureFile("touches")
+        tapScene(activity)
+        awaitState("Target stopped receiving touches with controls hidden") {
+            fixtureFile("touches").length > beforeHiddenTap.length
+        }
+
+        // The handle is fully opaque at first and becomes precisely transparent
+        // after five seconds, without changing visibility or hit-testing.
+        val earlyRemaining = collapsedAt + 3_000L - SystemClock.uptimeMillis()
+        if (earlyRemaining > 0) SystemClock.sleep(earlyRemaining)
+        runOnMainSync {
+            if (SystemClock.uptimeMillis() < collapsedAt + 4_000L) {
+                check(show.alpha == 1f) { "Restore handle became transparent before timeout" }
+            }
+        }
+        awaitState("Restore handle did not become fully transparent") {
+            var transparent = false
+            runOnMainSync {
+                transparent = show.visibility == View.VISIBLE && show.alpha == 0f && show.isClickable
+            }
+            transparent
+        }
+        check(SystemClock.uptimeMillis() - collapsedAt >= 5_000L) {
+            "Restore handle disappeared before five seconds"
+        }
+        // Exercise the real invisible touch area, not performClick(), to ensure
+        // its transparent rendering does not make the toolbar inaccessible.
+        val point = IntArray(2)
+        runOnMainSync {
+            show.getLocationOnScreen(point)
+            point[0] += show.width / 2
+            point[1] += show.height / 2
+        }
+        shell("input -d 0 tap ${point[0]} ${point[1]}")
+        awaitState("Transparent handle did not restore the controls when tapped") {
+            var restored = false
+            runOnMainSync {
+                restored = controls.visibility == View.VISIBLE && show.visibility == View.GONE &&
+                    show.alpha == 1f
+            }
+            restored
+        }
+        awaitState("Restoring the toolbar did not restore display geometry") {
+            var restored = false
+            runOnMainSync {
+                restored = surface.height == originalHeight && surface.holder.surface.isValid &&
+                    ready.getBoolean(activity)
+            }
+            restored
+        }
+        val beforeRestoredTap = fixtureFile("touches")
+        tapScene(activity)
+        awaitState("Target stopped receiving touches after controls returned") {
+            fixtureFile("touches").length > beforeRestoredTap.length
+        }
+        check(shell("pidof $fixturePackage") == pid) { "Toolbar toggle restarted the target app" }
+        check(!activity.isFinishing) { "Toolbar toggle ended the portrait session" }
     }
 
     private fun closeDisplay(activity: TargetPortraitDisplayActivity) {
