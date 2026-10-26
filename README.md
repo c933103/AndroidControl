@@ -6,6 +6,8 @@ AndroidControl is an Android toolbox for app operations, portrait display sessio
 
 Download AndroidControl from this repository’s [Releases](https://github.com/c933103/AndroidControl/releases) or successful [Actions builds](https://github.com/c933103/AndroidControl/actions). Upstream Shizuku downloads are a different application.
 
+For the project brief, stable work-item cards, dated status and scoped evidence, see the [project kanban](docs/PROJECT_KANBAN.md).
+
 ## Features
 
 - **App operations:** search installed apps, choose an Android user, group/filter by permission and find apps by operation, inspect access and rejection timestamps, and set package modes to Allow, Ignore, Deny, Default, or Foreground only (Android 10+). Each write is read back from Android.
