@@ -11,7 +11,7 @@ Download AndroidControl from this repository’s [Releases](https://github.com/c
 - **App operations:** search installed apps, choose an Android user, group/filter by permission and find apps by operation, inspect access and rejection timestamps, and set package modes to Allow, Ignore, Deny, Default, or Foreground only (Android 10+). Each write is read back from Android.
 - **Backups:** export a user’s package modes with stable operation names; import AndroidControl JSON or AppOpsX v1 `.bak` files with a target-user preview and per-operation failure reporting.
 - **New-app rules:** optionally apply selected Ignore rules to newly installed apps for a chosen user. Rules exclude updates and AndroidControl itself and run while the privileged AppOps daemon is alive.
-- **Portrait sessions:** edit the target package, open it on a portrait-shaped display, forward touches and web links, hide/restore the bottom controls using the arrow handle, and hand off to the normal phone display for external checkout screens.
+- **Portrait sessions:** edit the target package, open it on a portrait-shaped display, forward touches and web links, hide/restore the bottom controls using the arrow handle (the restore handle turns completely transparent after five seconds but remains tappable), and hand off to the normal phone display for external checkout screens.
 - **System rotation:** control and restore system portrait behavior separately from target-specific sessions.
 - **Privileged tools:** retain the manager, server, starter, shell, file provider, and Shizuku API for future extensions.
 

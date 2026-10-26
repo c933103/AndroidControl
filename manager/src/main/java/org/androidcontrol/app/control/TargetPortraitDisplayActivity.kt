@@ -42,6 +42,13 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
     private var surfaceReady = false
     private var attachGeneration = 0
     private val main = Handler(Looper.getMainLooper())
+    private val concealRestoreHandle = Runnable {
+        // Keep the overlay touch target and its accessibility label; hide only
+        // its pixels so it does not cover the target app after five seconds.
+        if (controlsCollapsed && foreground && !stopping && !isDestroyed) {
+            showControlsButton.alpha = 0f
+        }
+    }
     private val hostToken = Binder()
     private val packageNameForSession by lazy {
         PortraitTarget.validate(intent.getStringExtra("portrait_target_package") ?: PortraitTarget.get())
@@ -140,9 +147,14 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
     }
 
     private fun setControlsCollapsed(collapsed: Boolean) {
+        main.removeCallbacks(concealRestoreHandle)
         controlsCollapsed = collapsed
         controlsBar.visibility = if (collapsed) View.GONE else View.VISIBLE
         showControlsButton.visibility = if (collapsed) View.VISIBLE else View.GONE
+        showControlsButton.alpha = 1f
+        if (collapsed && foreground) {
+            main.postDelayed(concealRestoreHandle, RESTORE_HANDLE_TIMEOUT_MS)
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -152,16 +164,25 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
 
     private companion object {
         const val CONTROLS_COLLAPSED_KEY = "portrait_controls_collapsed"
+        const val RESTORE_HANDLE_TIMEOUT_MS = 5_000L
     }
 
     override fun onResume() {
         super.onResume()
         foreground = true
+        // A resumed collapsed session briefly makes the recovery handle visible
+        // again, even when it had already become fully transparent before pause.
+        if (controlsCollapsed) {
+            main.removeCallbacks(concealRestoreHandle)
+            showControlsButton.alpha = 1f
+            main.postDelayed(concealRestoreHandle, RESTORE_HANDLE_TIMEOUT_MS)
+        }
         webPanel?.resume()
         attachSurface()
     }
 
     override fun onPause() {
+        main.removeCallbacks(concealRestoreHandle)
         foreground = false
         webPanel?.pause()
         surfaceReady = false

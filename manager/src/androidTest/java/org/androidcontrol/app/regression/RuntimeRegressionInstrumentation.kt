@@ -922,8 +922,10 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         // Block external navigation while verifying the actual system intent.
         val monitor = addMonitor(IntentFilter(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS), null, true)
         try {
+            // NEW_TASK alone may reuse the existing home, causing
+            // startActivitySync to wait until the instrumentation times out.
             val home = startActivitySync(Intent(targetContext, MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as MainActivity
             try {
                 awaitState("Home ADB settings button was not available") {
                     var present = false
@@ -952,12 +954,15 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
         val pid = shell("pidof $fixturePackage")
         var originalHeight = 0
 
+        var collapsedAt = 0L
         runOnMainSync {
             check(controls.visibility == View.VISIBLE && show.visibility == View.GONE)
             originalHeight = surface.height
             check(originalHeight > 0)
+            collapsedAt = SystemClock.uptimeMillis()
             hide.performClick()
-            check(controls.visibility == View.GONE && show.visibility == View.VISIBLE)
+            check(controls.visibility == View.GONE && show.visibility == View.VISIBLE &&
+                show.alpha == 1f && show.isClickable)
         }
         awaitState("Collapsing the toolbar did not release display space and reattach the surface") {
             var expanded = false
@@ -973,9 +978,41 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
             fixtureFile("touches").length > beforeHiddenTap.length
         }
 
+        // The handle is fully opaque at first and becomes precisely transparent
+        // after five seconds, without changing visibility or hit-testing.
+        val earlyRemaining = collapsedAt + 3_000L - SystemClock.uptimeMillis()
+        if (earlyRemaining > 0) SystemClock.sleep(earlyRemaining)
         runOnMainSync {
-            show.performClick()
-            check(controls.visibility == View.VISIBLE && show.visibility == View.GONE)
+            if (SystemClock.uptimeMillis() < collapsedAt + 4_000L) {
+                check(show.alpha == 1f) { "Restore handle became transparent before timeout" }
+            }
+        }
+        awaitState("Restore handle did not become fully transparent") {
+            var transparent = false
+            runOnMainSync {
+                transparent = show.visibility == View.VISIBLE && show.alpha == 0f && show.isClickable
+            }
+            transparent
+        }
+        check(SystemClock.uptimeMillis() - collapsedAt >= 5_000L) {
+            "Restore handle disappeared before five seconds"
+        }
+        // Exercise the real invisible touch area, not performClick(), to ensure
+        // its transparent rendering does not make the toolbar inaccessible.
+        val point = IntArray(2)
+        runOnMainSync {
+            show.getLocationOnScreen(point)
+            point[0] += show.width / 2
+            point[1] += show.height / 2
+        }
+        shell("input -d 0 tap ${point[0]} ${point[1]}")
+        awaitState("Transparent handle did not restore the controls when tapped") {
+            var restored = false
+            runOnMainSync {
+                restored = controls.visibility == View.VISIBLE && show.visibility == View.GONE &&
+                    show.alpha == 1f
+            }
+            restored
         }
         awaitState("Restoring the toolbar did not restore display geometry") {
             var restored = false
