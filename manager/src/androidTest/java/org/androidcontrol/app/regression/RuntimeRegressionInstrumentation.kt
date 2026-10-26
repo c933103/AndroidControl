@@ -1,5 +1,7 @@
 package org.androidcontrol.app.regression
 
+import android.app.Activity
+import android.app.Application
 import android.app.Instrumentation
 import android.app.Notification
 import android.app.NotificationManager
@@ -919,39 +921,59 @@ class RuntimeRegressionInstrumentation : Instrumentation() {
     }
 
     private fun checkAdbSettingsShortcut() {
-        // Block external navigation while verifying the actual system intent.
-        val monitor = addMonitor(IntentFilter(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS), null, true)
-        try {
-            // The manager home already has a live task. startActivitySync on
-            // an existing task can block the entire installed regression until
-            // the shell timeout, even with CLEAR_TASK. Launch a separate task
-            // asynchronously and wait with a bounded ActivityMonitor.
-            val homeMonitor = addMonitor(MainActivity::class.java.name, null, false)
-            val home = try {
-                runOnMainSync {
-                    targetContext.startActivity(Intent(targetContext, MainActivity::class.java)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK))
+        // The plain Context launch can be suppressed by background-activity
+        // restrictions on API 33/35; an instrumentation ActivityMonitor does
+        // not necessarily observe a launch initiated through ContextImpl.
+        // Launch through the ADB shell (the same path as the runtime harness)
+        // and record the real Activity lifecycle within the installed APK.
+        val app = targetContext.applicationContext as Application
+        val visible = CountDownLatch(1)
+        var home: MainActivity? = null
+        val lifecycle = object : Application.ActivityLifecycleCallbacks {
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+            override fun onActivityStarted(activity: Activity) {}
+            override fun onActivityResumed(activity: Activity) {
+                if (activity is MainActivity) {
+                    home = activity
+                    visible.countDown()
                 }
-                waitForMonitorWithTimeout(homeMonitor, 10_000L) as? MainActivity
-                    ?: error("Separate manager home did not launch within 10 seconds")
-            } finally {
-                removeMonitor(homeMonitor)
             }
+            override fun onActivityPaused(activity: Activity) {}
+            override fun onActivityStopped(activity: Activity) {}
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+            override fun onActivityDestroyed(activity: Activity) {}
+        }
+        // Intercept Developer options so that the test never changes device
+        // debug settings or leaves its own app for a Settings activity.
+        val developerMonitor = addMonitor(
+            IntentFilter(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS), null, true)
+        app.registerActivityLifecycleCallbacks(lifecycle)
+        try {
+            val launch = shell("am start -W --activity-new-task --activity-clear-task -n " +
+                "${BuildConfig.APPLICATION_ID}/.MainActivity")
+            check(!launch.contains("Error:")) { "Cannot open manager home: $launch" }
+            check(visible.await(10, TimeUnit.SECONDS)) {
+                "Manager home did not resume after shell launch: $launch"
+            }
+            val activity = checkNotNull(home)
             try {
                 awaitState("Home ADB settings button was not available") {
                     var present = false
                     runOnMainSync {
-                        present = home.findViewById<View>(R.id.open_adb_settings)?.isShown == true
+                        present = activity.findViewById<View>(R.id.open_adb_settings)?.isShown == true
                     }
                     present
                 }
-                runOnMainSync { home.findViewById<View>(R.id.open_adb_settings).performClick() }
-                awaitState("ADB shortcut did not open Developer options") { monitor.hits > 0 }
+                runOnMainSync { activity.findViewById<View>(R.id.open_adb_settings).performClick() }
+                awaitState("ADB shortcut did not open Developer options") {
+                    developerMonitor.hits > 0
+                }
             } finally {
-                runOnMainSync { home.finish() }
+                runOnMainSync { activity.finish() }
             }
         } finally {
-            removeMonitor(monitor)
+            app.unregisterActivityLifecycleCallbacks(lifecycle)
+            removeMonitor(developerMonitor)
         }
     }
 
