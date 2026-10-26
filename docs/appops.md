@@ -18,6 +18,58 @@ Android versions and device policies can refuse package-mode changes. In particu
 
 The catalog and shared switches come from the running Android framework. Operation identifiers use the same public-name scheme on Android 7 and newer releases. Earlier debug-name backups and saved rules are migrated, including the legacy emergency-broadcast, high-power-location, phone-state and screen-on aliases; unknown operations remain rejected. Default filtering shows requested-permission operations, recorded operations, and permissionless operations such as clipboard controls; Show all exposes the remaining operations. Groups use Android permission-group identifiers. Find apps by operation lists matching installed apps and their effective modes. The menu can reset recorded package modes to framework defaults without changing UID rules. Last access/rejection timestamps come from Android records; missing timestamps do not prove an app never accessed the resource. This is a history display, not continuous access recording.
 
+## Localized AppOps labels
+
+The integrated screen uses AndroidControl's own resource locales. AppOpsX's historical
+operation labels have been carried over for Czech, Spanish, Russian, Simplified Chinese
+and Traditional Chinese, alongside localized AndroidControl AppOps controls and warnings.
+An additional 16 locales carry partial AppOps terminology from the separate
+Rikka Apps App Ops project: Arabic, German, Greek, French, Indonesian, Italian,
+Japanese, Korean, Dutch, Polish, Brazilian Portuguese, Romanian, Swedish,
+Turkish, Ukrainian and Vietnamese. Newer AndroidControl-specific controls
+without a local translation fall back to English. This is **partial**, not full
+translation coverage. The operation-label
+translations are based on [8enet/AppOpsX@1ba0eefb](https://github.com/8enet/AppOpsX/tree/1ba0eefb47055fb6d3e636a9833b7687221e8dd9)
+(MIT); first-party control messages are translations of AndroidControl's newer behavior
+and should not be represented as upstream translations.
+
+The user-facing list also resolves Android permission and permission-group labels through
+the Android framework when available, with raw identifiers retained on screen for technical
+clarity. Filters accept both translated and raw labels. All Binder calls, batch selections,
+saved rules and backups continue using unchanged stable public AppOps identifiers, never
+translated strings. Unknown or device-specific operations fall back to their raw names.
+The imported 2019 operation descriptions are historical translations, not authoritative
+descriptions of how every modern Android release enforces each operation.
+
+### Additional sources and precedence
+
+[RikkaApps/AppOps-Localization](https://github.com/RikkaApps/AppOps-Localization/tree/071eab5b984c41ee4dec44bb55dc9cd402e2ad06)
+is a **separate** App Ops localization project, not AppOpsX's ancestor.
+Its 38 locale directories do not imply complete term coverage; 16 languages
+provide usable extra short mode names and permission-group labels here.
+The source repository has no standalone root LICENSE declaration at the
+inspected revision, so AndroidControl imports only conventional short
+interface terms, not the project's XML corpus, long messages or code.
+Existing complete AppOpsX/AndroidControl translations are not overwritten.
+A semantic review caught and corrected the Rikka Apps Korean strings that
+reversed **Ignore** (silently suppress) and **Deny** (reject). Arabic and French
+mode wording was normalized as well; these are deliberate corrections rather
+than verbatim upstream copies.
+
+The current device's Android permission and group names are consulted first.
+When available, these provide locale-dependent labels even for AppOps
+operations missing from the historical AppOpsX list. Selected conventional
+group names and the 2019 AppOpsX operation descriptions provide fallback.
+Raw stable identifiers remain visible and are the only data passed to Binder
+calls, rules and backups. Missing translations remain English; unrecognized
+vendor operations remain identifiable by their original names.
+
+Upstream [RikkaApps/Shizuku](https://github.com/RikkaApps/Shizuku) is a different
+source: its inherited manager translations are already present. A comparison
+found that many file differences reflect necessary AndroidControl branding,
+not missing locales. This change deliberately does not overwrite those
+translations with the original Shizuku app name.
+
 ## Users and new installs
 
 Enumeration, package/UID lookup, reads, and writes are explicitly scoped to the selected user. A missing app is reported rather than redirected to another profile.

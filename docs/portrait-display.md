@@ -6,6 +6,8 @@ The target is configurable in the app; its initial default is defined once in `P
 
 The one-time, device-wide legacy recovery has already completed. Keep its UI retired and do not repeat its package scan as part of normal launch or restore. Normal changes to compatibility flags are confined to the target package. Temporary global freeform support settings must retain and restore their previous values.
 
+Temporary target compatibility overrides now save and restore the original explicit enabled, disabled, or absent state. Version-ranged entries remain untouched; unreadable or unsupported raw-state snapshots stop compatibility mutation. Existing ID-only journals retain their legacy reset behavior because they contain no original values. See [prior-state restoration and tests](testing/compat-overrides.md).
+
 ## Evidence and previous attempts
 
 The recovered discussion and game dump reported Unity sizes of 1662×712 and 712×305 on Sony XQ-DQ72, Android 13 / API 33. These are landscape sizes with nearly identical aspect ratios. The earlier discussion inferred that the game was still receiving a landscape-shaped rendering surface; those logs do not establish that a newer build successfully changed Unity rendering.

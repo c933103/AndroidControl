@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Short App Ops terms; other AppOps strings fall back to English. -->
+<resources>
+    <string name="appops_allow">İzin ver</string>
+    <string name="appops_ignore">Yoksay</string>
+    <string name="appops_deny">Reddet</string>
+    <string name="appops_default">Varsayılan</string>
+    <string name="appops_foreground">Yalnızca uygulamayı kullanırken izin ver</string>
+    <string name="appops_user">Kullanıcı</string>
+    <string name="appops_save">Kaydet</string>
+    <string name="appops_group_other">Diğer</string>
+    <string name="appops_group_activity_recognition">Fiziksel aktivite</string>
+    <string name="appops_group_sensors">Sensörler</string>
+    <string name="appops_group_phone">Telefon</string>
+    <string name="appops_group_sms">SMS</string>
+    <string name="appops_group_contacts">Kişiler</string>
+    <string name="appops_group_camera">Kamera</string>
+    <string name="appops_group_location">Konum</string>
+    <string name="appops_group_calendar">Takvim</string>
+    <string name="appops_group_microphone">Mikrofon</string>
+    <string name="appops_group_storage">Depolama</string>
+    <string name="appops_group_clipboard">Pano</string>
+    <string name="appops_group_device_identifiers">Cihaz tanımlayıcıları</string>
+</resources>
