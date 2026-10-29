@@ -17,7 +17,13 @@ adb install -r -t "${tests[0]}"
 adb shell pm list instrumentation | tee "$results/registered-instrumentation.txt"
 grep -Fq "$package.test/org.androidcontrol.app.regression.RecorderMediaInstrumentation" "$results/registered-instrumentation.txt"
 status=0
-timeout 180 adb shell am instrument -w "$package.test/org.androidcontrol.app.regression.RecorderMediaInstrumentation" 2>&1 | tee "$results/instrumentation.txt" || status=1
+python3 -c 'import subprocess, sys
+try:
+    result = subprocess.run(sys.argv[1:], timeout=180)
+except subprocess.TimeoutExpired:
+    sys.exit(124)
+sys.exit(result.returncode)
+' adb shell am instrument -w "$package.test/org.androidcontrol.app.regression.RecorderMediaInstrumentation" 2>&1 | tee "$results/instrumentation.txt" || status=1
 grep -q '^INSTRUMENTATION_RESULT: recorder_media=PASS' "$results/instrumentation.txt" || status=1
 if [[ "$status" != 0 ]]; then
     adb logcat -b crash -d -v brief -t 200 | python3 tests/filter-recorder-crash.py > "$results/app-crash.txt" || true

@@ -2,7 +2,7 @@
 
 The independent `Recorder synthetic media` API33/API35 workflow runs only
 `RecorderMediaInstrumentation` through `tests/run-recorder-media-checks.sh`.
-It installs debug/test APKs without granting permissions, uses software emulation
+It installs debug/test APKs without granting permissions, uses Linux software emulation on API33 and native macOS virtualization on API35
 without host KVM permission changes, and performs no root, settings, privileged
 service, telephone, microphone or foreground recording service operations.
 The original general runtime harness and workflow remain unchanged. The build-only `-PrecorderMediaTests=true` option selects the synthetic runner;
@@ -95,3 +95,24 @@ environment-only failures. Runner stage markers and, only on failure, a200-line
 crash-buffer read filtered to the synthetic target-app logger PID provide bounded
 diagnostics; no general logs, accounts, actual audio or other app data are saved.
 Artifact bytes are validated so remote cat error text cannot masquerade as media.
+
+## API35 runner isolation after terminal Linux failures
+
+At fd6e2f89, both push/PR API33 jobs passed all11 installed cases and all four
+existing App/AndroidCI runs passed. Both API35 software-emulator jobs installed
+the APKs but reported Process crashed before the runner's first stage marker.
+Bounded target-app crash buffers had no retained record; root cause remains
+uncertain. Earlier API35 also reached an AAC encoder timeout, and separate runs
+failed emulator unlock/package-manager startup. These failures are retained, not
+reclassified as passes.
+
+Only the synthetic API35 matrix entry now uses standard `macos-15-intel` with
+built-in native virtualization. API33 and both original workflows are unchanged.
+Repository visibility was verified public on29October; [GitHub's standard-runner
+reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
+lists this standard Intel runner as available and free for public repositories.
+No larger/paid runner, new service/contract, credentials or access change is used.
+The same15s codec deadlines,180s instrumentation timeout,1200s boot limit and45min
+job bound remain. Python implements the unchanged outer timeout portably; no GNU
+coreutils installation is required. All audio assertions and failure diagnostics
+remain intact. Native-runner acceptance is pending its own exact-head results.
