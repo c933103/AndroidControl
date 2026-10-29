@@ -27,7 +27,7 @@ object RecorderAnrThreads {
                 retainThread = false
             } else if (line.startsWith('"')) {
                 val name = line.substringAfter('"').substringBefore('"')
-                retainThread = targetPackage && threads < 2 && (name == "main" || name == INSTRUMENTATION)
+                retainThread = targetPackage && threads < 2 && (name == "main" || name == INSTRUMENTATION || name == "Instr: org.androidcontrol.app.regression.RecorderControlInstrumentation")
                 if (retainThread) { threads++; threadLines = 1; result.add(line.take(1024)) }
             } else if (retainThread && threadLines < 100 && line.length <= 1024 &&
                 (line.startsWith("  at ") || line.startsWith("  native: ") ||

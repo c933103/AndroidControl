@@ -8,9 +8,14 @@ object ProbeState {
     var idle = false
     var rejectIdle = false
     var result: Bundle? = null
+    var applicationClassRequested: String? = null
 }
 open class Instrumentation {
     val targetContext = Context()
+    open fun newApplication(loader: ClassLoader, className: String, context: Context): Application {
+        ProbeState.applicationClassRequested = className
+        return Application()
+    }
     open fun onCreate(arguments: Bundle?) {}
     open fun onStart() {}
     fun start() { ProbeState.events.add("start-thread") }

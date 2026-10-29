@@ -16,7 +16,9 @@ android {
         versionCode rootProject.ext.versionCode
         versionName rootProject.ext.versionName
         // Build-only runner selection keeps the general regression default unchanged.
-        testInstrumentationRunner(providers.gradleProperty('recorderMediaTests').orNull == 'true'
+        testInstrumentationRunner(providers.gradleProperty('recorderMediaControl').orNull == 'true'
+                ? 'org.androidcontrol.app.regression.RecorderControlInstrumentation'
+                : providers.gradleProperty('recorderMediaTests').orNull == 'true'
                 ? 'org.androidcontrol.app.regression.RecorderMediaInstrumentation'
                 : 'org.androidcontrol.app.regression.RuntimeRegressionInstrumentation')
         externalNativeBuild {

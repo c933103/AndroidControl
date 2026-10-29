@@ -3,6 +3,13 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 package=org.androidcontrol.app
+application_mode=${1:-manager}
+case "$application_mode" in
+    manager) runner_class=RecorderMediaInstrumentation ;;
+    control) runner_class=RecorderControlInstrumentation ;;
+    *) echo 'Unsupported application control mode'; exit 1 ;;
+esac
+runner="$package.test/org.androidcontrol.app.regression.$runner_class"
 results=recorder-media-results
 mkdir -p "$results"
 [[ "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" == 1 ]] || { echo 'Emulator required'; exit 1; }
@@ -23,7 +30,7 @@ tests=(manager/build/outputs/apk/androidTest/debug/*.apk)
 adb install -r "${apps[0]}"
 adb install -r -t "${tests[0]}"
 adb shell pm list instrumentation | tee "$results/registered-instrumentation.txt"
-grep -Fq "$package.test/org.androidcontrol.app.regression.RecorderMediaInstrumentation" "$results/registered-instrumentation.txt"
+grep -Fq "$runner" "$results/registered-instrumentation.txt"
 status=0
 python3 -c 'import subprocess, sys
 try:
@@ -36,8 +43,11 @@ import json
 from pathlib import Path
 Path("recorder-media-results/media-command.json").write_text(json.dumps(dict(exitCode=code, timedOut=timed_out)) + "\n")
 sys.exit(code)
-' adb shell am instrument -w "$package.test/org.androidcontrol.app.regression.RecorderMediaInstrumentation" 2>&1 | tee "$results/instrumentation.txt" || status=1
+' adb shell am instrument -w "$runner" 2>&1 | tee "$results/instrumentation.txt" || status=1
 grep -q '^INSTRUMENTATION_RESULT: recorder_media=PASS' "$results/instrumentation.txt" || status=1
+if [[ "$application_mode" == control ]]; then expected_application=android.app.Application
+else expected_application=org.androidcontrol.app.ShizukuApplication; fi
+grep -Fxq "INSTRUMENTATION_STATUS: recorder_application_class=$expected_application" "$results/instrumentation.txt" || status=1
 if [[ "$status" != 0 ]]; then
     adb logcat -b crash -d -v brief -t 200 | python3 tests/filter-recorder-crash.py > "$results/app-crash.txt" || true
     pid=$(sed -n 's/^INSTRUMENTATION_STATUS: recorder_media_pid=//p' "$results/instrumentation.txt" | head -n 1 | tr -d '\r')
@@ -79,6 +89,6 @@ raise SystemExit(0 if valid else 1)
 VALIDATE
 if [[ "$status" != 0 ]]; then
     # The original command status and media artifacts are already persisted.
-    python3 tests/collect-recorder-anr.py || true
+    python3 tests/collect-recorder-anr.py "$runner_class" || true
 fi
 exit "$status"

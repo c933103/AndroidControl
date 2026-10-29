@@ -6,7 +6,7 @@ import android.app.Instrumentation
 import android.os.Bundle
 
 /** Independent synthetic-only runner: no permission, shell or service operations. */
-class RecorderMediaInstrumentation : Instrumentation() {
+open class RecorderMediaInstrumentation : Instrumentation() {
     private var anrArguments: Bundle? = null
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
@@ -26,6 +26,10 @@ class RecorderMediaInstrumentation : Instrumentation() {
             sendStatus(0, Bundle().apply { putString("recorder_media_stage", "waiting-for-application-idle") })
             waitForIdleSync()
             sendStatus(0, Bundle().apply { putString("recorder_media_stage", "application-idle") })
+            sendStatus(0, Bundle().apply {
+                putString("recorder_application_class", targetContext.applicationContext.javaClass.name)
+                putString("recorder_instrumentation_class", javaClass.name)
+            })
             RecorderMediaChecks.run(targetContext)
             result.putString("recorder_media", "PASS")
             finish(-1, result)

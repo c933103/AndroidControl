@@ -21,6 +21,9 @@ DO_NOT_RETAIN_FREE_TEXT
 "main" prio=5 tid=1 Native
   at DO_NOT_RETAIN_AFTER_END()
 """.trimIndent()
+    val controlTrace = trace().replace("RecorderMediaInstrumentation", "RecorderControlInstrumentation")
+    check(RecorderAnrThreads.select(controlTrace,123).any { "RecorderControlInstrumentation" in it })
+    println("PASS exact-control-instrumentation-thread")
     val result = RecorderAnrThreads.select(trace(), 123)
     check(result.size == 7 && result.any { "MessageQueue" in it } && result.any { "dequeueInputBuffer" in it })
     check(result.none { "DO_NOT_RETAIN" in it }); println("PASS target-main-instrumentation-only")

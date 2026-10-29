@@ -5,6 +5,7 @@
 import json
 from pathlib import Path
 import subprocess
+import sys
 
 PACKAGE = 'org.androidcontrol.app'
 ROOT = Path('recorder-media-results')
@@ -27,12 +28,15 @@ def select_request(evidence):
 def main():
     receipt = dict(result='not-applicable')
     try:
+        runner = sys.argv[1] if len(sys.argv) == 2 else 'RecorderMediaInstrumentation'
+        if runner not in ('RecorderMediaInstrumentation', 'RecorderControlInstrumentation'):
+            raise ValueError('Unsupported runner')
         request = select_request(json.loads((ROOT / 'app-exit-info.json').read_text()))
         if request is not None:
             args = ['adb', 'shell', 'am', 'instrument', '-w']
             for key, value in request.items():
                 args += ['-e', 'anr_' + key, str(value)]
-            args += [PACKAGE + '.test/org.androidcontrol.app.regression.RecorderMediaInstrumentation']
+            args += [PACKAGE + '.test/org.androidcontrol.app.regression.' + runner]
             run = subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
             receipt = dict(result='attempted', diagnosticExitCode=run.returncode, **request)
             result = subprocess.run(['adb', 'exec-out', 'run-as', PACKAGE, 'cat', 'cache/recorder-media/anr-threads.json'],

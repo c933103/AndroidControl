@@ -16,9 +16,18 @@ jobs:
           - api: 33
             runner: ubuntu-latest
             acceleration-options: ''
+            application: manager
+            artifact-suffix: ''
           - api: 35
             runner: macos-15-intel
             acceleration-options: '-accel on'
+            application: manager
+            artifact-suffix: ''
+          - api: 35
+            runner: macos-15-intel
+            acceleration-options: '-accel on'
+            application: control
+            artifact-suffix: '-application-control'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
@@ -40,12 +49,13 @@ jobs:
       - name: Accept existing project Android SDK licenses
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
       - name: Build unchanged debug signing configuration
-        run: ./gradlew -PrecorderMediaTests=true :manager:assembleDebug :manager:assembleDebugAndroidTest
+        run: ./gradlew -PrecorderMediaTests=true -PrecorderMediaControl=${{ matrix.application == 'control' }} :manager:assembleDebug :manager:assembleDebugAndroidTest
       - name: Check target-only ANR thread selector
         run: |
           gradle_lib=$(find "$HOME/.gradle/wrapper/dists" -type d -path '*/gradle-8.14/lib' -print -quit)
           python3 tests/recorder-anr-fixture/check.py --gradle-lib "$gradle_lib"
           python3 tests/recorder-readiness-fixture/check.py --gradle-lib "$gradle_lib"
+          python3 tests/recorder-application-control-fixture/check.py --gradle-lib "$gradle_lib"
       - name: Synthetic media only, without permission or security changes
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -59,10 +69,10 @@ jobs:
           emulator-boot-timeout: 1200
           pre-emulator-launch-script: python3 tests/check-recorder-acceleration.py ${{ matrix.api }}
           emulator-options: ${{ matrix.acceleration-options }} -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
-          script: bash tests/run-recorder-media-checks.sh
+          script: bash tests/run-recorder-media-checks.sh ${{ matrix.application }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: recorder-media-api-${{ matrix.api }}
+          name: recorder-media-api-${{ matrix.api }}${{ matrix.artifact-suffix }}
           path: recorder-media-results
           if-no-files-found: warn
