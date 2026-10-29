@@ -117,6 +117,10 @@ class ScrcpyAudioMuxer(
     fun initialize(codec: ScrcpyAudioCodec) {
         if (muxer != null) return // Already initialised; ignore duplicate calls.
 
+        // A closed instance may be initialized again. Its saved-result flag and
+        // sample count belong only to the new output session, never the previous one.
+        finalizedSuccessfully = false
+        samplesWritten = 0
         AppLogger.d( "Initialising muxer: codec=${codec.cliKey} format=${codec.outputFormat} path='$outputDisplayPath'")
         muxer = MediaMuxer(outputFileDescriptor, codec.outputFormat)
     }
