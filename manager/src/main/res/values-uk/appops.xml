@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Short App Ops terms; other AppOps strings fall back to English. -->
+<resources>
+    <string name="appops_allow">Дозволити</string>
+    <string name="appops_deny">Заборонити</string>
+    <string name="appops_default">Типово</string>
+    <string name="appops_foreground">Дозволяти, лише коли додаток використовується</string>
+    <string name="appops_user">Користувач</string>
+    <string name="appops_save">Зберегти</string>
+    <string name="appops_group_other">Інше</string>
+    <string name="appops_group_phone">Телефон</string>
+    <string name="appops_group_sms">СМС</string>
+    <string name="appops_group_contacts">Контакти</string>
+    <string name="appops_group_camera">Камера</string>
+    <string name="appops_group_location">Місцезнаходження</string>
+    <string name="appops_group_calendar">Календар</string>
+    <string name="appops_group_microphone">Мікрофон</string>
+    <string name="appops_group_storage">Сховище</string>
+</resources>

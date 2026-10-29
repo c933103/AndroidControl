@@ -116,6 +116,10 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     private val targetCompatStateFile =
         File("/data/local/tmp/androidcontrol-target-compat")
 
+    private val targetCompatOverrides by lazy {
+        TargetCompatOverrides(TargetCompatJournal(targetCompatStateFile), { args -> runAm(*args) })
+    }
+
     private val fallbackTaskStateFile =
         File("/data/local/tmp/androidcontrol-target-tasks")
 
@@ -289,7 +293,7 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
     }
 
     private fun hasTargetPortraitState(): Boolean {
-        return targetCompatStateFile.exists() ||
+        return targetCompatOverrides.hasPending() ||
             fallbackTaskStateFile.exists() ||
             freeformSupportStateFile.exists() ||
             multiWindowConfigStateFile.exists() ||
@@ -1188,27 +1192,18 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
     private fun enableTargetPortraitCompat(): Set<String> {
         val sdk = getSdkInt()
-        targetCompatStateFile.delete()
+        check(!targetCompatOverrides.hasPending()) { "Compatibility restoration is still pending" }
+        val snapshot = readTargetCompatSnapshot(listOf(
+            FORCE_NON_RESIZE_APP, NEVER_SANDBOX_DISPLAY_APIS, ALWAYS_SANDBOX_DISPLAY_APIS,
+            OVERRIDE_SANDBOX_VIEW_BOUNDS_APIS, FORCE_RESIZE_APP,
+            OVERRIDE_ORIENTATION_ONLY_FOR_CAMERA, OVERRIDE_ANY_ORIENTATION,
+            OVERRIDE_UNDEFINED_ORIENTATION_TO_PORTRAIT, OVERRIDE_ANY_ORIENTATION_TO_USER
+        ))
         val applied = linkedSetOf<String>()
 
         fun applyCompat(mode: String, changeId: String) {
-            // Record intent before applying. If the process dies after the compat
-            // command succeeds, Restore can still reset this ID on the next run.
-            appendTargetCompatChange(changeId)
-            try {
-                val output = runAm(
-                    "compat", mode, "--no-kill", changeId, targetPackage
-                )
-                if (compatOutputSaysUnknown(output)) {
-                    removeTargetCompatChange(changeId)
-                    return
-                }
+            if (targetCompatOverrides.apply(targetPackage, mode, changeId, snapshot)) {
                 applied.add(changeId)
-            } catch (_: Throwable) {
-                // This call definitely did not complete successfully, so remove the
-                // provisional ledger entry. A process death after a successful call
-                // still leaves the pre-written entry available for later restoration.
-                removeTargetCompatChange(changeId)
             }
         }
 
@@ -1223,8 +1218,8 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
         // These orientation overrides landed during the Android 13 QPR cycle.
         // Do not gate them behind API 34: OEM Android 13 builds may already expose
-        // them through PlatformCompat. Unsupported builds simply reject the command
-        // and applyCompat removes the provisional ledger entry.
+        // them through PlatformCompat. Changes absent from a valid raw snapshot
+        // are skipped without mutating compatibility configuration.
         if (sdk >= 33) {
             // If an OEM enabled the camera-only gate, disable it so the portrait
             // treatment applies to the game at all times, not only while using camera.
@@ -1240,92 +1235,14 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
         return applied
     }
 
-    private fun compatOutputSaysUnknown(output: String): Boolean {
-        val text = output.lowercase()
-        return text.contains("not known yet") ||
-            text.contains("unknown change") ||
-            text.contains("unknown or invalid change") ||
-            text.contains("no such change") ||
-            text.contains("could have no effect")
-    }
-
-    @Synchronized
-    private fun appendTargetCompatChange(changeId: String) {
-        val ids =
-            if (targetCompatStateFile.exists()) {
-                targetCompatStateFile.readLines()
-                    .map { it.trim() }
-                    .filter { it.isNotBlank() }
-                    .toMutableSet()
-            } else {
-                linkedSetOf()
-            }
-
-        if (ids.add(changeId)) {
-            targetCompatStateFile.writeText(ids.joinToString("\n"))
-        }
-    }
-
-    @Synchronized
-    private fun removeTargetCompatChange(changeId: String) {
-        if (!targetCompatStateFile.exists()) return
-
-        val ids = targetCompatStateFile.readLines()
-            .map { it.trim() }
-            .filter { it.isNotBlank() && it != changeId }
-            .distinct()
-
-        if (ids.isEmpty()) {
-            targetCompatStateFile.delete()
-        } else {
-            targetCompatStateFile.writeText(ids.joinToString("\n"))
-        }
-    }
-
-    private fun restoreTargetPortraitCompat(preserveProcess: Boolean = false) {
-        val ids =
-            if (targetCompatStateFile.exists()) {
-                targetCompatStateFile.readLines()
-                    .map { it.trim() }
-                    .filter { it.isNotBlank() }
-                    .distinct()
-            } else {
-                emptyList()
-            }
-
-        val failedIds = mutableListOf<String>()
-
-        ids.forEach { changeId ->
-            try {
-                if (preserveProcess) runAm("compat", "reset", "--no-kill", changeId, targetPackage)
-                else runAm("compat", "reset", changeId, targetPackage)
-            } catch (t: Throwable) {
-                if (!isIgnorableCompatResetFailure(t)) {
-                    failedIds.add(changeId)
-                }
-            }
-        }
-
-        if (failedIds.isEmpty()) {
-            targetCompatStateFile.delete()
-            return
-        }
-
-        targetCompatStateFile.writeText(failedIds.joinToString("\n"))
-        throw IllegalStateException(
-            "Could not restore ${failedIds.size} compatibility override(s) for " +
-                targetPackage + "; they were retained for retry."
+    private fun readTargetCompatSnapshot(ids: List<String>): TargetCompatOverrides.Snapshot {
+        return TargetCompatOverrides.snapshot(
+            runCommand("/system/bin/dumpsys", "platform_compat"), targetPackage, ids
         )
     }
 
-    private fun isIgnorableCompatResetFailure(t: Throwable): Boolean {
-        val message = (t.message ?: "").lowercase()
-        return message.contains("unknown change") ||
-            message.contains("unknown id") ||
-            message.contains("no such change") ||
-            message.contains("not a known change") ||
-            message.contains("unknown package") ||
-            message.contains("package not found")
+    private fun restoreTargetPortraitCompat(preserveProcess: Boolean = false) {
+        targetCompatOverrides.restore(targetPackage, preserveProcess)
     }
 
     private fun startPortraitAppWatcher() {
@@ -1596,24 +1513,14 @@ class AndroidControlService @Keep constructor() : IAndroidControlService.Stub() 
 
     private fun enableTargetDisplayCompat() {
         val sdk = getSdkInt()
-        check(!targetCompatStateFile.exists()) { "Compatibility restoration is still pending" }
+        check(!targetCompatOverrides.hasPending()) { "Compatibility restoration is still pending" }
+        val snapshot = readTargetCompatSnapshot(listOf(
+            FORCE_NON_RESIZE_APP, NEVER_SANDBOX_DISPLAY_APIS, ALWAYS_SANDBOX_DISPLAY_APIS,
+            OVERRIDE_SANDBOX_VIEW_BOUNDS_APIS, FORCE_RESIZE_APP
+        ))
 
         fun applyCompat(mode: String, changeId: String) {
-            appendTargetCompatChange(changeId)
-            try {
-                val output = runAm(
-                    "compat",
-                    mode,
-                    "--no-kill",
-                    changeId,
-                    targetPackage
-                )
-                if (compatOutputSaysUnknown(output)) {
-                    removeTargetCompatChange(changeId)
-                }
-            } catch (_: Throwable) {
-                // Retain the prewritten intent: command failure may be ambiguous.
-            }
+            targetCompatOverrides.apply(targetPackage, mode, changeId, snapshot)
         }
 
         if (sdk >= 33) {

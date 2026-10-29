@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.net.Uri
 import android.text.Editable
 import android.text.TextWatcher
 import android.text.format.DateFormat
@@ -44,12 +45,34 @@ class AppOpsActivity : AppBarActivity() {
     private var busy = false
     private var generation = 0
     private val adapter = OpsAdapter()
+    private val labels by lazy(LazyThreadSafetyMode.NONE) { AppOpsLabels(this) }
     private var showAll = false
     private var group: String? = null
     private val chosen = linkedSetOf<String>()
+    private data class DocumentRequest(val code: Int, val user: Int, val pkg: String?)
+    private var pendingDocument: DocumentRequest? = null
+    private var pendingDocumentUri: Uri? = null
+
+    private companion object {
+        const val EXPORT_DOCUMENT = 501
+        const val IMPORT_DOCUMENT = 502
+        const val STATE_USER = "appops.user"
+        const val STATE_PACKAGE = "appops.package"
+        const val STATE_DOCUMENT = "appops.document"
+        const val STATE_DOCUMENT_URI = "appops.documentUri"
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        user = savedInstanceState?.getInt(STATE_USER, user) ?: user
+        selectedPackage = savedInstanceState?.getString(STATE_PACKAGE)
+        savedInstanceState?.getBundle(STATE_DOCUMENT)?.let { saved ->
+            val code = saved.getInt("code")
+            if (code in listOf(EXPORT_DOCUMENT, IMPORT_DOCUMENT) && saved.containsKey("user")) {
+                pendingDocument = DocumentRequest(code, saved.getInt("user"), saved.getString("package"))
+                pendingDocumentUri = savedInstanceState.getParcelable(STATE_DOCUMENT_URI)
+            }
+        }
         title = getString(R.string.appops_title)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         val root = LinearLayout(this).apply {
@@ -99,6 +122,20 @@ class AppOpsActivity : AppBarActivity() {
         loadApps()
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putInt(STATE_USER, user)
+        outState.putString(STATE_PACKAGE, selectedPackage)
+        pendingDocument?.let { request ->
+            outState.putBundle(STATE_DOCUMENT, Bundle().apply {
+                putInt("code", request.code)
+                putInt("user", request.user)
+                putString("package", request.pkg)
+            })
+            outState.putParcelable(STATE_DOCUMENT_URI, pendingDocumentUri)
+        }
+        super.onSaveInstanceState(outState)
+    }
+
     private fun dp(n: Int) = (resources.displayMetrics.density * n).toInt()
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menu.add(0, 101, 0, R.string.appops_reset)
@@ -107,7 +144,7 @@ class AppOpsActivity : AppBarActivity() {
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         if (item.itemId != 101) return super.onOptionsItemSelected(item)
         val pkg = selectedPackage ?: return true
-        if (busy) return true
+        if (busy || pendingDocument != null) return true
         MaterialAlertDialogBuilder(this).setTitle(R.string.appops_reset)
             .setMessage(getString(R.string.appops_reset_confirm, pkg, user))
             .setPositiveButton(android.R.string.ok) { _, _ ->
@@ -122,7 +159,7 @@ class AppOpsActivity : AppBarActivity() {
     private fun button(parent: LinearLayout, text: Int, action: () -> Unit) {
         parent.addView(Button(this).apply {
             setText(text)
-            setOnClickListener { if (!busy) action() }
+            setOnClickListener { if (!busy && pendingDocument == null) action() }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
     }
     private fun jsonList(array: JSONArray) = (0 until array.length()).map { array.getJSONObject(it) }
@@ -141,11 +178,17 @@ class AppOpsActivity : AppBarActivity() {
                 result.onSuccess(done).onFailure { error ->
                     status.text = getString(R.string.appops_error, error.message ?: error.javaClass.simpleName)
                 }
+                // A recreated screen may still be loading when Android delivers the
+                // picker result. Run it after that work instead of dropping it as busy.
+                processDocumentResult()
             }
         }
     }
     private fun loadApps() {
         val requestedUser = user
+        // A restored picker owns the screen transition, even if it is canceled
+        // before this already-queued startup request completes.
+        val offerAppSelection = pendingDocument == null
         task({
             val loaded = AppOpsClient.request("apps", requestedUser) as JSONArray
             val saved = AppOpsClient.request("rules", requestedUser) as JSONObject
@@ -156,7 +199,7 @@ class AppOpsActivity : AppBarActivity() {
             rules = saved
             selectedPackage = selectedPackage?.takeIf { pkg -> apps.any { it.getString("package") == pkg } }
             status.text = getString(R.string.appops_apps_loaded, apps.size, user)
-            if (selectedPackage != null) loadApp() else selectApp()
+            if (selectedPackage != null) loadApp() else if (offerAppSelection && pendingDocument == null) selectApp()
         }
     }
     private fun selectUser() {
@@ -214,15 +257,22 @@ class AppOpsActivity : AppBarActivity() {
     private fun filter() {
         val query = if (::search.isInitialized) search.text.toString() else ""
         shownOps = operations.filter {
-            (showAll || it.getBoolean("relevant")) && (group == null || it.getString("group") == group) &&
-                listOf(it.getString("name"), it.getString("permission"), it.getString("group")).any { value -> value.contains(query, true) }
+            val name = it.getString("name")
+            val permission = it.getString("permission")
+            val operationGroup = it.getString("group")
+            (showAll || it.getBoolean("relevant")) && (group == null || operationGroup == group) &&
+                (query.isBlank() ||
+                    listOf(name, permission, operationGroup).any { value -> value.contains(query, true) } ||
+                    labels.operation(name, permission).contains(query, true) ||
+                    labels.permission(permission).contains(query, true) ||
+                    labels.group(operationGroup).contains(query, true))
         }
         adapter.notifyDataSetChanged()
     }
     private fun selectGroup() {
         val groups = operations.map { it.getString("group") }.distinct().sorted()
-        val labels = listOf(getString(R.string.appops_all_groups), getString(R.string.appops_apps_by_op)) + groups
-        MaterialAlertDialogBuilder(this).setTitle(R.string.appops_group).setItems(labels.toTypedArray()) { _, index ->
+        val options = listOf(getString(R.string.appops_all_groups), getString(R.string.appops_apps_by_op)) + groups.map(labels::group)
+        MaterialAlertDialogBuilder(this).setTitle(R.string.appops_group).setItems(options.toTypedArray()) { _, index ->
             if (index == 1) selectAppsByOperation() else {
                 group = if (index == 0) null else groups[index - 2]
                 filter()
@@ -230,12 +280,17 @@ class AppOpsActivity : AppBarActivity() {
         }.show()
     }
     private fun selectAppsByOperation() {
-        val names = operations.map { it.getString("name") }.sorted()
-        MaterialAlertDialogBuilder(this).setTitle(R.string.appops_apps_by_op).setItems(names.toTypedArray()) { _, index ->
-            val name = names[index]
+        val entries = operations.distinctBy { it.getString("name") }
+            .sortedBy { labels.operation(it.getString("name"), it.getString("permission")) }
+        MaterialAlertDialogBuilder(this).setTitle(R.string.appops_apps_by_op)
+            .setItems(entries.map {
+                labels.operationWithIdentifier(it.getString("name"), it.getString("permission"))
+            }.toTypedArray()) { _, index ->
+            val op = entries[index]
+            val name = op.getString("name")
             task({ AppOpsClient.request("appsForOp", user) { it.put("op", name) } }) { result ->
                 val matches = jsonList(result as JSONArray).sortedBy { it.getString("label").lowercase() }
-                MaterialAlertDialogBuilder(this).setTitle(name).setItems(matches.map {
+                MaterialAlertDialogBuilder(this).setTitle(labels.operationWithIdentifier(name, op.getString("permission"))).setItems(matches.map {
                     "${it.getString("label")} · ${modeLabel(it.getInt("effective"))}\n${it.getString("package")}" }.toTypedArray()) { _, i ->
                     selectedPackage = matches[i].getString("package")
                     group = null
@@ -258,7 +313,7 @@ class AppOpsActivity : AppBarActivity() {
         if (busy) return
         val pkg = selectedPackage ?: return
         val modes = if (Build.VERSION.SDK_INT >= 29) (0..4).toList() else (0..3).toList()
-        MaterialAlertDialogBuilder(this).setTitle(op.getString("name"))
+        MaterialAlertDialogBuilder(this).setTitle(labels.operationWithIdentifier(op.getString("name"), op.getString("permission")))
             .setSingleChoiceItems(modes.map(::modeLabel).toTypedArray(), modes.indexOf(op.getInt("mode"))) { dialog, index ->
                 dialog.dismiss()
                 task({ AppOpsClient.request("set", user, pkg) { it.put("op", op.getString("name")).put("mode", modes[index]) } }) { result ->
@@ -303,7 +358,11 @@ class AppOpsActivity : AppBarActivity() {
         root.addView(enabled)
         val picker = android.widget.ListView(this).apply {
             choiceMode = android.widget.ListView.CHOICE_MODE_MULTIPLE
-            adapter = ArrayAdapter(this@AppOpsActivity, android.R.layout.simple_list_item_multiple_choice, names)
+            adapter = ArrayAdapter(this@AppOpsActivity, android.R.layout.simple_list_item_multiple_choice,
+                names.map { name ->
+                    val permission = operations.firstOrNull { it.getString("name") == name }?.getString("permission").orEmpty()
+                    labels.operationWithIdentifier(name, permission)
+                })
         }
         names.forEachIndexed { i, name -> picker.setItemChecked(i, name in selected) }
         picker.setOnItemClickListener { _, _, i, _ -> if (picker.isItemChecked(i)) selected.add(names[i]) else selected.remove(names[i]) }
@@ -318,24 +377,62 @@ class AppOpsActivity : AppBarActivity() {
             }.setNegativeButton(android.R.string.cancel, null).show()
     }
     private fun backupMenu() {
+        if (busy || pendingDocument != null) return
         MaterialAlertDialogBuilder(this).setTitle(R.string.appops_backup)
             .setItems(arrayOf(getString(R.string.appops_export), getString(R.string.appops_import))) { _, index ->
-                if (index == 0) startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE); type = "application/json"; putExtra(Intent.EXTRA_TITLE, "androidcontrol-appops-user-$user.json")
-                }, 501) else startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"
-                }, 502)
+                launchDocument(if (index == 0) EXPORT_DOCUMENT else IMPORT_DOCUMENT)
             }.show()
+    }
+    private fun launchDocument(code: Int) {
+        if (busy || pendingDocument != null) return
+        if (code == IMPORT_DOCUMENT && selectedPackage == null) {
+            status.text = getString(R.string.appops_choose_app)
+            return
+        }
+        val request = DocumentRequest(code, user, selectedPackage)
+        val intent = if (code == EXPORT_DOCUMENT) Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/json"
+            putExtra(Intent.EXTRA_TITLE, "androidcontrol-appops-user-${request.user}.json")
+        } else Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+        }
+        pendingDocument = request
+        pendingDocumentUri = null
+        try {
+            startActivityForResult(intent, code)
+        } catch (e: RuntimeException) {
+            pendingDocument = null
+            status.text = getString(R.string.appops_error, e.message ?: e.javaClass.simpleName)
+        }
     }
     @Deprecated("Legacy activity result is used consistently with the existing manager")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (resultCode != Activity.RESULT_OK) return
-        val uri = data?.data ?: return
-        if (requestCode == 501) {
-            val exportUser = user
-            val exportApps = apps.toList()
+        if (pendingDocument?.code != requestCode || pendingDocumentUri != null) return
+        if (resultCode != Activity.RESULT_OK || data?.data == null) {
+            pendingDocument = null
+            pendingDocumentUri = null
+            return
+        }
+        pendingDocumentUri = data.data
+        processDocumentResult()
+    }
+    private fun processDocumentResult() {
+        if (busy || isFinishing || isDestroyed) return
+        val request = pendingDocument ?: return
+        val uri = pendingDocumentUri ?: return
+        // Consume once, immediately before scheduling work. Unrelated/duplicate results
+        // cannot create an export or a new import confirmation without a pending request.
+        pendingDocument = null
+        pendingDocumentUri = null
+        if (request.code == EXPORT_DOCUMENT) {
+            val exportUser = request.user
             task({
+                // The recreated Activity's cache may be empty or refer to another
+                // screen selection. Enumerate only the user captured at picker launch.
+                val exportApps = jsonList(AppOpsClient.request("apps", exportUser) as JSONArray)
                 val records = JSONArray()
                 exportApps.forEach { app ->
                     val snapshot = AppOpsClient.request("snapshot", exportUser, app.getString("package")) as JSONObject
@@ -348,8 +445,9 @@ class AppOpsActivity : AppBarActivity() {
                 (contentResolver.openOutputStream(uri, "wt") ?: error("Cannot open backup destination")).use { it.write(bytes) }
                 records.length()
             }) { status.text = getString(R.string.appops_exported, it as Int) }
-        } else if (requestCode == 502) {
-            val pkg = selectedPackage ?: run { status.text = getString(R.string.appops_choose_app); return }
+        } else if (request.code == IMPORT_DOCUMENT) {
+            val importUser = request.user
+            val pkg = request.pkg ?: run { status.text = getString(R.string.appops_choose_app); return }
             task({
                 val bytes = (contentResolver.openInputStream(uri) ?: error("Cannot open backup")).use {
                     val output = java.io.ByteArrayOutputStream()
@@ -363,21 +461,20 @@ class AppOpsActivity : AppBarActivity() {
                 }
                 require(bytes.size <= AppOpsBackup.MAX_BYTES) { "Backup exceeds 4 MiB" }
                 val root = JSONObject(bytes.toString(Charsets.UTF_8))
-                val catalog = AppOpsClient.request("ops", user, pkg) as JSONArray
+                val catalog = AppOpsClient.request("ops", importUser, pkg) as JSONArray
                 val changes = AppOpsBackup.parse(root.toString(), catalog)
                 require(Build.VERSION.SDK_INT >= 29 || changes.none { it.mode == 4 }) { "Foreground mode requires Android 10 or later" }
                 Triple(changes, root.optInt("user", -1), root.has("opbacks"))
             }) { result ->
                 val (changes, backupUser, legacy) = result as Triple<List<AppOpsBackup.Change>, Int, Boolean>
                 MaterialAlertDialogBuilder(this).setTitle(R.string.appops_import)
-                    .setMessage(getString(R.string.appops_import_confirm, changes.size, if (legacy) "AppOpsX" else "user $backupUser", user))
-                    .setPositiveButton(android.R.string.ok) { _, _ -> restore(changes) }
+                    .setMessage(getString(R.string.appops_import_confirm, changes.size, if (legacy) "AppOpsX" else "user $backupUser", importUser))
+                    .setPositiveButton(android.R.string.ok) { _, _ -> restore(changes, importUser) }
                     .setNegativeButton(android.R.string.cancel, null).show()
             }
         }
     }
-    private fun restore(changes: List<AppOpsBackup.Change>) {
-        val restoreUser = user
+    private fun restore(changes: List<AppOpsBackup.Change>, restoreUser: Int) {
         task({
             val installed = jsonList(AppOpsClient.request("apps", restoreUser) as JSONArray).map { it.getString("package") }.toSet()
             require(changes.all { it.pkg in installed }) { "Backup includes packages not installed for the selected user; no changes applied" }
@@ -412,14 +509,15 @@ class AppOpsActivity : AppBarActivity() {
         override fun onBindViewHolder(holder: OpsHolder, position: Int) {
             val op = shownOps[position]
             val name = op.getString("name")
-            holder.name.text = name.removePrefix("android:")
+            holder.name.text = labels.operation(name, op.getString("permission"))
             holder.name.setOnCheckedChangeListener(null)
             holder.name.isChecked = name in chosen
             holder.name.setOnCheckedChangeListener { _, selected -> if (selected) chosen.add(name) else chosen.remove(name) }
             val times = listOf("access" to R.string.appops_last_access, "reject" to R.string.appops_last_reject).mapNotNull { (key, label) ->
                 op.getLong(key).takeIf { it > 0 }?.let { getString(label, DateFormat.getDateFormat(this@AppOpsActivity).format(Date(it)) + " " + DateFormat.getTimeFormat(this@AppOpsActivity).format(Date(it))) }
             }
-            holder.detail.text = (listOf(op.getString("permission"), op.getString("group")) + times +
+            holder.detail.text = (listOf(name, labels.permissionWithIdentifier(op.getString("permission")),
+                labels.groupWithIdentifier(op.getString("group"))) + times +
                 getString(R.string.appops_effective_mode, modeLabel(op.getInt("effective")))).filter { it.isNotEmpty() }.joinToString("\n")
             holder.mode.text = modeLabel(op.getInt("mode"))
             holder.mode.setOnClickListener { changeMode(op) }

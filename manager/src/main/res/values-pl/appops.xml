@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Short App Ops terms; other AppOps strings fall back to English. -->
+<resources>
+    <string name="appops_deny">Odmów</string>
+    <string name="appops_save">Zapisz</string>
+    <string name="appops_group_other">Inne</string>
+    <string name="appops_group_contacts">Kontakty</string>
+    <string name="appops_group_camera">Aparat</string>
+    <string name="appops_group_location">Lokalizacja</string>
+    <string name="appops_group_calendar">Kalendarz</string>
+    <string name="appops_group_microphone">Mikrofon</string>
+    <string name="appops_group_storage">Pamięć wewnętrzna</string>
+</resources>

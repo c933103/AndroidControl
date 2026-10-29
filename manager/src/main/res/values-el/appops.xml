@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Short, conventional terms aligned with Rikka Apps' separate App Ops translations; other AppOps strings fall back to English. -->
+<resources>
+    <string name="appops_ignore">Παράβλεψη</string>
+    <string name="appops_default">Προεπιλογή</string>
+    <string name="appops_user">Χρήστης</string>
+    <string name="appops_save">Αποθήκευση</string>
+    <string name="appops_group_sensors">Αισθητήρες</string>
+    <string name="appops_group_phone">Τηλέφωνο</string>
+    <string name="appops_group_sms">Μηνύματα</string>
+    <string name="appops_group_contacts">Επαφές</string>
+    <string name="appops_group_camera">Κάμερα</string>
+    <string name="appops_group_location">Τοποθεσία</string>
+    <string name="appops_group_calendar">Ημερολόγιο</string>
+    <string name="appops_group_microphone">Μικρόφωνο</string>
+    <string name="appops_group_clipboard">Πρόχειρο</string>
+</resources>

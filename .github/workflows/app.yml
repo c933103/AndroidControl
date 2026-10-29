@@ -53,6 +53,8 @@ jobs:
       - name: Check component source licences and attribution
         run: python3 tests/check-component-licenses.py
 
+      - name: Check AppOps locale resources
+        run: python3 tests/check-appops-i18n.py
       - name: Build with Gradle
         id: buildWithGradle
         run: |

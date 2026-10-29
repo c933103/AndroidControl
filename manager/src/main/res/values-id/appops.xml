@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Short App Ops terms; other AppOps strings fall back to English. -->
+<resources>
+    <string name="appops_allow">Izinkan</string>
+    <string name="appops_ignore">Abaikan</string>
+    <string name="appops_deny">Tolak</string>
+    <string name="appops_default">Bawaan</string>
+    <string name="appops_foreground">Izinkan hanya saat menggunakan aplikasi</string>
+    <string name="appops_save">Simpan</string>
+    <string name="appops_group_other">Lainnya</string>
+    <string name="appops_group_activity_recognition">Aktivitas fisik</string>
+    <string name="appops_group_sensors">Sensor</string>
+    <string name="appops_group_phone">Telepon</string>
+    <string name="appops_group_sms">SMS</string>
+    <string name="appops_group_contacts">Kontak</string>
+    <string name="appops_group_camera">Kamera</string>
+    <string name="appops_group_location">Lokasi</string>
+    <string name="appops_group_calendar">Kalender</string>
+    <string name="appops_group_microphone">Mikrofon</string>
+    <string name="appops_group_storage">Penyimpanan</string>
+    <string name="appops_group_clipboard">Papan klip</string>
+    <string name="appops_group_device_identifiers">Identifikasi perangkat</string>
+</resources>

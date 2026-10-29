@@ -8,12 +8,14 @@ AndroidControl is an Android toolbox for app operations, portrait display sessio
 
 Download AndroidControl from this repository’s [Releases](https://github.com/c933103/AndroidControl/releases) or successful [Actions builds](https://github.com/c933103/AndroidControl/actions). Upstream Shizuku downloads are a different application.
 
+For the project brief, stable work-item cards, dated status and scoped evidence, see the [project kanban](docs/PROJECT_KANBAN.md).
+
 ## Features
 
 - **App operations:** search installed apps, choose an Android user, group/filter by permission and find apps by operation, inspect access and rejection timestamps, and set package modes to Allow, Ignore, Deny, Default, or Foreground only (Android 10+). Each write is read back from Android.
 - **Backups:** export a user’s package modes with stable operation names; import AndroidControl JSON or AppOpsX v1 `.bak` files with a target-user preview and per-operation failure reporting.
 - **New-app rules:** optionally apply selected Ignore rules to newly installed apps for a chosen user. Rules exclude updates and AndroidControl itself and run while the privileged AppOps daemon is alive.
-- **Portrait sessions:** edit the target package, open it on a portrait-shaped display, forward touches and web links, and hand off to the normal phone display for external checkout screens.
+- **Portrait sessions:** edit the target package, open it on a portrait-shaped display, forward touches and web links, hide/restore the bottom controls using the arrow handle (the restore handle turns completely transparent after five seconds but remains tappable), and hand off to the normal phone display for external checkout screens.
 - **System rotation:** control and restore system portrait behavior separately from target-specific sessions.
 - **Call recording (Android 12+):** consent-aware, opt-in local cellular call capture through the existing Shizuku privileged service; select an SAF folder, choose Opus/AAC, manually start/stop recording, or optionally attempt automatic starts on connected calls. Android restrictions may prevent background starts or recording on specific devices. **Under experimental validation; see [Call recording](docs/call-recording.md).**
 - **Privileged tools:** retain the manager, server, starter, shell, file provider, and Shizuku API for future extensions.
@@ -23,7 +25,7 @@ AppOps do not grant missing runtime permissions. Operations can share a switch a
 ## Start and use
 
 1. Install an AndroidControl APK from this repository.
-2. Start its privileged server from the home screen. On Android 11+, wireless-debugging pairing can start it without a computer. Root and wired ADB startup options are also available.
+2. Start its privileged server from the home screen. The always-available **ADB settings** shortcut opens Android Developer options for USB/wireless debugging. On Android 11+, wireless-debugging pairing can start it without a computer. Root and wired ADB startup options are also available.
 3. Open **Manage app operations**, choose a user/app, and tap an operation’s mode or tick operations for a batch restriction. **Default** returns a package operation to Android’s default handling; the menu can reset all recorded package operations.
 4. Open **Call recording** to review the jurisdiction-dependent consent warning, select a writable destination folder and configure recording on Android 12+. Read [known limitations and tests](docs/call-recording.md).
 5. Use the separate portrait/session and system-rotation controls as needed. The saved portrait target does not limit AppOps app selection.

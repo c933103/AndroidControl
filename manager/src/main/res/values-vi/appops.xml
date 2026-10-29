@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Short App Ops terms; other AppOps strings fall back to English. -->
+<resources>
+    <string name="appops_allow">Cho phép</string>
+    <string name="appops_ignore">Bỏ qua</string>
+    <string name="appops_deny">Từ chối</string>
+    <string name="appops_default">Mặc định</string>
+    <string name="appops_foreground">Chỉ cho phép khi dùng ứng dụng</string>
+    <string name="appops_user">Người dùng</string>
+    <string name="appops_save">Lưu</string>
+    <string name="appops_group_other">Khác</string>
+    <string name="appops_group_activity_recognition">Hoạt động thể chất</string>
+    <string name="appops_group_sensors">Cảm biến</string>
+    <string name="appops_group_phone">Điện thoại</string>
+    <string name="appops_group_sms">SMS</string>
+    <string name="appops_group_contacts">Danh bạ</string>
+    <string name="appops_group_camera">Máy ảnh</string>
+    <string name="appops_group_location">Vị trí</string>
+    <string name="appops_group_calendar">Lịch</string>
+    <string name="appops_group_microphone">Micrô</string>
+    <string name="appops_group_storage">Bộ nhớ</string>
+    <string name="appops_group_clipboard">Bảng nhớ tạm</string>
+    <string name="appops_group_device_identifiers">Mã nhận dạng thiết bị</string>
+</resources>

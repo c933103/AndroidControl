@@ -18,6 +18,7 @@ import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -27,6 +28,9 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
     private lateinit var surfaceView: SurfaceView
     private lateinit var statusView: TextView
     private lateinit var scene: FrameLayout
+    private lateinit var controlsBar: LinearLayout
+    private lateinit var showControlsButton: ImageButton
+    private var controlsCollapsed = false
     private var webPanel: PortraitWebPanel? = null
     private var displayId = -1
     private var virtualWidth = 0
@@ -38,6 +42,13 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
     private var surfaceReady = false
     private var attachGeneration = 0
     private val main = Handler(Looper.getMainLooper())
+    private val concealRestoreHandle = Runnable {
+        // Keep the overlay touch target and its accessibility label; hide only
+        // its pixels so it does not cover the target app after five seconds.
+        if (controlsCollapsed && foreground && !stopping && !isDestroyed) {
+            showControlsButton.alpha = 0f
+        }
+    }
     private val hostToken = Binder()
     private val packageNameForSession by lazy {
         PortraitTarget.validate(intent.getStringExtra("portrait_target_package") ?: PortraitTarget.get())
@@ -89,9 +100,12 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
             text = getString(R.string.target_portrait_display_starting)
         }
         scene.addView(statusView, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL))
-        val controls = LinearLayout(this).apply { setBackgroundColor(0xff173333.toInt()) }
+        controlsBar = LinearLayout(this).apply {
+            id = R.id.target_portrait_controls_bar
+            setBackgroundColor(0xff173333.toInt())
+        }
         fun button(label: Int, action: () -> Unit) {
-            controls.addView(Button(this).apply {
+            controlsBar.addView(Button(this).apply {
                 text = getString(label)
                 isAllCaps = false
                 setOnClickListener { action() }
@@ -100,19 +114,75 @@ class TargetPortraitDisplayActivity : Activity(), SurfaceHolder.Callback, View.O
         button(R.string.target_portrait_back) { onBackPressed() }
         button(R.string.target_portrait_phone) { handoffToPhone() }
         button(R.string.target_portrait_close) { stopAndFinish() }
-        root.addView(controls, LinearLayout.LayoutParams(-1, -2))
+
+        // The 48dp controls remain reachable even if the target holds focus.
+        val touchTarget = (48 * resources.displayMetrics.density + 0.5f).toInt()
+        controlsBar.addView(ImageButton(this).apply {
+            id = R.id.target_portrait_hide_controls
+            setImageResource(R.drawable.ic_outline_arrow_upward_24)
+            setColorFilter(Color.WHITE)
+            rotation = 180f
+            contentDescription = getString(R.string.target_portrait_hide_controls)
+            setBackgroundColor(0xff173333.toInt())
+            setOnClickListener { setControlsCollapsed(true) }
+        }, LinearLayout.LayoutParams(touchTarget, touchTarget))
+        root.addView(controlsBar, LinearLayout.LayoutParams(-1, -2))
+
+        showControlsButton = ImageButton(this).apply {
+            id = R.id.target_portrait_show_controls
+            setImageResource(R.drawable.ic_outline_arrow_upward_24)
+            setColorFilter(Color.WHITE)
+            contentDescription = getString(R.string.target_portrait_show_controls)
+            setBackgroundColor(0xff173333.toInt())
+            setOnClickListener { setControlsCollapsed(false) }
+        }
+        val margin = (8 * resources.displayMetrics.density + 0.5f).toInt()
+        scene.addView(showControlsButton,
+            FrameLayout.LayoutParams(touchTarget, touchTarget, Gravity.BOTTOM or Gravity.END).apply {
+                setMargins(margin, margin, margin, margin)
+            })
         setContentView(root)
+        setControlsCollapsed(savedInstanceState?.getBoolean(CONTROLS_COLLAPSED_KEY) == true)
         root.requestApplyInsets()
+    }
+
+    private fun setControlsCollapsed(collapsed: Boolean) {
+        main.removeCallbacks(concealRestoreHandle)
+        controlsCollapsed = collapsed
+        controlsBar.visibility = if (collapsed) View.GONE else View.VISIBLE
+        showControlsButton.visibility = if (collapsed) View.VISIBLE else View.GONE
+        showControlsButton.alpha = 1f
+        if (collapsed && foreground) {
+            main.postDelayed(concealRestoreHandle, RESTORE_HANDLE_TIMEOUT_MS)
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean(CONTROLS_COLLAPSED_KEY, controlsCollapsed)
+        super.onSaveInstanceState(outState)
+    }
+
+    private companion object {
+        const val CONTROLS_COLLAPSED_KEY = "portrait_controls_collapsed"
+        const val RESTORE_HANDLE_TIMEOUT_MS = 5_000L
     }
 
     override fun onResume() {
         super.onResume()
         foreground = true
+        // A resumed collapsed session briefly makes the recovery handle visible
+        // again, even when it had already become fully transparent before pause.
+        if (controlsCollapsed) {
+            main.removeCallbacks(concealRestoreHandle)
+            showControlsButton.alpha = 1f
+            main.postDelayed(concealRestoreHandle, RESTORE_HANDLE_TIMEOUT_MS)
+        }
         webPanel?.resume()
         attachSurface()
     }
 
     override fun onPause() {
+        main.removeCallbacks(concealRestoreHandle)
         foreground = false
         webPanel?.pause()
         surfaceReady = false
