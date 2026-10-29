@@ -15,8 +15,10 @@ jobs:
         include:
           - api: 33
             runner: ubuntu-latest
+            acceleration-options: ''
           - api: 35
             runner: macos-15-intel
+            acceleration-options: '-accel on'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
@@ -33,6 +35,7 @@ jobs:
         run: |
           python3 tests/test-recorder-crash-filter.py
           python3 tests/test-recorder-exit-info.py
+          python3 tests/test-recorder-acceleration.py
       - name: Accept existing project Android SDK licenses
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
       - name: Build unchanged debug signing configuration
@@ -48,7 +51,8 @@ jobs:
           disable-spellchecker: false
           enable-hw-keyboard: false
           emulator-boot-timeout: 1200
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+          pre-emulator-launch-script: python3 tests/check-recorder-acceleration.py ${{ matrix.api }}
+          emulator-options: ${{ matrix.acceleration-options }} -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
           script: bash tests/run-recorder-media-checks.sh
       - uses: actions/upload-artifact@v4
         if: always()

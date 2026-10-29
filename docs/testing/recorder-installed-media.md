@@ -166,3 +166,33 @@ Thirty-five synthetic controls cover matching identity/time, unrelated and stale
 records, timezone, bounds, command scope and unavailable history. Existing crash
 filter and strict11-case failure exits remain unchanged. This is diagnosis only,
 not a recorder fix or acceptance claim.
+
+
+## Explicit API35 acceleration capability boundary
+
+The48e2aa API35 PR's AAC creation took6582ms; target CCodec logs explicitly report
+allocation watchdog timeout, fatal UNKNOWN_ERROR while INITIALIZED, then
+Released-state configure rejection. Fixture release only followed the exception.
+[Android15 CCodec](https://android.googlesource.com/platform/frameworks/av/+/android-15.0.0_r1/media/codec2/sfplugin/CCodec.cpp)
+sets1500ms allocation watchdog and releases on expiry. This supports that failure
+path, not codec-service death or malformed media. The matching USER REQUESTED /
+FORCE_STOP exit record follows caught failure and is consistent with normal
+instrumentation finish cleanup, not owner cancellation. Its push run passed5 AAC
+cases then failed the unchanged15s Opus encoder deadline. No timeout is patched.
+
+Only API35 now runs read-only `emulator -accel-check` after SDK installation and
+before launch, recording bounded capability output. The actual launch explicitly
+uses `-accel on`: [official emulator documentation](https://developer.android.com/studio/run/emulator-commandline)
+says this refuses startup when acceleration is unavailable. macOS uses HVF per
+[official acceleration documentation](https://developer.android.com/studio/run/emulator-acceleration).
+The same standard runner/image/ABI remains; no OS settings or access are changed.
+
+The action catches prelaunch-hook errors, so the media script independently
+requires a successful complete capability receipt and requestedMode=on before
+installing/running tests. Missing/partial/failed receipts cannot silently permit
+software fallback or media acceptance. The check uses15s only for the read-only
+capability command, at most4096 bytes retained; original media/workflow deadlines
+are untouched.17 synthetic controls cover complete success, unavailable/partial
+output and fail-closed gate behavior. API33 remains explicitly software and
+unchanged. A capability pass establishes configuration, not performance or codec
+recovery; actual11-case media results remain required.

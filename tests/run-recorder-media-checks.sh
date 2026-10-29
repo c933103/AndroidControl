@@ -8,6 +8,14 @@ mkdir -p "$results"
 [[ "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" == 1 ]] || { echo 'Emulator required'; exit 1; }
 sdk=$(adb shell getprop ro.build.version.sdk | tr -d '\r')
 [[ "$sdk" == 33 || "$sdk" == 35 ]] || { echo "Unsupported test API: $sdk"; exit 1; }
+if [[ "$sdk" == 35 ]]; then
+    python3 - <<'ACCEL'
+import json
+from pathlib import Path
+capability = json.loads(Path('recorder-media-results/acceleration.json').read_text())
+assert capability.get('usable') is True and capability.get('requestedMode') == 'on', 'API35 acceleration not verified'
+ACCEL
+fi
 shopt -s nullglob
 apps=(manager/build/outputs/apk/debug/*.apk)
 tests=(manager/build/outputs/apk/androidTest/debug/*.apk)
