@@ -45,6 +45,7 @@ jobs:
         run: |
           gradle_lib=$(find "$HOME/.gradle/wrapper/dists" -type d -path '*/gradle-8.14/lib' -print -quit)
           python3 tests/recorder-anr-fixture/check.py --gradle-lib "$gradle_lib"
+          python3 tests/recorder-readiness-fixture/check.py --gradle-lib "$gradle_lib"
       - name: Synthetic media only, without permission or security changes
         uses: reactivecircus/android-emulator-runner@v2
         with:

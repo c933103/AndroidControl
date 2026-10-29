@@ -23,6 +23,9 @@ class RecorderMediaInstrumentation : Instrumentation() {
         sendStatus(0, Bundle().apply { putString("recorder_media_stage", "started") })
         val result = Bundle()
         try {
+            sendStatus(0, Bundle().apply { putString("recorder_media_stage", "waiting-for-application-idle") })
+            waitForIdleSync()
+            sendStatus(0, Bundle().apply { putString("recorder_media_stage", "application-idle") })
             RecorderMediaChecks.run(targetContext)
             result.putString("recorder_media", "PASS")
             finish(-1, result)
