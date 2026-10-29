@@ -9,7 +9,7 @@ import android.os.Bundle
 class RecorderMediaInstrumentation : Instrumentation() {
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
-        sendStatus(0, Bundle().apply { putString("recorder_media_stage", "created") })
+        sendStatus(0, Bundle().apply { putString("recorder_media_stage", "created"); putInt("recorder_media_pid", android.os.Process.myPid()) })
         start()
     }
     override fun onStart() {

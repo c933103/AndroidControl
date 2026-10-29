@@ -116,3 +116,22 @@ The same15s codec deadlines,180s instrumentation timeout,1200s boot limit and45m
 job bound remain. Python implements the unchanged outer timeout portably; no GNU
 coreutils installation is required. All audio assertions and failure diagnostics
 remain intact. Native-runner acceptance is pending its own exact-head results.
+
+## API35 decoder lifecycle diagnosis (not acceptance)
+
+On5f1dfea/nativeAPI35 push job123261445874, the first AAC roundtrip passed with
+`c2.android.aac.encoder`/`c2.android.aac.decoder`; the second freshly created decoder
+failed configure with Released state before any input was queued. Both retained
+AAC outputs contain46 identical encoded packet payloads (sequence hash
+2e9c74c6ec1183e66aefc143d5f423c7d136658a347e47d7685b4ae34d43ebf4).
+Independent ffmpeg decoding yielded47104 frames and RMS4138.13 for each; that is
+not proof of AndroidAPI35 compatibility and does not erase the failure.
+
+The fixture now checkpoints exact codec name/MIME/instance identity, create /
+configure / start / stop / release requests and completions, encoded payload
+hash and output file hashes. Failure-only codec diagnostics retain at most300
+log lines from the instrumentation-reported target-app PID and only MediaCodec,
+CCodec, CCodecConfig and Codec2Client tags. No other process logs are collected.
+There is no blanket retry, codec skip, changed lifecycle ordering or relaxed
+assertion/deadline. The purpose is to distinguish fixture lifecycle misuse from
+codec-service failure or malformed output using exact installed evidence.

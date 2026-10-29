@@ -35,6 +35,15 @@ object RecorderMediaChecks {
     private const val CHANNELS = 2
     private const val FRAMES = RATE
     private const val TIMEOUT_MS = 15000L
+    private lateinit var evidence: JSONObject
+    private lateinit var evidenceFile: File
+    private fun checkpoint(event: String, details: String = "") {
+        evidence.getJSONArray("lifecycle").put(JSONObject().put("event", event)
+            .put("elapsedMs", SystemClock.elapsedRealtime()).put("details", details))
+        // Diagnostics must not interrupt native-resource cleanup.
+        runCatching { evidenceFile.writeText(evidence.toString(2)) }
+            .onFailure { android.util.Log.w("RecorderMediaChecks", "Checkpoint write failed", it) }
+    }
     private data class Packet(val pts: Long, val config: Boolean, val bytes: ByteArray)
     private data class Encoded(val name: String, val packets: List<Packet>)
     private data class Outcome(val error: String?, val finalized: Boolean, val packets: Int)
@@ -45,6 +54,10 @@ object RecorderMediaChecks {
         val report = JSONObject().put("sdk", android.os.Build.VERSION.SDK_INT)
             .put("input", "generated 440 Hz PCM, 48000 Hz stereo, one second")
             .put("scope", "installed MediaCodec, production parser/muxer, pipes; no call, microphone, service/Binder or physical-device acceptance")
+        report.put("pid", android.os.Process.myPid()).put("lifecycle", JSONArray())
+        evidence = report
+        evidenceFile = File(directory, "report.json")
+        checkpoint("run-start")
         val cases = JSONArray()
         report.put("cases", cases)
         try {
@@ -83,8 +96,11 @@ object RecorderMediaChecks {
     }
 
     private fun encode(codec: ScrcpyAudioCodec): Encoded {
+        checkpoint("encoder-create-request", codec.mimeType)
         val encoder = MediaCodec.createEncoderByType(codec.mimeType)
         val name = encoder.name
+        val identity = "$name/${System.identityHashCode(encoder)} ${codec.mimeType}"
+        checkpoint("encoder-created", identity)
         var started = false
         val packets = mutableListOf<Packet>()
         try {
@@ -93,8 +109,11 @@ object RecorderMediaChecks {
                 setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
                 if (codec == ScrcpyAudioCodec.AAC) setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
             }
+            checkpoint("encoder-configure-request", identity)
             encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            checkpoint("encoder-configured", identity)
             encoder.start(); started = true
+            checkpoint("encoder-started", identity)
             var supplied = 0
             var inputEnded = false
             var outputEnded = false
@@ -136,10 +155,19 @@ object RecorderMediaChecks {
             }
             check(packets.firstOrNull()?.config == true) { "Encoder did not emit initial CSD: $name" }
             check(packets.filter { !it.config }.all { it.pts >= 0 })
+            val packetDigest = MessageDigest.getInstance("SHA-256")
+            packets.forEach { packetDigest.update(it.bytes) }
+            val payloadHash = packetDigest.digest().joinToString("") { "%02x".format(it) }
+            checkpoint("encoder-output", "$identity packets=${packets.size} payloadSha256=$payloadHash")
             return Encoded(name, packets)
         } finally {
-            if (started) runCatching { encoder.stop() }
+            if (started) {
+                checkpoint("encoder-stop-request", identity)
+                runCatching { encoder.stop() }.onFailure { checkpoint("encoder-stop-error", it.toString()) }
+            }
+            checkpoint("encoder-release-request", identity)
             encoder.release()
+            checkpoint("encoder-released", identity)
         }
     }
 
@@ -224,9 +252,11 @@ object RecorderMediaChecks {
     }
 
     private fun decode(codec: ScrcpyAudioCodec, file: File): JSONObject {
+        checkpoint("decode-file", "${file.name} mime=${codec.mimeType} bytes=${file.length()} sha256=${sha256(file)}")
         val extractor = MediaExtractor()
         var decoder: MediaCodec? = null
         var started = false
+        var identity = "not-created"
         try {
             extractor.setDataSource(file.absolutePath)
             check(extractor.trackCount == 1)
@@ -245,10 +275,17 @@ object RecorderMediaChecks {
             val span = timestamps.last() - timestamps.first()
             check(span in 750_000L..1_250_000L) { "Queued capture timeline compressed: $span us" }
             extractor.seekTo(0, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+            checkpoint("decoder-create-request", "${file.name} ${codec.mimeType}")
             decoder = MediaCodec.createDecoderByType(codec.mimeType)
             val name = decoder.name
+            identity = "$name/${System.identityHashCode(decoder)} ${codec.mimeType} ${file.name}"
+            checkpoint("decoder-created", identity)
             format.setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
-            decoder.configure(format, null, null, 0); decoder.start(); started = true
+            checkpoint("decoder-configure-request", identity)
+            decoder.configure(format, null, null, 0)
+            checkpoint("decoder-configured", identity)
+            decoder.start(); started = true
+            checkpoint("decoder-started", identity)
             var inputEnded = false
             var outputEnded = false
             var samples = 0L
@@ -303,8 +340,14 @@ object RecorderMediaChecks {
             return JSONObject().put("decoder", name).put("containerSamples", timestamps.size)
                 .put("timestampSpanUs", span).put("decodedFrames", samples).put("rms", rms).put("toneAmplitude", amplitude)
         } finally {
-            if (started) runCatching { decoder?.stop() }
-            decoder?.release(); extractor.release()
+            if (started) {
+                checkpoint("decoder-stop-request", identity)
+                runCatching { decoder?.stop() }.onFailure { checkpoint("decoder-stop-error", it.toString()) }
+            }
+            checkpoint("decoder-release-request", identity)
+            decoder?.release()
+            checkpoint("decoder-released", identity)
+            extractor.release()
         }
     }
 

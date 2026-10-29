@@ -27,6 +27,10 @@ sys.exit(result.returncode)
 grep -q '^INSTRUMENTATION_RESULT: recorder_media=PASS' "$results/instrumentation.txt" || status=1
 if [[ "$status" != 0 ]]; then
     adb logcat -b crash -d -v brief -t 200 | python3 tests/filter-recorder-crash.py > "$results/app-crash.txt" || true
+    pid=$(sed -n 's/^INSTRUMENTATION_STATUS: recorder_media_pid=//p' "$results/instrumentation.txt" | head -n 1 | tr -d '\r')
+    if [[ "$pid" =~ ^[0-9]+$ ]]; then
+        adb logcat --pid="$pid" -d -v brief -t 300 -s MediaCodec CCodec CCodecConfig Codec2Client > "$results/app-codec.txt" || true
+    fi
 fi
 for name in report.json aac-1.m4a aac-2.m4a opus-1.ogg opus-2.ogg; do
     if ! adb exec-out run-as "$package" cat "cache/recorder-media/$name" > "$results/$name"; then
