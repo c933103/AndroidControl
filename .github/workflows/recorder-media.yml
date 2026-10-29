@@ -25,6 +25,8 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
+      - name: Accept existing project Android SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
       - name: Build unchanged debug signing configuration
         run: ./gradlew :manager:assembleDebug :manager:assembleDebugAndroidTest
       - name: Synthetic media only, without permission or security changes
