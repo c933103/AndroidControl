@@ -11,6 +11,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--gradle-lib', type=Path, required=True)
 parser.add_argument('--source', type=Path)
 parser.add_argument('--expect-baseline-failure', action='store_true')
+parser.add_argument('--suite', choices=('all', 'session', 'timestamps'), default='all')
 args = parser.parse_args()
 fixture = Path(__file__).resolve().parent
 source = args.source or fixture.parents[1] / 'manager/src/main/java/org/androidcontrol/app/recording/integrations/scrcpy/ScrcpyAudioMuxer.kt'
@@ -18,8 +19,12 @@ lib = args.gradle_lib.resolve()
 stdlib = lib / 'kotlin-stdlib-2.0.21.jar'
 if not stdlib.is_file():
     parser.error('Expected Gradle 8.14 Kotlin compiler and stdlib jars')
-cases = ('sample-success', 'no-config', 'no-samples', 'stop-failure', 'write-failure',
+session_cases = ('sample-success', 'no-config', 'no-samples', 'stop-failure', 'write-failure',
          'duplicate-close', 'duplicate-initialize', 'reuse-clears-result', 'reuse-empty-session')
+timestamp_cases = ('queued-timestamps', 'capture-gap', 'capture-discontinuity', 'reuse-timestamps')
+cases = session_cases if args.suite == 'session' else timestamp_cases if args.suite == 'timestamps' else session_cases + timestamp_cases
+if args.expect_baseline_failure and args.suite == 'all':
+    parser.error('Choose a specific --suite for the predecessor sensitivity control')
 with tempfile.TemporaryDirectory(prefix='recording-muxer-') as directory:
     classes = Path(directory) / 'classes'
     subprocess.run(['java', '-cp', str(lib / '*'), 'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler',
@@ -34,7 +39,7 @@ with tempfile.TemporaryDirectory(prefix='recording-muxer-') as directory:
         if result.returncode:
             failed.append(scenario)
             print(f'FAIL {scenario}: {result.stderr.strip()}')
-    expected = ['reuse-clears-result', 'reuse-empty-session'] if args.expect_baseline_failure else []
+    expected = (list(timestamp_cases) if args.suite == 'timestamps' else ['reuse-clears-result', 'reuse-empty-session']) if args.expect_baseline_failure else []
     if failed != expected:
         raise SystemExit(f'Unexpected failures: {failed}; expected {expected}')
     print(f'PASS expected failure set: {failed}')

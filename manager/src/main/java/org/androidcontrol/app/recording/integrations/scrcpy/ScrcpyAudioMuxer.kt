@@ -27,12 +27,12 @@ import java.nio.ByteBuffer
  *
  * Packet flow:
  *   CONFIG packet -> addAudioTrack() (one-time muxer setup with CSD)
- *   Audio packet  -> writeSampleData() with wall-clock PTS
+ *   Audio packet  -> writeSampleData() with normalized capture PTS
  *
- * Timestamp strategy: PTS is derived from [System.nanoTime] instead of scrcpy's stream PTS so
- * that real-time silences in discontinuous sources (VOICE_CALL, MIC) produce correct gaps rather
- * than a squashed and or corrupted files.
- * See https://github.com/Genymobile/scrcpy/pull/5870 for more info
+ * Timestamp strategy: normalize capture timestamps from scrcpy to a zero-based
+ * session timeline. Reader scheduling and SAF backpressure must not compress audio.
+ * Forward source gaps are preserved; duplicate/backward timestamps start a new
+ * monotonic segment one microsecond after the last sample.
  *
  * Maintainer's guide — when updating scrcpy-server, check the server files below to see if
  * CSD formats or MIME types have changed:
@@ -71,41 +71,11 @@ class ScrcpyAudioMuxer(
     var finalizedSuccessfully: Boolean = false
         private set
 
-    /**
-     * Wall-clock timestamp (from [System.nanoTime]) captured when the first audio frame
-     * is written.  Used as the origin for the Linear Wall-Clock Mapper.
-     * -1L means no frame has been written yet.
-     */
-    private var firstPacketTimeNanos: Long = -1L
+    /** Previous capture timestamp, or -1 before the first sample of this session. */
+    private var lastPacketPtsUs: Long = -1L
 
-    /**
-     * PTS of the most recently written sample.
-     * Used to enforce the strictly-monotonic-PTS requirement of [MediaMuxer]:
-     * if the wall clock returns the same nanosecond twice (unlikely but theoretically possible),
-     * we advance the PTS by 1 µs so [MediaMuxer] never rejects a duplicate timestamp.
-     */
+    /** Previous normalized output timestamp; kept strictly increasing. */
     private var lastWrittenPtsUs: Long = -1L
-
-    /**
-     * Wall-clock timestamp (from [System.nanoTime]) of the last processed frame.
-     * Used to detect large gaps in the stream (e.g., when packets are dropped during a pause).
-     */
-    private var lastPacketWallClockNanos: Long = -1L
-
-    /** Accumulated duration of large gaps (in nanoseconds) that we have stripped from the timeline. */
-    private var totalIgnoredGapNanos: Long = 0L
-
-    /**
-     * The threshold for detecting a "pause" or severe frame drop (400 ms in nanoseconds).
-     * Ordinary packet intervals are ~20ms. If we wait more than 400ms for a frame, we assume
-     * recording was paused or significantly interrupted, and we squash the timeline.
-     */
-    private val GAP_THRESHOLD_NANOS = 400_000_000L
-
-    /**
-     * The natural gap (25 ms in nanoseconds) we leave behind when squashing a large gap.
-     */
-    private val GAP_SLACK_NANOS = 25_000_000L
 
     /**
      * Creates the [MediaMuxer] instance for the container format matching [codec].
@@ -129,7 +99,7 @@ class ScrcpyAudioMuxer(
      * Processes a single audio packet received from [ScrcpyClient].
      *
      * Config packets (CSD) are used to set up the muxer track; regular frames are written
-     * as audio samples with a wall-clock–derived PTS.  Packets arriving before the muxer
+     * as audio samples with normalized capture PTS.  Packets arriving before the muxer
      * track is ready are silently dropped (this should not happen in normal operation because
      * scrcpy always sends the config packet first).
      *
@@ -152,44 +122,26 @@ class ScrcpyAudioMuxer(
             return
         }
 
-        val nowNanos = System.nanoTime()
-
-        // Missing/Large Gap detection: if the gap between this packet and the last one is huge,
-        // it means we paused the recording or dropped a massive amount of packets. We subtract this
-        // dead time from our internal timeline so the final output file doesn't have a huge silence.
-        // TODO: This code was added to fix most phone audio player behaving badly with the large silence, ideally we would like to keep the silence and not corrupt the file by doing so.
-        if (firstPacketTimeNanos == -1L) {
-            firstPacketTimeNanos = nowNanos
-            lastPacketWallClockNanos = nowNanos
-            AppLogger.d( "First audio frame: wall-clock origin set, pts=0")
-        } else {
-            // This is the "temporary" fix for the pause feature (audio silence) we just fully cut it out to prevent corrupting the file.
-            val gapNanos = nowNanos - lastPacketWallClockNanos
-            if (gapNanos > GAP_THRESHOLD_NANOS) {
-                val ignoredNanos = gapNanos - GAP_SLACK_NANOS
-                totalIgnoredGapNanos += ignoredNanos
-                AppLogger.d( "Detected huge gap silence/pause of ${gapNanos / 1_000_000} ms. Squashing ${ignoredNanos / 1_000_000} ms.")
-            }
-            lastPacketWallClockNanos = nowNanos
+        require(packet.pts >= 0) { "Invalid negative audio capture timestamp" }
+        // Consumption can be delayed or bursty. Preserve the producer's timing,
+        // not the wall clock at which a queued packet happens to reach the writer.
+        // A source reset/duplicate starts a new segment; subsequent deltas retain
+        // their capture spacing rather than clamping until the old clock catches up.
+        val normalizedPtsUs = if (lastPacketPtsUs < 0) 0L else {
+            val delta = if (packet.pts > lastPacketPtsUs) packet.pts - lastPacketPtsUs else 1L
+            Math.addExact(lastWrittenPtsUs, delta)
         }
-
-        // Wall-clock PTS: derive from System.nanoTime so real silences produce real gaps.
-        val wallClockPtsUs = (nowNanos - firstPacketTimeNanos - totalIgnoredGapNanos) / 1000L
-
-        // Safety check: MediaMuxer requires strictly increasing PTS values.
-        // System.nanoTime() is guaranteed monotonically non-decreasing, but integer
-        // truncation to microseconds can produce equal values for back-to-back packets.
-        val normalizedPtsUs = if (wallClockPtsUs > lastWrittenPtsUs) wallClockPtsUs else lastWrittenPtsUs + 1L
 
         val bufferInfo = MediaCodec.BufferInfo().apply {
             offset             = 0
             size               = packet.data.size
             presentationTimeUs = normalizedPtsUs
         }
-        lastWrittenPtsUs = normalizedPtsUs
 
         // ByteBuffer.wrap() creates a view over the existing array with no copy.
         checkNotNull(muxer).writeSampleData(audioTrackIndex, ByteBuffer.wrap(packet.data), bufferInfo)
+        lastPacketPtsUs = packet.pts
+        lastWrittenPtsUs = normalizedPtsUs
         samplesWritten++
     }
 
@@ -218,10 +170,8 @@ class ScrcpyAudioMuxer(
         muxer                  = null
         isMuxerStarted         = false
         audioTrackIndex        = -1
-        firstPacketTimeNanos   = -1L
+        lastPacketPtsUs        = -1L
         lastWrittenPtsUs       = -1L
-        lastPacketWallClockNanos = -1L
-        totalIgnoredGapNanos     = 0L
         AppLogger.d( "Muxer closed")
     }
 

@@ -11,11 +11,11 @@ class MediaFormat {
     companion object { const val KEY_MIME="mime"; const val KEY_SAMPLE_RATE="sample-rate"; const val KEY_CHANNEL_COUNT="channel-count" }
 }
 class MediaMuxer(fd:FileDescriptor, format:Int) {
-    companion object { var failStop=false; var failWrite=false; var releases=0; var constructions=0 }
+    companion object { var failStop=false; var failWrite=false; var releases=0; var constructions=0; val timestamps=mutableListOf<Long>() }
     init { constructions++ }
     fun addTrack(f:MediaFormat)=0
     fun start() {}
-    fun writeSampleData(i:Int,b:ByteBuffer,info:MediaCodec.BufferInfo) { check(!failWrite) }
+    fun writeSampleData(i:Int,b:ByteBuffer,info:MediaCodec.BufferInfo) { check(!failWrite); timestamps.add(info.presentationTimeUs) }
     fun stop() { check(!failStop) }
     fun release() { releases++ }
 }
