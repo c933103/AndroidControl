@@ -28,7 +28,11 @@ grep -q '^INSTRUMENTATION_RESULT: recorder_media=PASS' "$results/instrumentation
 if [[ "$status" != 0 ]]; then
     adb logcat -b crash -d -v brief -t 200 | python3 tests/filter-recorder-crash.py > "$results/app-crash.txt" || true
     pid=$(sed -n 's/^INSTRUMENTATION_STATUS: recorder_media_pid=//p' "$results/instrumentation.txt" | head -n 1 | tr -d '\r')
+    started_ms=$(sed -n 's/^INSTRUMENTATION_STATUS: recorder_media_started_ms=//p' "$results/instrumentation.txt" | head -n 1 | tr -d '\r')
     if [[ "$pid" =~ ^[0-9]+$ ]]; then
+        if [[ "$started_ms" =~ ^[0-9]+$ ]]; then
+            python3 tests/recorder-exit-info.py "$pid" "$started_ms" > "$results/app-exit-info.json" || true
+        fi
         adb logcat --pid="$pid" -d -v brief -t 300 -s MediaCodec CCodec CCodecConfig Codec2Client > "$results/app-codec.txt" || true
     fi
 fi

@@ -106,8 +106,8 @@ uncertain. Earlier API35 also reached an AAC encoder timeout, and separate runs
 failed emulator unlock/package-manager startup. These failures are retained, not
 reclassified as passes.
 
-Only the synthetic API35 matrix entry now uses standard `macos-15-intel` with
-built-in native virtualization. API33 and both original workflows are unchanged.
+Only the synthetic API35 matrix entry now uses standard `macos-15-intel` on the existing GitHub Actions destination.
+Logs do not explicitly confirm HVF/hypervisor acceleration; it is unverified. API33 and both original workflows are unchanged.
 Repository visibility was verified public on29October; [GitHub's standard-runner
 reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
 lists this standard Intel runner as available and free for public repositories.
@@ -135,3 +135,34 @@ CCodec, CCodecConfig and Codec2Client tags. No other process logs are collected.
 There is no blanket retry, codec skip, changed lifecycle ordering or relaxed
 assertion/deadline. The purpose is to distinguish fixture lifecycle misuse from
 codec-service failure or malformed output using exact installed evidence.
+
+
+## Package-scoped process exit diagnosis
+
+The60c962 runs died at distinct stages: API35 PR after AAC encoder start, API35
+push during encoder creation, and API33 push before runner markers with system
+crash. No production muxing was reached in those API35 runs. This does not prove
+malformed output or codec-service death. Original host logs confirm emulator
+37.2.12.0/build16428233, API35 google_apis x86_64,2560 MiB RAM and requested2 cores
+reduced to1; graphics are SwiftShader, CPU acceleration remains unverified.
+
+On failure only, the runner-reported PID and wall-clock start milliseconds bind
+an ApplicationExitInfo query to this synthetic process. The exact shell command
+is `dumpsys activity exit-info org.androidcontrol.app`; there is no global dump.
+[AOSP ActivityManagerService](https://android.googlesource.com/platform/frameworks/base/+/android-15.0.0_r1/services/core/java/com/android/server/am/ActivityManagerService.java)
+routes that package argument to
+[AppExitInfoTracker](https://android.googlesource.com/platform/frameworks/base/+/android-15.0.0_r1/services/core/java/com/android/server/am/AppExitInfoTracker.java),
+which selects only its package map. API33/API35 ApplicationExitInfo dump formats
+were checked against official source. [Android's API reference](https://developer.android.com/reference/android/app/ApplicationExitInfo)
+defines reason/status/timestamp; status is not itself proof of a codec defect.
+
+The diagnostic retains only exact package/process/PID records between the
+runner start and observed device time, with a maximum300s window. Device timezone
+is read, not changed. Missing PID/start markers, invalid clocks, command failure,
+or unavailable history do not become a guessed cause. Each shell read has a10s
+timeout; input over128 KiB is rejected, output contains at most4 numeric/enum
+records. No descriptions, traces, raw dumps or unrelated packages are archived.
+Seventeen synthetic controls cover matching identity/time, unrelated and stale
+records, timezone, bounds, command scope and unavailable history. Existing crash
+filter and strict11-case failure exits remain unchanged. This is diagnosis only,
+not a recorder fix or acceptance claim.
