@@ -14,11 +14,16 @@ tests=(manager/build/outputs/apk/androidTest/debug/*.apk)
 [[ ${#apps[@]} == 1 && ${#tests[@]} == 1 ]]
 adb install -r "${apps[0]}"
 adb install -r -t "${tests[0]}"
+adb shell pm list instrumentation | tee "$results/registered-instrumentation.txt"
+grep -Fq "$package.test/org.androidcontrol.app.regression.RecorderMediaInstrumentation" "$results/registered-instrumentation.txt"
 status=0
-timeout 180 adb shell am instrument -w "$package.test/org.androidcontrol.app.regression.RecorderMediaInstrumentation" | tee "$results/instrumentation.txt" || status=1
+timeout 180 adb shell am instrument -w "$package.test/org.androidcontrol.app.regression.RecorderMediaInstrumentation" 2>&1 | tee "$results/instrumentation.txt" || status=1
 grep -q '^INSTRUMENTATION_RESULT: recorder_media=PASS' "$results/instrumentation.txt" || status=1
 for name in report.json aac-1.m4a aac-2.m4a opus-1.ogg opus-2.ogg; do
-    adb exec-out run-as "$package" cat "cache/recorder-media/$name" > "$results/$name" || status=1
+    if ! adb exec-out run-as "$package" cat "cache/recorder-media/$name" > "$results/$name"; then
+        rm -f "$results/$name"
+        status=1
+    fi
     [[ -s "$results/$name" ]] || status=1
 done
 exit "$status"

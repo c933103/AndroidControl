@@ -15,7 +15,10 @@ android {
         applicationId "org.androidcontrol.app"
         versionCode rootProject.ext.versionCode
         versionName rootProject.ext.versionName
-        testInstrumentationRunner 'org.androidcontrol.app.regression.RuntimeRegressionInstrumentation'
+        // Build-only runner selection keeps the general regression default unchanged.
+        testInstrumentationRunner(providers.gradleProperty('recorderMediaTests').orNull == 'true'
+                ? 'org.androidcontrol.app.regression.RecorderMediaInstrumentation'
+                : 'org.androidcontrol.app.regression.RuntimeRegressionInstrumentation')
         externalNativeBuild {
             cmake {
                 arguments '-DANDROID_STL=none'

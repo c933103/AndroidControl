@@ -5,8 +5,9 @@ The independent `Recorder synthetic media` API33/API35 workflow runs only
 It installs debug/test APKs without granting permissions, uses software emulation
 without host KVM permission changes, and performs no root, settings, privileged
 service, telephone, microphone or foreground recording service operations.
-The original general runtime harness and workflow remain unchanged. The extra
-instrumentation declaration exists only in the test APK; production components,
+The original general runtime harness and workflow remain unchanged. The build-only `-PrecorderMediaTests=true` option selects the synthetic runner;
+the general regression runner remains the default. The generated instrumentation
+declaration exists only in the test APK; production components,
 signing configuration, permissions and service exposure remain unchanged.
 
 ## Eleven required cases per API
