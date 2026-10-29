@@ -7,8 +7,13 @@ import android.os.Bundle
 
 /** Independent synthetic-only runner: no permission, shell or service operations. */
 class RecorderMediaInstrumentation : Instrumentation() {
-    override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); start() }
+    override fun onCreate(arguments: Bundle?) {
+        super.onCreate(arguments)
+        sendStatus(0, Bundle().apply { putString("recorder_media_stage", "created") })
+        start()
+    }
     override fun onStart() {
+        sendStatus(0, Bundle().apply { putString("recorder_media_stage", "started") })
         val result = Bundle()
         try {
             RecorderMediaChecks.run(targetContext)

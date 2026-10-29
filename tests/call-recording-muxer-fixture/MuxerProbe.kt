@@ -11,8 +11,15 @@ fun main(args:Array<String>) {
     val c=ScrcpyAudioCodec(if(args.single().startsWith("opus-")) "opus" else "aac")
     fun config() = m.writePacket(ScrcpyClient.AudioPacket(byteArrayOf(1),true),c)
     fun sample(pts:Long=0) = m.writePacket(ScrcpyClient.AudioPacket(byteArrayOf(2),false,pts),c)
-    m.initialize(c)
+    if(args.single()=="opus-nonseekable") android.system.Os.failSeek=true
+    if(args.single()!="aac-nonseekable") m.initialize(c)
     when(args.single()) {
+        "aac-nonseekable" -> {
+            android.system.Os.failSeek=true
+            check(runCatching { m.initialize(c) }.isFailure)
+            check(MediaMuxer.constructions==0); m.close(); check(!m.finalizedSuccessfully)
+        }
+        "opus-nonseekable" -> { check(android.system.Os.seeks==0); config(); m.close() }
         "sample-success" -> { config(); sample(); m.close(); check(m.finalizedSuccessfully) }
         "no-config" -> { sample(); m.close(); check(!m.finalizedSuccessfully) }
         "no-samples" -> { config(); m.close(); check(!m.finalizedSuccessfully) }

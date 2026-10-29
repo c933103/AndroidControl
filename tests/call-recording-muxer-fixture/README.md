@@ -62,3 +62,9 @@ to the previous packet end, so shortening frame duration cannot regress granules
 Combined reset/duplicate+shorter-duration and reuse cases protect this boundary.
 `--suite opus-rebase --source /path/to/1229-muxer.kt --expect-baseline-failure`
 reproduces exactly the two Codex-reviewed reset/duplicate failures.
+
+Two seekability cases bring the total to25: AAC rejects a non-seekable descriptor
+before MediaMuxer allocation, while Opus does not seek. Installed Android allowed
+an AAC pipe at construction, so constructor success alone was insufficient; the
+service's existing provider preflight remains unchanged. The `seekability` suite
+fails exactly `aac-nonseekable` on41d77ee and passes with the boundary guard.

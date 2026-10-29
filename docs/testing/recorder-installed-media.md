@@ -85,3 +85,13 @@ to at least the previous packet end (with state cleared on close/reuse); normal
 forward capture gaps remain. Three additional tests cover reset, duplicate and
 reuse; both reset/duplicate regressions reproduce on1229b419. Installed assertions
 remain unchanged and corrected-head results are still required.
+
+The1229b419/API33 run reached and passed all10 codec roundtrip/negative cases,
+then demonstrated that AAC MediaMuxer construction accepts a pipe. The muxer now
+checks seekability before native allocation, retaining the service's existing
+earlier provider check. The installed negative assertion is unchanged. Separate
+API35 process-crash outcomes before a report remain unresolved, not accepted as
+environment-only failures. Runner stage markers and, only on failure, a200-line
+crash-buffer read filtered to the synthetic target-app logger PID provide bounded
+diagnostics; no general logs, accounts, actual audio or other app data are saved.
+Artifact bytes are validated so remote cat error text cannot masquerade as media.

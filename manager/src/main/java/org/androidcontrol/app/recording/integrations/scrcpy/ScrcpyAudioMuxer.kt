@@ -13,6 +13,8 @@
 package org.androidcontrol.app.recording.integrations.scrcpy
 
 import android.media.MediaCodec
+import android.system.Os
+import android.system.OsConstants
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import org.androidcontrol.app.recording.utils.AppLogger
@@ -95,6 +97,12 @@ class ScrcpyAudioMuxer(
         finalizedSuccessfully = false
         samplesWritten = 0
         AppLogger.d( "Initialising muxer: codec=${codec.cliKey} format=${codec.outputFormat} path='$outputDisplayPath'")
+        // MediaMuxer construction alone may accept a pipe even though MP4
+        // finalization needs seeks. Keep this invariant at the muxer boundary
+        // as well as the service's earlier provider check, before allocating it.
+        if (codec.mimeType == "audio/mp4a-latm") {
+            Os.lseek(outputFileDescriptor, 0L, OsConstants.SEEK_CUR)
+        }
         muxer = MediaMuxer(outputFileDescriptor, codec.outputFormat)
     }
 
