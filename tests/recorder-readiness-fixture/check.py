@@ -17,11 +17,15 @@ lib = args.gradle_lib.resolve()
 stdlib = lib / 'kotlin-stdlib-2.0.21.jar'
 with tempfile.TemporaryDirectory(prefix='recorder-ready-') as directory:
     classes = Path(directory) / 'classes'
+    media = fixture.parents[1] / 'manager/src/androidTest/java/org/androidcontrol/app/regression/RecorderMediaChecks.kt'
+    progress = Path(directory) / 'RecorderDecodeProgress.kt'
+    progress.write_text('package org.androidcontrol.app.regression\n' +
+                        'internal class RecorderDecodeProgress' + media.read_text().split('internal class RecorderDecodeProgress', 1)[1])
     subprocess.run(['java', '-cp', str(lib / '*'), 'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler',
                     '-no-stdlib', '-no-reflect', '-jvm-target', '17', '-classpath', str(stdlib),
-                    '-d', str(classes), str(source), *map(str, fixture.glob('*.kt'))], check=True)
+                    '-d', str(classes), str(source), str(progress), *map(str, fixture.glob('*.kt'))], check=True)
     failed = []
-    for case in ('ready', 'idle-failure', 'diagnostic'):
+    for case in ('ready', 'idle-failure', 'diagnostic', 'decode-progress'):
         result = subprocess.run(['java', '-cp', f'{classes}:{stdlib}', 'org.androidcontrol.app.regression.ProbeKt', case], capture_output=True, text=True, timeout=10)
         if result.returncode:
             failed.append(case)

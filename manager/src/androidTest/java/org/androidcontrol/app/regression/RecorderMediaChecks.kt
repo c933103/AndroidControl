@@ -257,6 +257,7 @@ object RecorderMediaChecks {
         var decoder: MediaCodec? = null
         var started = false
         var identity = "not-created"
+        val progress = RecorderDecodeProgress()
         try {
             extractor.setDataSource(file.absolutePath)
             check(extractor.trackCount == 1)
@@ -297,24 +298,39 @@ object RecorderMediaChecks {
             while (!outputEnded) {
                 check(SystemClock.elapsedRealtime() < deadline) { "Decoder timeout: $name" }
                 if (!inputEnded) {
-                    val index = decoder.dequeueInputBuffer(10000)
+                    val inputStart = SystemClock.elapsedRealtimeNanos()
+                    val index = try { decoder.dequeueInputBuffer(10000) }
+                        finally { progress.operation(0, inputStart, SystemClock.elapsedRealtimeNanos()) }
+                    if (index < 0) progress.inputUnavailable++
                     if (index >= 0) {
-                        val buffer = checkNotNull(decoder.getInputBuffer(index))
-                        val size = extractor.readSampleData(buffer, 0)
-                        if (size < 0) {
-                            decoder.queueInputBuffer(index, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); inputEnded = true
-                        } else {
-                            decoder.queueInputBuffer(index, 0, size, extractor.sampleTime, 0); extractor.advance()
-                        }
+                        val queueStart = SystemClock.elapsedRealtimeNanos()
+                        try {
+                            val buffer = checkNotNull(decoder.getInputBuffer(index))
+                            val size = extractor.readSampleData(buffer, 0)
+                            if (size < 0) {
+                                decoder.queueInputBuffer(index, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); inputEnded = true
+                                progress.inputEos = true
+                            } else {
+                                decoder.queueInputBuffer(index, 0, size, extractor.sampleTime, 0)
+                                progress.queuedInputs++; progress.queuedBytes += size
+                                extractor.advance()
+                            }
+                        } finally { progress.operation(1, queueStart, SystemClock.elapsedRealtimeNanos()) }
                     }
                 }
-                val index = decoder.dequeueOutputBuffer(info, 10000)
+                val outputStart = SystemClock.elapsedRealtimeNanos()
+                val index = try { decoder.dequeueOutputBuffer(info, 10000) }
+                    finally { progress.operation(2, outputStart, SystemClock.elapsedRealtimeNanos()) }
+                if (index == MediaCodec.INFO_TRY_AGAIN_LATER) progress.outputUnavailable++
                 if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                     val decodedFormat = decoder.outputFormat
                     check(decodedFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT) == CHANNELS)
                     check(decodedFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE) == RATE)
                     if (decodedFormat.containsKey(MediaFormat.KEY_PCM_ENCODING)) check(decodedFormat.getInteger(MediaFormat.KEY_PCM_ENCODING) == AudioFormat.ENCODING_PCM_16BIT)
                 } else if (index >= 0) {
+                    progress.outputBuffers++
+                    progress.outputEos = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+                    val processingStart = SystemClock.elapsedRealtimeNanos()
                     try {
                         if (info.size > 0) {
                             val buffer = checkNotNull(decoder.getOutputBuffer(index)).duplicate().order(ByteOrder.LITTLE_ENDIAN)
@@ -328,7 +344,13 @@ object RecorderMediaChecks {
                             }
                         }
                         outputEnded = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
-                    } finally { decoder.releaseOutputBuffer(index, false) }
+                    } finally {
+                        progress.outputFrames = samples
+                        progress.operation(3, processingStart, SystemClock.elapsedRealtimeNanos())
+                        val releaseStart = SystemClock.elapsedRealtimeNanos()
+                        try { decoder.releaseOutputBuffer(index, false) }
+                        finally { progress.operation(4, releaseStart, SystemClock.elapsedRealtimeNanos()) }
+                    }
                 }
             }
             check(samples in 36_000L..62_400L) { "Decoded duration out of bounds: $samples" }
@@ -339,6 +361,12 @@ object RecorderMediaChecks {
             }
             return JSONObject().put("decoder", name).put("containerSamples", timestamps.size)
                 .put("timestampSpanUs", span).put("decodedFrames", samples).put("rms", rms).put("toneAmplitude", amplitude)
+        } catch (failure: Throwable) {
+            // One constant-size snapshot, outside the media loop; diagnostics cannot replace the cause.
+            progress.onFailure { snapshot ->
+                evidence.put("decoderFailure", JSONObject(snapshot).put("codec", identity).put("file", file.name))
+            }
+            throw failure
         } finally {
             if (started) {
                 checkpoint("decoder-stop-request", identity)
@@ -362,4 +390,36 @@ object RecorderMediaChecks {
 
     private fun sha256(file: File): String = MessageDigest.getInstance("SHA-256").digest(file.readBytes())
         .joinToString("") { "%02x".format(it) }
+}
+
+/** Constant-size synthetic decoder failure counters; no I/O or media data retained. */
+internal class RecorderDecodeProgress {
+    var queuedInputs = 0L
+    var queuedBytes = 0L
+    var inputEos = false
+    var outputBuffers = 0L
+    var outputFrames = 0L
+    var outputEos = false
+    var inputUnavailable = 0L
+    var outputUnavailable = 0L
+    private val totalNs = LongArray(5)
+    private val maxNs = LongArray(5)
+    fun operation(index: Int, startNs: Long, endNs: Long) {
+        val elapsed = (endNs - startNs).coerceAtLeast(0)
+        totalNs[index] += elapsed
+        maxNs[index] = maxOf(maxNs[index], elapsed)
+    }
+    fun onFailure(publish: (Map<String, Any>) -> Unit) {
+        runCatching {
+            val operations = listOf("inputDequeue", "sampleReadQueue", "outputDequeue", "pcmProcessing", "outputRelease")
+            publish(mapOf(
+                "queuedInputs" to queuedInputs, "queuedBytes" to queuedBytes, "inputEos" to inputEos,
+                "outputBuffers" to outputBuffers, "outputFrames" to outputFrames, "outputEos" to outputEos,
+                "inputUnavailable" to inputUnavailable, "outputUnavailable" to outputUnavailable,
+                "operations" to operations.mapIndexed { index, name ->
+                    mapOf("name" to name, "totalNs" to totalNs[index], "maxNs" to maxNs[index])
+                }
+            ))
+        }
+    }
 }
