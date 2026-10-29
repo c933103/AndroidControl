@@ -36,10 +36,15 @@ jobs:
           python3 tests/test-recorder-crash-filter.py
           python3 tests/test-recorder-exit-info.py
           python3 tests/test-recorder-acceleration.py
+          python3 tests/test-recorder-anr-request.py
       - name: Accept existing project Android SDK licenses
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
       - name: Build unchanged debug signing configuration
         run: ./gradlew -PrecorderMediaTests=true :manager:assembleDebug :manager:assembleDebugAndroidTest
+      - name: Check target-only ANR thread selector
+        run: |
+          gradle_lib=$(find "$HOME/.gradle/wrapper/dists" -type d -path '*/gradle-8.14/lib' -print -quit)
+          python3 tests/recorder-anr-fixture/check.py --gradle-lib "$gradle_lib"
       - name: Synthetic media only, without permission or security changes
         uses: reactivecircus/android-emulator-runner@v2
         with:

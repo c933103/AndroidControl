@@ -29,8 +29,13 @@ python3 -c 'import subprocess, sys
 try:
     result = subprocess.run(sys.argv[1:], timeout=180)
 except subprocess.TimeoutExpired:
-    sys.exit(124)
-sys.exit(result.returncode)
+    code, timed_out = 124, True
+else:
+    code, timed_out = result.returncode, False
+import json
+from pathlib import Path
+Path("recorder-media-results/media-command.json").write_text(json.dumps(dict(exitCode=code, timedOut=timed_out)) + "\n")
+sys.exit(code)
 ' adb shell am instrument -w "$package.test/org.androidcontrol.app.regression.RecorderMediaInstrumentation" 2>&1 | tee "$results/instrumentation.txt" || status=1
 grep -q '^INSTRUMENTATION_RESULT: recorder_media=PASS' "$results/instrumentation.txt" || status=1
 if [[ "$status" != 0 ]]; then
@@ -72,4 +77,8 @@ for name in ('report.json', 'aac-1.m4a', 'aac-2.m4a', 'opus-1.ogg', 'opus-2.ogg'
         valid = False
 raise SystemExit(0 if valid else 1)
 VALIDATE
+if [[ "$status" != 0 ]]; then
+    # The original command status and media artifacts are already persisted.
+    python3 tests/collect-recorder-anr.py || true
+fi
 exit "$status"

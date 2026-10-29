@@ -196,3 +196,38 @@ are untouched.17 synthetic controls cover complete success, unavailable/partial
 output and fail-closed gate behavior. API33 remains explicitly software and
 unchanged. A capability pass establishes configuration, not performance or codec
 recovery; actual11-case media results remain required.
+
+## Exact target ANR stack continuation
+
+At e630e0a, both API35 receipts verified HVF15.7 and explicit `-accel on`, yet
+both failed with exact target PID/time-bound reason6 ANR during AAC encoding.
+This did not cure runtime and is distinct from the earlier CCodec allocation
+watchdog. API35 cases completed:0; no encoded/container output was produced.
+
+Thread inspection found no direct media-on-main dispatch: onCreate emits its
+marker and calls start; onStart runs synchronous media checks. Official
+[Instrumentation source](https://android.googlesource.com/platform/frameworks/base/+/android-15.0.0_r1/core/java/android/app/Instrumentation.java)
+shows start creates the separate InstrumentationThread that invokes onStart.
+Application startup remains unchanged. A blocked-main explanation needs a trace,
+not an assumption from the synchronous media loop.
+
+After original command status, crash/codec/exit evidence and media artifacts are
+saved, a matching ANR can invoke the same test runner once in diagnostic-only
+mode (60s bound, no media rerun). It calls getHistoricalProcessExitReasons for
+its own exact package/PID, then requires exact exit timestamp and ANR reason.
+[ActivityManager source](https://android.googlesource.com/platform/frameworks/base/+/android-15.0.0_r1/core/java/android/app/ActivityManager.java)
+permits own-UID queries without DUMP; no permission is added.
+[ApplicationExitInfo](https://developer.android.com/reference/android/app/ApplicationExitInfo)
+provides getTraceInputStream, which may be null if unavailable/overwritten.
+AOSP AppExitInfoTracker stores the target ANR trace range rather than requiring
+access to the global ANR directory.
+
+No raw trace is written. A512KiB in-memory read bound rejects oversized input;
+the exact PID block and exact Cmd line must match. Only main and this runner's
+InstrumentationThread headers/stack/lock metadata survive, maximum2 threads,
+100 lines each,1024 characters per line. Other processes/threads, free text and
+headers are excluded. The report preserves exact PID/time/reason/status binding.
+Eleven pure Kotlin selector controls and11 request-identity/time/reason controls
+cover positive and unrelated/stale/oversized inputs. Original media-command
+exitCode/timedOut is now recorded before diagnostics, with the same180s limit;
+the shell still exits with the original failure. Missing trace is not acceptance.
