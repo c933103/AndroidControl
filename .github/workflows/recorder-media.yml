@@ -1,7 +1,7 @@
 name: Recorder synthetic media
 on:
   push:
-    branches: [master, 'feature/**']
+    branches: [master, 'feature/**', 'diagnostic/recorder-aac-decode-832ac432']
   pull_request:
     branches: [master]
   workflow_dispatch:
@@ -12,22 +12,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - api: 33
-            runner: ubuntu-latest
-            acceleration-options: ''
-            application: manager
-            artifact-suffix: ''
-          - api: 35
-            runner: macos-15-intel
-            acceleration-options: '-accel on'
-            application: manager
-            artifact-suffix: ''
-          - api: 35
-            runner: macos-15-intel
-            acceleration-options: '-accel on'
-            application: control
-            artifact-suffix: '-application-control'
+        include: >-
+          ${{ fromJSON(github.ref == 'refs/heads/diagnostic/recorder-aac-decode-832ac432' &&
+              '[{"api":35,"runner":"macos-15-intel","acceleration-options":"-accel on","application":"manager","artifact-suffix":"-decoder-only-probe","mode":"decoder-only"}]' ||
+              '[{"api":33,"runner":"ubuntu-latest","acceleration-options":"","application":"manager","artifact-suffix":"","mode":"integration"},{"api":35,"runner":"macos-15-intel","acceleration-options":"-accel on","application":"manager","artifact-suffix":"","mode":"integration"},{"api":35,"runner":"macos-15-intel","acceleration-options":"-accel on","application":"control","artifact-suffix":"-application-control","mode":"integration"}]') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
@@ -69,7 +57,7 @@ jobs:
           emulator-boot-timeout: 1200
           pre-emulator-launch-script: python3 tests/check-recorder-acceleration.py ${{ matrix.api }}
           emulator-options: ${{ matrix.acceleration-options }} -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
-          script: bash tests/run-recorder-media-checks.sh ${{ matrix.application }}
+          script: bash tests/run-recorder-media-checks.sh ${{ matrix.application }} ${{ matrix.mode }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

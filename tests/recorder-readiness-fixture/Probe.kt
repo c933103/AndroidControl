@@ -43,10 +43,23 @@ fun main(args: Array<String>) {
     val bundle = Bundle()
     if (args.single() == "diagnostic") bundle.putString("anr_pid", "123")
     if (args.single() == "idle-failure") ProbeState.rejectIdle = true
+    if (args.single() == "decoder-only") bundle.putString("recorder_mode", "decoder-only")
+    if (args.single() == "invalid-mode") {
+        bundle.putString("recorder_mode", "not-allowed")
+        check(runCatching { runner.onCreate(bundle) }.isFailure)
+        check(ProbeState.events.isEmpty())
+        println("PASS invalid-mode rejected before start")
+        return
+    }
     runner.onCreate(bundle)
     check("media" !in ProbeState.events && "waitForIdleSync" !in ProbeState.events)
     runner.onStart()
     when (args.single()) {
+        "decoder-only" -> {
+            check(ProbeState.result?.getString("recorder_decoder_probe") == "PASS")
+            check(ProbeState.result?.getString("recorder_media") == null)
+            check(ProbeState.events.count { it == "decoder-probe" } == 1 && "media" !in ProbeState.events)
+        }
         "ready" -> {
             check(ProbeState.instrumentationClass == RecorderMediaInstrumentation::class.java.name)
             check(ProbeState.result?.getString("recorder_media") == "PASS") { ProbeState.events.toString() }

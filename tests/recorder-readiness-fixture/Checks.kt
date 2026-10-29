@@ -5,6 +5,9 @@ import android.app.ProbeState
 import android.content.Context
 import android.os.Bundle
 object RecorderMediaChecks {
+    fun runDecoderProbe(context: Context, fixtureContext: Context) {
+        check(ProbeState.idle); ProbeState.events.add("decoder-probe")
+    }
     fun run(context: Context) {
         ProbeState.events.add("media")
         check(ProbeState.idle) { "Media raced application startup" }

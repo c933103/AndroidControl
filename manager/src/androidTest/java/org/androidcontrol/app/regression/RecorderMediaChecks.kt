@@ -51,7 +51,7 @@ object RecorderMediaChecks {
     fun run(context: Context) {
         val directory = File(context.cacheDir, "recorder-media").apply { mkdirs() }
         directory.listFiles()?.forEach { check(it.delete()) }
-        val report = JSONObject().put("sdk", android.os.Build.VERSION.SDK_INT)
+        val report = JSONObject().put("mode", "integration").put("sdk", android.os.Build.VERSION.SDK_INT)
             .put("input", "generated 440 Hz PCM, 48000 Hz stereo, one second")
             .put("scope", "installed MediaCodec, production parser/muxer, pipes; no call, microphone, service/Binder or physical-device acceptance")
         report.put("pid", android.os.Process.myPid()).put("lifecycle", JSONArray())
@@ -92,6 +92,36 @@ object RecorderMediaChecks {
             throw failure
         } finally {
             File(directory, "report.json").writeText(report.toString(2))
+        }
+    }
+
+    /** Diagnostic stage isolation; never represents the eleven-case integration suite. */
+    fun runDecoderProbe(context: Context, fixtureContext: Context) {
+        val directory = File(context.cacheDir, "recorder-media").apply { mkdirs() }
+        directory.listFiles()?.forEach { check(it.delete()) }
+        val cases = JSONArray()
+        val report = JSONObject().put("mode", "decoder-only").put("probePassed", false)
+            .put("sdk", android.os.Build.VERSION.SDK_INT).put("pid", android.os.Process.myPid())
+            .put("scope", "one pinned synthetic AAC decoder probe; not eleven-case integration acceptance")
+            .put("lifecycle", JSONArray()).put("cases", cases)
+        evidence = report
+        evidenceFile = File(directory, "report.json")
+        try {
+            val bytes = fixtureContext.assets.open("recorder/synthetic-aac-440hz.m4a").use { it.readBytes() }
+            check(bytes.size == 7158) { "Unexpected synthetic fixture size" }
+            val file = File(directory, "decoder-input.m4a").apply { writeBytes(bytes) }
+            check(sha256(file) == "a917896903bc7944cbb6b7c0eab6743c1fe6f99caefebd27d569ea79677d6bd1") {
+                "Synthetic fixture hash mismatch"
+            }
+            cases.put(decode(ScrcpyAudioCodec.AAC, file).put("case", "aac-decoder-probe")
+                .put("sha256", sha256(file)))
+            report.put("probePassed", true)
+        } catch (failure: Throwable) {
+            report.put("failure", failure.stackTraceToString())
+            throw failure
+        } finally {
+            // A diagnostic write cannot replace the original decoder failure.
+            runCatching { evidenceFile.writeText(report.toString(2)) }
         }
     }
 
