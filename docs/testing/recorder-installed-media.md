@@ -78,3 +78,10 @@ AAC timing remains unchanged. Seven new host cases reproduce the old failure and
 verify all TOC duration families, counts and invalid headers. The installed
 monotonicity, duration, tone and cleanup assertions are not relaxed.
 Corrected installed output remains pending until its own exact-head run passes.
+
+Codex subsequently found that a reset/duplicate capture PTS together with a
+shorter Opus packet could regress the new end granule. Opus starts are now rebased
+to at least the previous packet end (with state cleared on close/reuse); normal
+forward capture gaps remain. Three additional tests cover reset, duplicate and
+reuse; both reset/duplicate regressions reproduce on1229b419. Installed assertions
+remain unchanged and corrected-head results are still required.

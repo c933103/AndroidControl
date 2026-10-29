@@ -45,7 +45,7 @@ integration and release gates remain separate.
 
 ## Installed-discovered Opus end-granule correction (29 October)
 
-Seven additional cases (20 total) cover Opus packet-end timestamps, every TOC
+Ten additional cases (23 total) cover Opus packet-end timestamps, every TOC
 configuration's frame duration, multi-frame packet counts and invalid/empty
 count/duration rejection. Existing thirteen AAC/state/timestamp checks are unchanged.
 Unlike MPEG4Writer, Android OggWriter converts the supplied timestamp directly
@@ -54,5 +54,11 @@ must include its duration; a zero first granule is invalid for a non-EOS page.
 The correction adds the independently decoded RFC6716 TOC duration only for Opus.
 
 Sensitivity control: `--suite opus --source /path/to/eb557-muxer.kt
---expect-baseline-failure` must fail exactly all seven added cases. No historical
+--expect-baseline-failure` must fail exactly all ten added cases. No historical
 source is downloaded by normal CI.
+
+The packet-end state also rebases a reset/duplicate or overlapping Opus start
+to the previous packet end, so shortening frame duration cannot regress granules.
+Combined reset/duplicate+shorter-duration and reuse cases protect this boundary.
+`--suite opus-rebase --source /path/to/1229-muxer.kt --expect-baseline-failure`
+reproduces exactly the two Codex-reviewed reset/duplicate failures.

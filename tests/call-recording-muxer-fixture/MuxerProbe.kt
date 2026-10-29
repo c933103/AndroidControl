@@ -49,6 +49,21 @@ fun main(args:Array<String>) {
             packets.forEachIndexed { index,data -> m.writePacket(ScrcpyClient.AudioPacket(data,false,index*20_000L),c) }
             check(MediaMuxer.timestamps==listOf(20_000L,40_000L,70_000L)); m.close()
         }
+        "opus-reset-shorter", "opus-duplicate-shorter" -> {
+            config()
+            m.writePacket(ScrcpyClient.AudioPacket(byteArrayOf(24,1),false,100_000),c) //60ms
+            val next=if(args.single()=="opus-reset-shorter") 10_000L else 100_000L
+            m.writePacket(ScrcpyClient.AudioPacket(byteArrayOf(8,1),false,next),c) //20ms
+            m.writePacket(ScrcpyClient.AudioPacket(byteArrayOf(8,1),false,next+20_000),c)
+            check(MediaMuxer.timestamps==listOf(60_000L,80_000L,100_000L)) { "Rebased Opus end granules: ${MediaMuxer.timestamps}" }
+            m.close()
+        }
+        "opus-reuse-end" -> {
+            config(); m.writePacket(ScrcpyClient.AudioPacket(byteArrayOf(24,1),false,100_000),c)
+            m.close(); m.initialize(c); config()
+            m.writePacket(ScrcpyClient.AudioPacket(byteArrayOf(8,1),false,500_000),c)
+            check(MediaMuxer.timestamps==listOf(60_000L,20_000L)); m.close()
+        }
         "opus-empty-packet", "opus-missing-count", "opus-zero-count", "opus-oversize-duration" -> {
             config()
             val data=when(args.single()) {

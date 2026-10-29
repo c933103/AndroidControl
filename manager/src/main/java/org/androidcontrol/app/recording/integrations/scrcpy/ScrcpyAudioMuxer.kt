@@ -77,6 +77,9 @@ class ScrcpyAudioMuxer(
     /** Previous normalized output timestamp; kept strictly increasing. */
     private var lastWrittenPtsUs: Long = -1L
 
+    /** End of the previous Opus packet, used to rebase overlapping/reset input. */
+    private var lastOpusEndPtsUs: Long = -1L
+
     /**
      * Creates the [MediaMuxer] instance for the container format matching [codec].
      * Safe to call multiple times; subsequent calls after the first are ignored.
@@ -132,21 +135,27 @@ class ScrcpyAudioMuxer(
             Math.addExact(lastWrittenPtsUs, delta)
         }
 
+        // Opus granules describe cumulative decoded samples. A reset/duplicate
+        // (or overlapping capture start) cannot move the next packet before the
+        // previous packet's end, particularly when its duration becomes shorter.
+        val isOpus = codec.mimeType == "audio/opus"
+        val sampleStartPtsUs = if (isOpus) maxOf(normalizedPtsUs, lastOpusEndPtsUs) else normalizedPtsUs
         val bufferInfo = MediaCodec.BufferInfo().apply {
             offset             = 0
             size               = packet.data.size
             // Android OggWriter interprets this value as the end granule, not
             // the start PTS used by MPEG4Writer. Starting at zero writes an
             // invalid first audio-page granule and loses one Opus packet of timing.
-            presentationTimeUs = if (codec.mimeType == "audio/opus") {
-                Math.addExact(normalizedPtsUs, opusPacketDurationUs(packet.data))
-            } else normalizedPtsUs
+            presentationTimeUs = if (isOpus) {
+                Math.addExact(sampleStartPtsUs, opusPacketDurationUs(packet.data))
+            } else sampleStartPtsUs
         }
 
         // ByteBuffer.wrap() creates a view over the existing array with no copy.
         checkNotNull(muxer).writeSampleData(audioTrackIndex, ByteBuffer.wrap(packet.data), bufferInfo)
         lastPacketPtsUs = packet.pts
-        lastWrittenPtsUs = normalizedPtsUs
+        lastWrittenPtsUs = sampleStartPtsUs
+        if (isOpus) lastOpusEndPtsUs = bufferInfo.presentationTimeUs
         samplesWritten++
     }
 
@@ -200,6 +209,7 @@ class ScrcpyAudioMuxer(
         audioTrackIndex        = -1
         lastPacketPtsUs        = -1L
         lastWrittenPtsUs       = -1L
+        lastOpusEndPtsUs       = -1L
         AppLogger.d( "Muxer closed")
     }
 
