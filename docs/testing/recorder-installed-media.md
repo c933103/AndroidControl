@@ -59,3 +59,22 @@ telephony capture, two-sided audio, routing/SIM/OEM compatibility, original-sign
 update continuity, or distribution/privacy/license release acceptance. Those
 existing gates remain separate and open. Generated PCM bypasses microphone and
 telephony hardware completely.
+
+## First installed evidence and production correction
+
+Head eb5578025d, push run40809433969/API33, successfully ran both real AAC
+roundtrips (47104 decoded frames, 960000us timestamp span, recovered tone amplitude
+5723) and AAC truncated/empty/mismatch checks. Opus then failed the unchanged
+strict timestamp assertion: Android returned `[0, 0, 13500, 33500, ...]`.
+The preserved OGG artifact has a zero first audio-page granule; ffprobe independently
+reported first timestamps -26500us and -6500us. This was not counted as acceptance.
+
+[AOSP Android13 OggWriter](https://android.googlesource.com/platform/frameworks/av/+/android-13.0.0_r1/media/libstagefright/OggWriter.cpp)
+uses the supplied timestamp as a packet-end granule. [RFC7845 §4.5](https://www.rfc-editor.org/rfc/rfc7845.html#section-4.5)
+requires the first non-EOS audio-page granule to include its decoded samples.
+The muxer now adds Opus packet duration derived independently from the TOC/count
+fields in [RFC6716 §3](https://www.rfc-editor.org/rfc/rfc6716.html#section-3).
+AAC timing remains unchanged. Seven new host cases reproduce the old failure and
+verify all TOC duration families, counts and invalid headers. The installed
+monotonicity, duration, tone and cleanup assertions are not relaxed.
+Corrected installed output remains pending until its own exact-head run passes.

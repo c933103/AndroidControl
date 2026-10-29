@@ -42,3 +42,17 @@ session, so the reuse correction is a muxer-contract fix, not a demonstrated
 service reuse path. Capture timing on actual telephony sources remains subject
 to the existing physical-device acceptance matrix. Installed, physical-device,
 integration and release gates remain separate.
+
+## Installed-discovered Opus end-granule correction (29 October)
+
+Seven additional cases (20 total) cover Opus packet-end timestamps, every TOC
+configuration's frame duration, multi-frame packet counts and invalid/empty
+count/duration rejection. Existing thirteen AAC/state/timestamp checks are unchanged.
+Unlike MPEG4Writer, Android OggWriter converts the supplied timestamp directly
+into the page's cumulative end granule. The first Opus audio packet therefore
+must include its duration; a zero first granule is invalid for a non-EOS page.
+The correction adds the independently decoded RFC6716 TOC duration only for Opus.
+
+Sensitivity control: `--suite opus --source /path/to/eb557-muxer.kt
+--expect-baseline-failure` must fail exactly all seven added cases. No historical
+source is downloaded by normal CI.

@@ -135,7 +135,12 @@ class ScrcpyAudioMuxer(
         val bufferInfo = MediaCodec.BufferInfo().apply {
             offset             = 0
             size               = packet.data.size
-            presentationTimeUs = normalizedPtsUs
+            // Android OggWriter interprets this value as the end granule, not
+            // the start PTS used by MPEG4Writer. Starting at zero writes an
+            // invalid first audio-page granule and loses one Opus packet of timing.
+            presentationTimeUs = if (codec.mimeType == "audio/opus") {
+                Math.addExact(normalizedPtsUs, opusPacketDurationUs(packet.data))
+            } else normalizedPtsUs
         }
 
         // ByteBuffer.wrap() creates a view over the existing array with no copy.
@@ -143,6 +148,29 @@ class ScrcpyAudioMuxer(
         lastPacketPtsUs = packet.pts
         lastWrittenPtsUs = normalizedPtsUs
         samplesWritten++
+    }
+
+    /** Independently implements RFC 6716 section 3 TOC duration/count fields. */
+    private fun opusPacketDurationUs(data: ByteArray): Long {
+        require(data.isNotEmpty()) { "Empty Opus packet" }
+        val toc = data[0].toInt() and 0xff
+        val configuration = toc ushr 3
+        val frameUs = when {
+            configuration < 12 -> longArrayOf(10_000, 20_000, 40_000, 60_000)[configuration % 4]
+            configuration < 16 -> if (configuration % 2 == 0) 10_000L else 20_000L
+            else -> 2_500L shl (configuration % 4)
+        }
+        val count = when (toc and 3) {
+            0 -> 1
+            1, 2 -> 2
+            else -> {
+                require(data.size >= 2) { "Missing Opus frame count" }
+                data[1].toInt() and 0x3f
+            }
+        }
+        val durationUs = frameUs * count
+        require(count > 0 && durationUs <= 120_000) { "Invalid Opus packet duration" }
+        return durationUs
     }
 
     /**
