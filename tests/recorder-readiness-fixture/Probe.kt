@@ -13,6 +13,7 @@ fun main(args: Array<String>) {
     runner.onStart()
     when (args.single()) {
         "ready" -> {
+            check(ProbeState.instrumentationClass == RecorderMediaInstrumentation::class.java.name)
             check(ProbeState.result?.getString("recorder_media") == "PASS") { ProbeState.events.toString() }
             check(ProbeState.events.indexOf("waiting-for-application-idle") < ProbeState.events.indexOf("waitForIdleSync"))
             check(ProbeState.events.indexOf("waitForIdleSync") < ProbeState.events.indexOf("application-idle"))

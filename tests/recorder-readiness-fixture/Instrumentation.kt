@@ -9,17 +9,20 @@ object ProbeState {
     var rejectIdle = false
     var result: Bundle? = null
     var applicationClassRequested: String? = null
+    var instrumentationClass: String? = null
 }
 open class Instrumentation {
     val targetContext = Context()
     open fun newApplication(loader: ClassLoader, className: String, context: Context): Application {
         ProbeState.applicationClassRequested = className
-        return Application()
+        return loader.loadClass(className).getDeclaredConstructor().newInstance() as Application
     }
     open fun onCreate(arguments: Bundle?) {}
     open fun onStart() {}
     fun start() { ProbeState.events.add("start-thread") }
-    fun sendStatus(code: Int, result: Bundle) { result.getString("recorder_media_stage")?.let { ProbeState.events.add(it) } }
+    fun sendStatus(code: Int, result: Bundle) {
+        result.getString("recorder_instrumentation_class")?.let { ProbeState.instrumentationClass = it }
+        result.getString("recorder_media_stage")?.let { ProbeState.events.add(it) } }
     fun waitForIdleSync() {
         ProbeState.events.add("waitForIdleSync")
         check(!ProbeState.rejectIdle) { "Synthetic idle failure" }

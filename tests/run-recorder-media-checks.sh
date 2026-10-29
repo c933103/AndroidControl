@@ -45,7 +45,7 @@ Path("recorder-media-results/media-command.json").write_text(json.dumps(dict(exi
 sys.exit(code)
 ' adb shell am instrument -w "$runner" 2>&1 | tee "$results/instrumentation.txt" || status=1
 grep -q '^INSTRUMENTATION_RESULT: recorder_media=PASS' "$results/instrumentation.txt" || status=1
-if [[ "$application_mode" == control ]]; then expected_application=android.app.Application
+if [[ "$application_mode" == control ]]; then expected_application=org.androidcontrol.app.regression.RecorderControlApplication
 else expected_application=org.androidcontrol.app.ShizukuApplication; fi
 grep -Fxq "INSTRUMENTATION_STATUS: recorder_application_class=$expected_application" "$results/instrumentation.txt" || status=1
 if [[ "$status" != 0 ]]; then

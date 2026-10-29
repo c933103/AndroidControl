@@ -9,8 +9,8 @@ import android.content.Context
 class RecorderControlInstrumentation : RecorderMediaInstrumentation() {
     override fun newApplication(loader: ClassLoader, className: String, context: Context): Application {
         check(className == "org.androidcontrol.app.ShizukuApplication")
-        return super.newApplication(loader, Application::class.java.name, context).also {
-            check(it.javaClass == Application::class.java)
+        return super.newApplication(RecorderControlApplication::class.java.classLoader, RecorderControlApplication::class.java.name, context).also {
+            check(it.javaClass == RecorderControlApplication::class.java)
         }
     }
 }

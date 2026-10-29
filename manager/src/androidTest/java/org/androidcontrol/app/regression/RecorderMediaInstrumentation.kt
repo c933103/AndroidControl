@@ -28,7 +28,7 @@ open class RecorderMediaInstrumentation : Instrumentation() {
             sendStatus(0, Bundle().apply { putString("recorder_media_stage", "application-idle") })
             sendStatus(0, Bundle().apply {
                 putString("recorder_application_class", targetContext.applicationContext.javaClass.name)
-                putString("recorder_instrumentation_class", javaClass.name)
+                putString("recorder_instrumentation_class", this@RecorderMediaInstrumentation.javaClass.name)
             })
             RecorderMediaChecks.run(targetContext)
             result.putString("recorder_media", "PASS")

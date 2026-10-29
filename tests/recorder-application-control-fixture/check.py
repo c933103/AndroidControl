@@ -18,6 +18,7 @@ with tempfile.TemporaryDirectory(prefix='recorder-control-') as directory:
     classes = Path(directory) / 'classes'
     subprocess.run(['java', '-cp', str(lib / '*'), 'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler',
         '-no-stdlib', '-no-reflect', '-jvm-target', '17', '-classpath', str(stdlib), '-d', str(classes),
-        str(source / 'RecorderMediaInstrumentation.kt'), str(source / 'RecorderControlInstrumentation.kt'),
+        str(source / 'RecorderMediaInstrumentation.kt'), str(source / 'RecorderControlInstrumentation.kt'), str(source / 'RecorderControlApplication.kt'),
+        str(fixture / 'ShizukuSettings.kt'),
         str(fixture / 'Probe.kt'), *[str(p) for p in stubs.glob('*.kt') if p.name != 'Probe.kt']], check=True)
     subprocess.run(['java', '-cp', f'{classes}:{stdlib}', 'org.androidcontrol.app.regression.ProbeKt'], check=True, timeout=10)
