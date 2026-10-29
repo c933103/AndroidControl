@@ -8,6 +8,7 @@ import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.os.Debug
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import org.androidcontrol.app.recording.integrations.scrcpy.ScrcpyAudioCodec
@@ -325,63 +326,72 @@ object RecorderMediaChecks {
             var cosine = 0.0
             val info = MediaCodec.BufferInfo()
             val deadline = SystemClock.elapsedRealtime() + TIMEOUT_MS
-            while (!outputEnded) {
-                check(SystemClock.elapsedRealtime() < deadline) { "Decoder timeout: $name" }
-                if (!inputEnded) {
-                    val inputStart = SystemClock.elapsedRealtimeNanos()
-                    val index = try { decoder.dequeueInputBuffer(10000) }
-                        finally { progress.operation(0, inputStart, SystemClock.elapsedRealtimeNanos()) }
-                    if (index < 0) progress.inputUnavailable++
-                    if (index >= 0) {
-                        val queueStart = SystemClock.elapsedRealtimeNanos()
-                        try {
-                            val buffer = checkNotNull(decoder.getInputBuffer(index))
-                            val size = extractor.readSampleData(buffer, 0)
-                            if (size < 0) {
-                                decoder.queueInputBuffer(index, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); inputEnded = true
-                                progress.inputEos = true
-                            } else {
-                                decoder.queueInputBuffer(index, 0, size, extractor.sampleTime, 0)
-                                progress.queuedInputs++; progress.queuedBytes += size
-                                extractor.advance()
-                            }
-                        } finally { progress.operation(1, queueStart, SystemClock.elapsedRealtimeNanos()) }
-                    }
-                }
-                val outputStart = SystemClock.elapsedRealtimeNanos()
-                val index = try { decoder.dequeueOutputBuffer(info, 10000) }
-                    finally { progress.operation(2, outputStart, SystemClock.elapsedRealtimeNanos()) }
-                if (index == MediaCodec.INFO_TRY_AGAIN_LATER) progress.outputUnavailable++
-                if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                    val decodedFormat = decoder.outputFormat
-                    check(decodedFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT) == CHANNELS)
-                    check(decodedFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE) == RATE)
-                    if (decodedFormat.containsKey(MediaFormat.KEY_PCM_ENCODING)) check(decodedFormat.getInteger(MediaFormat.KEY_PCM_ENCODING) == AudioFormat.ENCODING_PCM_16BIT)
-                } else if (index >= 0) {
-                    progress.outputBuffers++
-                    progress.outputEos = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
-                    val processingStart = SystemClock.elapsedRealtimeNanos()
-                    try {
-                        if (info.size > 0) {
-                            val buffer = checkNotNull(decoder.getOutputBuffer(index)).duplicate().order(ByteOrder.LITTLE_ENDIAN)
-                            buffer.position(info.offset); buffer.limit(info.offset + info.size)
-                            check(info.size % (CHANNELS * 2) == 0)
-                            while (buffer.remaining() >= CHANNELS * 2) {
-                                val value = buffer.short.toDouble(); buffer.short
-                                val angle = 2 * PI * 440 * samples / RATE
-                                square += value * value; sine += value * sin(angle); cosine += value * cos(angle)
-                                samples++
-                            }
+            val callerThreadId = Thread.currentThread().id
+            val loopWallStart = SystemClock.elapsedRealtimeNanos()
+            val loopCpuStart = runCatching { Debug.threadCpuTimeNanos() }.getOrDefault(-1L)
+            try {
+                while (!outputEnded) {
+                    check(SystemClock.elapsedRealtime() < deadline) { "Decoder timeout: $name" }
+                    if (!inputEnded) {
+                        val inputStart = SystemClock.elapsedRealtimeNanos()
+                        val index = try { decoder.dequeueInputBuffer(10000) }
+                            finally { progress.operation(0, inputStart, SystemClock.elapsedRealtimeNanos()) }
+                        if (index < 0) progress.inputUnavailable++
+                        if (index >= 0) {
+                            val queueStart = SystemClock.elapsedRealtimeNanos()
+                            try {
+                                val buffer = checkNotNull(decoder.getInputBuffer(index))
+                                val size = extractor.readSampleData(buffer, 0)
+                                if (size < 0) {
+                                    decoder.queueInputBuffer(index, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); inputEnded = true
+                                    progress.inputEos = true
+                                } else {
+                                    decoder.queueInputBuffer(index, 0, size, extractor.sampleTime, 0)
+                                    progress.queuedInputs++; progress.queuedBytes += size
+                                    extractor.advance()
+                                }
+                            } finally { progress.operation(1, queueStart, SystemClock.elapsedRealtimeNanos()) }
                         }
-                        outputEnded = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
-                    } finally {
-                        progress.outputFrames = samples
-                        progress.operation(3, processingStart, SystemClock.elapsedRealtimeNanos())
-                        val releaseStart = SystemClock.elapsedRealtimeNanos()
-                        try { decoder.releaseOutputBuffer(index, false) }
-                        finally { progress.operation(4, releaseStart, SystemClock.elapsedRealtimeNanos()) }
+                    }
+                    val outputStart = SystemClock.elapsedRealtimeNanos()
+                    val index = try { decoder.dequeueOutputBuffer(info, 10000) }
+                        finally { progress.operation(2, outputStart, SystemClock.elapsedRealtimeNanos()) }
+                    if (index == MediaCodec.INFO_TRY_AGAIN_LATER) progress.outputUnavailable++
+                    if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                        val decodedFormat = decoder.outputFormat
+                        check(decodedFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT) == CHANNELS)
+                        check(decodedFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE) == RATE)
+                        if (decodedFormat.containsKey(MediaFormat.KEY_PCM_ENCODING)) check(decodedFormat.getInteger(MediaFormat.KEY_PCM_ENCODING) == AudioFormat.ENCODING_PCM_16BIT)
+                    } else if (index >= 0) {
+                        progress.outputBuffers++
+                        progress.outputEos = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+                        val processingStart = SystemClock.elapsedRealtimeNanos()
+                        try {
+                            if (info.size > 0) {
+                                val buffer = checkNotNull(decoder.getOutputBuffer(index)).duplicate().order(ByteOrder.LITTLE_ENDIAN)
+                                buffer.position(info.offset); buffer.limit(info.offset + info.size)
+                                check(info.size % (CHANNELS * 2) == 0)
+                                while (buffer.remaining() >= CHANNELS * 2) {
+                                    val value = buffer.short.toDouble(); buffer.short
+                                    val angle = 2 * PI * 440 * samples / RATE
+                                    square += value * value; sine += value * sin(angle); cosine += value * cos(angle)
+                                    samples++
+                                }
+                            }
+                            outputEnded = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+                        } finally {
+                            progress.outputFrames = samples
+                            progress.operation(3, processingStart, SystemClock.elapsedRealtimeNanos())
+                            val releaseStart = SystemClock.elapsedRealtimeNanos()
+                            try { decoder.releaseOutputBuffer(index, false) }
+                            finally { progress.operation(4, releaseStart, SystemClock.elapsedRealtimeNanos()) }
+                        }
                     }
                 }
+            } finally {
+                val loopCpuEnd = runCatching { Debug.threadCpuTimeNanos() }.getOrDefault(-1L)
+                progress.loopTiming(loopWallStart, SystemClock.elapsedRealtimeNanos(),
+                    loopCpuStart, loopCpuEnd, callerThreadId)
             }
             check(samples in 36_000L..62_400L) { "Decoded duration out of bounds: $samples" }
             val rms = sqrt(square / samples)
@@ -434,6 +444,14 @@ internal class RecorderDecodeProgress {
     var outputUnavailable = 0L
     private val totalNs = LongArray(5)
     private val maxNs = LongArray(5)
+    private var loop: Map<String, Any> = mapOf("status" to "not-started")
+    fun loopTiming(wallStart: Long, wallEnd: Long, cpuStart: Long, cpuEnd: Long, threadId: Long) {
+        runCatching { loop = mapOf(
+            "callerThreadId" to threadId,
+            "wallNs" to if (wallStart >= 0 && wallEnd >= wallStart) wallEnd - wallStart else "unavailable",
+            "callerCpuNs" to if (cpuStart >= 0 && cpuEnd >= cpuStart) cpuEnd - cpuStart else "unavailable"
+        ) }
+    }
     fun operation(index: Int, startNs: Long, endNs: Long) {
         val elapsed = (endNs - startNs).coerceAtLeast(0)
         totalNs[index] += elapsed
@@ -446,6 +464,7 @@ internal class RecorderDecodeProgress {
                 "queuedInputs" to queuedInputs, "queuedBytes" to queuedBytes, "inputEos" to inputEos,
                 "outputBuffers" to outputBuffers, "outputFrames" to outputFrames, "outputEos" to outputEos,
                 "inputUnavailable" to inputUnavailable, "outputUnavailable" to outputUnavailable,
+                "loop" to loop,
                 "operations" to operations.mapIndexed { index, name ->
                     mapOf("name" to name, "totalNs" to totalNs[index], "maxNs" to maxNs[index])
                 }

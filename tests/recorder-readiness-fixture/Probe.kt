@@ -13,7 +13,7 @@ fun main(args: Array<String>) {
         progress.operation(4, 100, 120)
         var result: Map<String, Any>? = null
         progress.onFailure { result = it }
-        check(result!!.size == 9 && result!!["queuedInputs"] == 46L && result!!["inputEos"] == true)
+        check(result!!.size == 10 && result!!["queuedInputs"] == 46L && result!!["inputEos"] == true)
         check(result!!["outputFrames"] == 10240L && result!!["outputEos"] == false)
         check(result!!["queuedBytes"] == 6400L && result!!["outputBuffers"] == 12L)
         check(result!!["inputUnavailable"] == 3L && result!!["outputUnavailable"] == 4L)
@@ -25,9 +25,24 @@ fun main(args: Array<String>) {
         progress.outputEos = true
         repeat(10000) { progress.operation(2, 0, 1) }
         progress.onFailure { result = it }
-        check(result!!.size == 9 && result!!["outputEos"] == true)
+        check(result!!.size == 10 && result!!["outputEos"] == true)
         RecorderDecodeProgress().onFailure { result = it }
         check(result!!["queuedInputs"] == 0L && result!!["inputEos"] == false)
+        check((result!!["loop"] as Map<*, *>)["status"] == "not-started")
+        for ((cpuStart, cpuEnd, expected) in listOf(
+            Triple(100L, 1090L, 990L), Triple(100L, 110L, 10L),
+            Triple(-1L, 100L, "unavailable"), Triple(100L, -1L, "unavailable"),
+            Triple(100L, 99L, "unavailable")
+        )) {
+            progress.loopTiming(1000, 2000, cpuStart, cpuEnd, 42)
+            progress.onFailure { result = it }
+            val loop = result!!["loop"] as Map<*, *>
+            check(loop.size == 3 && loop["callerThreadId"] == 42L)
+            check(loop["wallNs"] == 1000L && loop["callerCpuNs"] == expected)
+        }
+        progress.loopTiming(2000, 1000, 100, 110, 42)
+        progress.onFailure { result = it }
+        check((result!!["loop"] as Map<*, *>)["wallNs"] == "unavailable")
         val original = IllegalStateException("original timeout")
         val caught = runCatching {
             try { throw original } catch (failure: Throwable) {
