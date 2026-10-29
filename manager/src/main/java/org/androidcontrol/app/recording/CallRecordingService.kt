@@ -96,6 +96,7 @@ class CallRecordingService : Service() {
         val packets: AtomicInteger
     ) {
         val stopping = AtomicBoolean(false)
+        val streamFailure = AtomicReference<String?>(null)
         lateinit var reader: Thread
     }
 
@@ -304,6 +305,11 @@ class CallRecordingService : Service() {
 
                 override fun onStreamEnd(error: String?) {
                     val current = streamSession.get()
+                    // Stop suppresses a redundant finish request, not evidence of
+                    // a failed read/write while buffered audio is being drained.
+                    if (current != null && error != null) {
+                        current.streamFailure.compareAndSet(null, error)
+                    }
                     if (current != null && !current.stopping.get()) {
                         worker.execute {
                             if (session === current) {
@@ -351,6 +357,7 @@ class CallRecordingService : Service() {
                 current.reader.join(1500)
             }
             if (current.reader.isAlive) failure = "Audio reader did not stop cleanly"
+            failure = failure ?: current.streamFailure.get()
             if (current.packets.get() == 0) failure = "The recorder captured no audio frames"
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()

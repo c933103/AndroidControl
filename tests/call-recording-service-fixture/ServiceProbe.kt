@@ -19,6 +19,8 @@ object Fixture {
     var codec = "opus"
     var provider = "seekable"
     var rejectProducer = false
+    var drainMode: String? = null
+    val producerStopped = java.util.concurrent.CountDownLatch(1)
     @Volatile var begins = 0
     @Volatile var ends = 0
     @Volatile var frames = 0
@@ -48,7 +50,7 @@ class CallRecordingBridge {
             check(!Fixture.rejectProducer) { "controlled producer failure" }
             return ParcelFileDescriptor("pipe").also { Fixture.pipes.add(it) }
         }
-        fun endCallRecording(owner: Any) { Fixture.ends++ }
+        fun endCallRecording(owner: Any) { Fixture.ends++; Fixture.producerStopped.countDown() }
     }
 }
 fun eventually(condition: () -> Boolean) {
@@ -60,6 +62,10 @@ fun main(args: Array<String>) {
     val scenario = args.single()
     val service = CallRecordingService()
     service.onCreate()
+    if (scenario.startsWith("drain-")) {
+        drainScenario(service, scenario)
+        return
+    }
     if (scenario.startsWith("storage-")) {
         storageScenario(service, scenario)
         return
@@ -148,5 +154,27 @@ fun storageScenario(service: CallRecordingService, scenario: String) {
             check(Fixture.deletes == 0) { "successful output deleted" }
         }
         println("PASS $scenario: mode=${Fixture.modes}, starts=${Fixture.begins}, created=${Fixture.documents}, deleted=${Fixture.deletes}")
+    } finally { service.onDestroy() }
+}
+
+fun drainScenario(service: CallRecordingService, scenario: String) {
+    Fixture.drainMode = scenario
+    try {
+        service.onStartCommand(Intent(CallRecordingService.ACTION_START), 0, 1)
+        eventually { CallRecordingService.state == CallRecordingService.State.RECORDING && Fixture.frames == 1 }
+        service.onStartCommand(Intent(CallRecordingService.ACTION_STOP), 0, 2)
+        eventually { !CallRecordingService.activeOrPreparing }
+        if (scenario == "drain-error") {
+            check(CallRecordingService.state == CallRecordingService.State.ERROR) { "Truncated drain reported ${CallRecordingService.state}" }
+            check(CallRecordingService.lastError == "controlled drain I/O error")
+        } else {
+            check(scenario == "drain-eof")
+            check(CallRecordingService.state == CallRecordingService.State.IDLE)
+            check(CallRecordingService.lastError == null)
+        }
+        check(Fixture.ends == 1)
+        check(Fixture.outputs.all { it.closed } && Fixture.pipes.all { it.closed })
+        check(Fixture.deletes == 0) { "Previously active recording deleted" }
+        println("PASS $scenario: state=${CallRecordingService.state}, error=${CallRecordingService.lastError}")
     } finally { service.onDestroy() }
 }

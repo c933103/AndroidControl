@@ -11,7 +11,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--gradle-lib', type=Path, required=True)
 parser.add_argument('--source', type=Path)
 parser.add_argument('--expect-baseline-failure', action='store_true')
-parser.add_argument('--suite', choices=('all', 'notifications', 'storage'), default='all')
+parser.add_argument('--suite', choices=('all', 'notifications', 'storage', 'drain'), default='all')
 args = parser.parse_args()
 fixture = Path(__file__).resolve().parent
 source = args.source or fixture.parents[1] / 'manager/src/main/java/org/androidcontrol/app/recording/CallRecordingService.kt'
@@ -31,7 +31,8 @@ with tempfile.TemporaryDirectory(prefix='call-recording-service-') as directory:
                      'revoke-app', 'revoke-channel', 'revoke-group')
     storage_cases = ('storage-aac-seekable', 'storage-aac-w-streams', 'storage-aac-no-rw',
                      'storage-aac-bad-rw', 'storage-open-null', 'storage-producer-failure', 'storage-opus-stream')
-    cases = (notification_cases if args.suite == 'notifications' else storage_cases if args.suite == 'storage' else notification_cases + storage_cases)
+    drain_cases = ('drain-error', 'drain-eof')
+    cases = (drain_cases if args.suite == 'drain' else notification_cases if args.suite == 'notifications' else storage_cases if args.suite == 'storage' else notification_cases + storage_cases + drain_cases)
     for scenario in cases:
         result = subprocess.run(['java', f'-Dfixture.legacyModeControl={str(args.expect_baseline_failure and args.suite == "storage").lower()}', '-cp', f'{classes}:{stdlib}',
                                  'org.androidcontrol.app.recording.ServiceProbeKt', scenario],
@@ -41,7 +42,7 @@ with tempfile.TemporaryDirectory(prefix='call-recording-service-') as directory:
             failed.append(scenario)
             print(f'FAIL {scenario}: {result.stderr.strip()}')
     if args.expect_baseline_failure:
-        expected = (['storage-aac-w-streams', 'storage-aac-no-rw', 'storage-aac-bad-rw'] if args.suite == 'storage' else ['blocked-app-api31', 'blocked-app-api35', 'blocked-channel', 'blocked-group', 'missing-group', 'missing-channel', 'query-failure', 'hidden-during-setup', 'revoke-app', 'revoke-channel', 'revoke-group'])
+        expected = (['drain-error'] if args.suite == 'drain' else ['storage-aac-w-streams', 'storage-aac-no-rw', 'storage-aac-bad-rw'] if args.suite == 'storage' else ['blocked-app-api31', 'blocked-app-api35', 'blocked-channel', 'blocked-group', 'missing-group', 'missing-channel', 'query-failure', 'hidden-during-setup', 'revoke-app', 'revoke-channel', 'revoke-group'])
         if args.suite == 'all':
             parser.error('Choose a specific --suite for a baseline sensitivity control')
         if failed != expected:

@@ -28,7 +28,13 @@ class ScrcpyClient(pipe: ParcelFileDescriptor, val codec: ScrcpyAudioCodec, val 
         fun onStreamEnd(error: String?)
     }
     fun start() {
-        try { listener.onMetadataReceived(codec); listener.onAudioPacket(AudioPacket()) }
+        try {
+            listener.onMetadataReceived(codec); listener.onAudioPacket(AudioPacket())
+            if (Fixture.drainMode != null) {
+                check(Fixture.producerStopped.await(3, java.util.concurrent.TimeUnit.SECONDS)) { "Producer was not stopped" }
+                listener.onStreamEnd(if (Fixture.drainMode == "drain-error") "controlled drain I/O error" else null)
+            }
+        }
         catch (error: Exception) { listener.onStreamEnd(error.message) }
     }
     fun close() {}

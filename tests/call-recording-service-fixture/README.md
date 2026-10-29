@@ -51,3 +51,20 @@ permits pipes/sockets for exclusive `w`; `rw` implies random-access disk storage
 The fixture models descriptors and does not generate or validate MP4/OGG media.
 Provider deletion remains best-effort as before; no staging/copy/commit protocol or
 private temporary audio files are added by this fix.
+
+## Stop-time stream-error regression (2026-10-29)
+
+The suite now also runs `drain-error` and `drain-eof` (24 total service cases).
+A controlled client writes an initial frame, waits on an explicit producer-stop
+latch, then reports either an I/O error or clean EOF while the real service joins
+the reader. Error must produce ERROR with the original message; clean EOF must
+still produce IDLE. Both require producer stop, descriptor cleanup, and retention
+of the previously active output. This does not claim a real MediaMuxer/SAF pass.
+
+Against production predecessor `b850b21f93b150ff851dac5257bf25546788bf32`,
+`--source /path/to/predecessor-service.kt --suite drain --expect-baseline-failure`
+reproduces exactly `drain-error`: state incorrectly becomes IDLE. `drain-eof`
+passes. The corrected production service passes both plus all existing cases.
+The new per-session atomic error field retains the first non-null stream failure
+independently from the stopping flag; joining the reader precedes the final error
+check. No stop/drain timeout, caller check, permission or acceptance gate changes.
