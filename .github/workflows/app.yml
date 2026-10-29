@@ -50,6 +50,9 @@ jobs:
           build-scan-publish: true
           build-scan-terms-of-use-url: "https://gradle.com/terms-of-service"
           build-scan-terms-of-use-agree: "yes"
+      - name: Check component source licences and attribution
+        run: python3 tests/check-component-licenses.py
+
       - name: Check AppOps locale resources
         run: python3 tests/check-appops-i18n.py
       - name: Build with Gradle
@@ -65,6 +68,9 @@ jobs:
           test -f "${releaseApk[0]}"
           releaseName=$(basename "${releaseApk[0]}" -release.apk)
           echo "releaseName=$releaseName" >> "$GITHUB_OUTPUT"
+      - name: Verify scrcpy executable bytes and bundled GPL/Apache notices
+        run: python3 tests/verify-call-recording-apk.py manager/build/outputs/apk/release/*.apk
+
       - name: Upload release
         if: success()
         uses: actions/upload-artifact@v4

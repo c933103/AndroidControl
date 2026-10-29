@@ -2,7 +2,7 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
+    android:layout_height="wrap_content"
     android:orientation="horizontal"
     android:padding="?android:dialogPreferredPadding">
 
@@ -13,11 +13,16 @@
         android:importantForAccessibility="no"
         tools:src="@drawable/ic_launcher" />
 
-    <LinearLayout
-        android:layout_width="wrap_content"
+    <ScrollView
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginStart="24dp"
-        android:orientation="vertical">
+        android:layout_weight="1"
+        android:fillViewport="false">
+      <LinearLayout
+          android:layout_width="match_parent"
+          android:layout_height="wrap_content"
+          android:layout_marginStart="24dp"
+          android:orientation="vertical">
 
         <TextView
             android:layout_width="wrap_content"
@@ -55,6 +60,18 @@
             android:textColor="?android:textColorSecondary"
             android:textSize="12sp" />
 
-    </LinearLayout>
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/component_licences_button"
+            style="@style/CardButton"
+            android:layout_marginTop="8dp"
+            android:text="@string/component_licences_title" />
+        <TextView android:id="@+id/call_recording_credit"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:textColor="?android:textColorSecondary"
+            android:textSize="12sp"/>
+      </LinearLayout>
+    </ScrollView>
 
 </LinearLayout>

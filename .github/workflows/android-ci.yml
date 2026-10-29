@@ -125,6 +125,9 @@ jobs:
       - name: Accept Android SDK licenses
         run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
 
+      - name: Check component source licences and attribution
+        run: python3 tests/check-component-licenses.py
+
       - name: Check AppOps locale resources
         run: python3 tests/check-appops-i18n.py
 
@@ -134,10 +137,18 @@ jobs:
       - name: Build debug APK
         run: ./gradlew :manager:testDebugUnitTest :manager:assembleDebug
 
+      - name: Verify scrcpy executable bytes and bundled GPL/Apache notices
+        run: python3 tests/verify-call-recording-apk.py manager/build/outputs/apk/debug/*.apk
+
       - name: Check runtime fixture readiness
         run: |
           gradle_lib=$(find "${GRADLE_USER_HOME:-$HOME/.gradle}/wrapper/dists/gradle-8.14-bin" -type d -path '*/gradle-8.14/lib' -print -quit)
           test -n "$gradle_lib"
+          python3 tests/call-recording-lifecycle-fixture/check.py --gradle-lib "$gradle_lib"
+          python3 tests/call-recording-receiver-fixture/check.py --gradle-lib "$gradle_lib"
+          python3 tests/call-recording-service-fixture/check.py --gradle-lib "$gradle_lib"
+          python3 tests/call-recording-muxer-fixture/check.py --gradle-lib "$gradle_lib"
+          python3 tests/call-recording-client-fixture/check.py --gradle-lib "$gradle_lib"
           python3 tests/runtime-control-fixture/check.py --gradle-lib "$gradle_lib"
           python3 tests/run-checkout-readiness-host-checks.py --kotlin-lib "$gradle_lib"
 
