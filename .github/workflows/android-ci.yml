@@ -148,6 +148,7 @@ jobs:
           python3 tests/call-recording-receiver-fixture/check.py --gradle-lib "$gradle_lib"
           python3 tests/call-recording-service-fixture/check.py --gradle-lib "$gradle_lib"
           python3 tests/call-recording-muxer-fixture/check.py --gradle-lib "$gradle_lib"
+          python3 tests/call-recording-client-fixture/check.py --gradle-lib "$gradle_lib"
           python3 tests/runtime-control-fixture/check.py --gradle-lib "$gradle_lib"
           python3 tests/run-checkout-readiness-host-checks.py --kotlin-lib "$gradle_lib"
 

@@ -170,7 +170,7 @@ class ScrcpyClient(
      *
      * Loop: reads 4-byte FourCC -> fires [onMetadataReceived], then for each packet reads
      * the 12-byte header via [readPacketHeader], reads the payload, fires [onAudioPacket].
-     * EOF fires [onStreamEnd](null); any other exception fires [onStreamEnd](message).
+     * Only EOF between complete packets fires [onStreamEnd](null); partial framing and other failures report a non-null error.
      *
      * Thread resume when [stop] is called, or any exceptions stop the reading loop, for instance [EOFException],
      * meaning there is nothing left to read and parse.
@@ -198,7 +198,7 @@ class ScrcpyClient(
             var hasReceivedConfig = false
             while (running) {
                 // Read the 12-byte per-packet header — mirrors Streamer.java#writeFrameMeta().
-                val header = readPacketHeader(inputStream)
+                val header = readPacketHeader(inputStream) ?: break
 
                 // The first packet MUST be a config packet. If it's not, the protocol likely changed or parsing is misaligned.
                 if (!hasReceivedConfig) {
@@ -240,14 +240,16 @@ class ScrcpyClient(
                     )
                 )
             }
-        } catch (e: EOFException) {
-            // EOF, in almost EVERY case, should be normal, clean end of the stream (pipe closed by shell process, and we have read it all).
-            AppLogger.d( "Given stream was fully read (EOF), nothing else to parse, ending normally.")
             listener.onStreamEnd(null)
+        } catch (e: EOFException) {
+            // A boundary EOF is handled before reading a packet. Reaching this
+            // catch means the codec/header/payload (or a listener write) was cut short.
+            AppLogger.e("Audio stream was truncated", e)
+            listener.onStreamEnd("Audio stream was truncated")
         } catch (e: Exception) {
             // Any other exception indicates an abnormal termination.
             AppLogger.e( "Stream ended with error: ${e.message}", e)
-            listener.onStreamEnd(e.message)
+            listener.onStreamEnd(e.message?.takeIf { it.isNotBlank() } ?: "Audio stream failed (${e.javaClass.simpleName})")
         } finally {
             runCatching { inputStream.close() } // do NOT close inputPfd here; that is done in close()
         }
@@ -274,8 +276,13 @@ class ScrcpyClient(
      * putLong(ptsAndFlags) then putInt(packetSize) — same order read here.
      * See: https://github.com/Genymobile/scrcpy/blob/master/server/src/main/java/com/genymobile/scrcpy/device/Streamer.java
      */
-    private fun readPacketHeader(stream: DataInputStream): AudioEnvelope {
-        val ptsAndFlags = stream.readLong()  // Mirrors: headerBuffer.putLong(ptsAndFlags)
+    private fun readPacketHeader(stream: DataInputStream): AudioEnvelope? {
+        // Only absence of the first header byte is clean EOF. Once a packet has
+        // begun, readUnsignedByte/readInt must surface truncation as an error.
+        val firstByte = stream.read()
+        if (firstByte < 0) return null
+        var ptsAndFlags = firstByte.toLong()
+        repeat(7) { ptsAndFlags = (ptsAndFlags shl 8) or stream.readUnsignedByte().toLong() }
         val payloadSize = stream.readInt()   // Mirrors: headerBuffer.putInt(packetSize)
         return AudioEnvelope(
             rawPtsAndFlags = ptsAndFlags,
