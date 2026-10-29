@@ -85,3 +85,11 @@ for name, values, expected in (
     if len(calls) > 1:
         assert calls[1] == ['adb', 'shell', 'dumpsys', 'activity', 'exit-info', module.PACKAGE]
     print('PASS', name)
+
+for reason, label in enumerate(module.REASON_LABELS):
+    source = record().replace('reason=3 (LOW_MEMORY)', f'reason={reason} ({label})')
+    result = select(source)
+    assert len(result) == 1 and result[0]['reason'] == reason and result[0]['reasonName'] == label, (reason, label, result)
+    print('PASS official-reason', reason, label)
+assert not select(record().replace('reason=3 (LOW_MEMORY)', 'reason=3 (UNTRUSTED VALUE)'))
+print('PASS unknown-label-excluded')

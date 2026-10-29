@@ -162,7 +162,7 @@ is read, not changed. Missing PID/start markers, invalid clocks, command failure
 or unavailable history do not become a guessed cause. Each shell read has a10s
 timeout; input over128 KiB is rejected, output contains at most4 numeric/enum
 records. No descriptions, traces, raw dumps or unrelated packages are archived.
-Seventeen synthetic controls cover matching identity/time, unrelated and stale
+Thirty-five synthetic controls cover matching identity/time, unrelated and stale
 records, timezone, bounds, command scope and unavailable history. Existing crash
 filter and strict11-case failure exits remain unchanged. This is diagnosis only,
 not a recorder fix or acceptance claim.

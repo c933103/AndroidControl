@@ -10,6 +10,13 @@ import sys
 
 PACKAGE = 'org.androidcontrol.app'
 LIMIT = 131072
+# Official API33/API35 reasonCodeToString labels, including nested parentheses.
+REASON_LABELS = ('UNKNOWN', 'EXIT_SELF', 'SIGNALED', 'LOW_MEMORY',
+    'APP CRASH(EXCEPTION)', 'APP CRASH(NATIVE)', 'ANR', 'INITIALIZATION FAILURE',
+    'PERMISSION CHANGE', 'EXCESSIVE RESOURCE USAGE', 'USER REQUESTED',
+    'USER STOPPED', 'DEPENDENCY DIED', 'OTHER KILLS BY SYSTEM', 'FREEZER',
+    'STATE CHANGE', 'PACKAGE UPDATED')
+REASON_PATTERN = '|'.join(re.escape(label) for label in REASON_LABELS)
 
 
 def select_records(source, pid, started_ms, ended_ms, offset):
@@ -31,7 +38,7 @@ def select_records(source, pid, started_ms, ended_ms, offset):
             when = dt.datetime.strptime(match[1], '%Y-%m-%d %H:%M:%S.%f').replace(tzinfo=zone)
             millis = round(when.timestamp() * 1000)
             stamp = millis if package == PACKAGE and int(match[2]) == pid and started_ms <= millis <= ended_ms else None
-        match = re.fullmatch(r'\s*process=(\S+) reason=(\d+) \(([A-Z_]+)\) subreason=(\d+) \([^\r\n]*\) status=(-?\d+)\s*', line)
+        match = re.fullmatch(rf'\s*process=(\S+) reason=(\d+) \(({REASON_PATTERN})\) subreason=(\d+) \([^\r\n]*\) status=(-?\d+)\s*', line)
         if match and stamp is not None:
             if match[1] == PACKAGE:
                 records.append(dict(package=PACKAGE, pid=pid, timestampMs=stamp,
