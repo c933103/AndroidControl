@@ -326,12 +326,16 @@ object RecorderMediaChecks {
             var cosine = 0.0
             val info = MediaCodec.BufferInfo()
             val deadline = SystemClock.elapsedRealtime() + TIMEOUT_MS
+            progress.deadlineMs = deadline
+            progress.loopStartMs = SystemClock.elapsedRealtime()
             val callerThreadId = Thread.currentThread().id
             val loopWallStart = SystemClock.elapsedRealtimeNanos()
             val loopCpuStart = runCatching { Debug.threadCpuTimeNanos() }.getOrDefault(-1L)
             try {
                 while (!outputEnded) {
-                    check(SystemClock.elapsedRealtime() < deadline) { "Decoder timeout: $name" }
+                    val now = SystemClock.elapsedRealtime()
+                    if (now >= deadline) progress.timeoutMs = now
+                    check(now < deadline) { "Decoder timeout: $name" }
                     if (!inputEnded) {
                         val inputStart = SystemClock.elapsedRealtimeNanos()
                         val index = try { decoder.dequeueInputBuffer(10000) }
@@ -345,9 +349,11 @@ object RecorderMediaChecks {
                                 if (size < 0) {
                                     decoder.queueInputBuffer(index, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); inputEnded = true
                                     progress.inputEos = true
+                                    progress.inputEnded(SystemClock.elapsedRealtime())
                                 } else {
                                     decoder.queueInputBuffer(index, 0, size, extractor.sampleTime, 0)
                                     progress.queuedInputs++; progress.queuedBytes += size
+                                    progress.inputQueued(SystemClock.elapsedRealtime())
                                     extractor.advance()
                                 }
                             } finally { progress.operation(1, queueStart, SystemClock.elapsedRealtimeNanos()) }
@@ -357,13 +363,16 @@ object RecorderMediaChecks {
                     val index = try { decoder.dequeueOutputBuffer(info, 10000) }
                         finally { progress.operation(2, outputStart, SystemClock.elapsedRealtimeNanos()) }
                     if (index == MediaCodec.INFO_TRY_AGAIN_LATER) progress.outputUnavailable++
+                    if (index == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED) progress.bufferChanges++
                     if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                        progress.formatChanges++
                         val decodedFormat = decoder.outputFormat
                         check(decodedFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT) == CHANNELS)
                         check(decodedFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE) == RATE)
                         if (decodedFormat.containsKey(MediaFormat.KEY_PCM_ENCODING)) check(decodedFormat.getInteger(MediaFormat.KEY_PCM_ENCODING) == AudioFormat.ENCODING_PCM_16BIT)
                     } else if (index >= 0) {
                         progress.outputBuffers++
+                        progress.outputReceived(SystemClock.elapsedRealtime())
                         progress.outputEos = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
                         val processingStart = SystemClock.elapsedRealtimeNanos()
                         try {
@@ -442,6 +451,26 @@ internal class RecorderDecodeProgress {
     var outputEos = false
     var inputUnavailable = 0L
     var outputUnavailable = 0L
+    var formatChanges = 0L
+    var bufferChanges = 0L
+    var loopStartMs = -1L
+    var deadlineMs = -1L
+    var timeoutMs = -1L
+    private var firstInputMs = -1L
+    private var lastInputMs = -1L
+    private var inputEosMs = -1L
+    private var firstOutputMs = -1L
+    private var lastOutputMs = -1L
+    private var lastProgressMs = -1L
+    fun inputQueued(now: Long) {
+        if (firstInputMs < 0) firstInputMs = now
+        lastInputMs = now; lastProgressMs = now
+    }
+    fun inputEnded(now: Long) { inputEosMs = now; lastProgressMs = now }
+    fun outputReceived(now: Long) {
+        if (firstOutputMs < 0) firstOutputMs = now
+        lastOutputMs = now; lastProgressMs = now
+    }
     private val totalNs = LongArray(5)
     private val maxNs = LongArray(5)
     private var loop: Map<String, Any> = mapOf("status" to "not-started")
@@ -465,6 +494,13 @@ internal class RecorderDecodeProgress {
                 "outputBuffers" to outputBuffers, "outputFrames" to outputFrames, "outputEos" to outputEos,
                 "inputUnavailable" to inputUnavailable, "outputUnavailable" to outputUnavailable,
                 "loop" to loop,
+                "formatChanges" to formatChanges, "bufferChanges" to bufferChanges,
+                // Same elapsedRealtime clock as lifecycle markers; -1 means not observed.
+                // Progress means queued data/EOS or a received output, not format notifications.
+                "timelineMs" to mapOf("loopStart" to loopStartMs, "deadline" to deadlineMs,
+                    "firstInput" to firstInputMs, "lastInput" to lastInputMs, "inputEos" to inputEosMs,
+                    "firstOutput" to firstOutputMs, "lastOutput" to lastOutputMs,
+                    "lastProgress" to lastProgressMs, "timeout" to timeoutMs),
                 "operations" to operations.mapIndexed { index, name ->
                     mapOf("name" to name, "totalNs" to totalNs[index], "maxNs" to maxNs[index])
                 }

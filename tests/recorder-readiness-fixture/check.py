@@ -76,3 +76,13 @@ assert [(row['api'], row['application'], row['mode']) for row in normal] == [(33
 for ref in ('refs/heads/master', 'refs/heads/feature/call-recording-shizu-integration', 'refs/pull/26/merge'):
     assert ref != 'refs/heads/diagnostic/recorder-aac-decode-832ac432'
 print('PASS exact diagnostic branch selects one API35 manager; normal/PR matrix unchanged')
+
+# Milestones follow actual queue/dequeue success; no payload or per-iteration trace.
+decode = media.read_text().split('private fun decode(', 1)[1].split('private fun checkNonSeekableAac', 1)[0]
+assert decode.index('progress.inputQueued(') > decode.index('decoder.queueInputBuffer(index, 0, size, extractor.sampleTime, 0)')
+assert decode.index('progress.inputEnded(') > decode.index('MediaCodec.BUFFER_FLAG_END_OF_STREAM); inputEnded = true')
+assert decode.index('progress.outputReceived(') > decode.index('progress.outputBuffers++')
+assert 'if (now >= deadline) progress.timeoutMs = now' in decode
+assert 'check(now < deadline)' in decode
+assert 'progress.formatChanges++' in decode and 'progress.bufferChanges++' in decode
+print('PASS decoder milestone placement and unchanged deadline assertion')

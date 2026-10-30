@@ -13,7 +13,7 @@ fun main(args: Array<String>) {
         progress.operation(4, 100, 120)
         var result: Map<String, Any>? = null
         progress.onFailure { result = it }
-        check(result!!.size == 10 && result!!["queuedInputs"] == 46L && result!!["inputEos"] == true)
+        check(result!!.size == 13 && result!!["queuedInputs"] == 46L && result!!["inputEos"] == true)
         check(result!!["outputFrames"] == 10240L && result!!["outputEos"] == false)
         check(result!!["queuedBytes"] == 6400L && result!!["outputBuffers"] == 12L)
         check(result!!["inputUnavailable"] == 3L && result!!["outputUnavailable"] == 4L)
@@ -25,7 +25,7 @@ fun main(args: Array<String>) {
         progress.outputEos = true
         repeat(10000) { progress.operation(2, 0, 1) }
         progress.onFailure { result = it }
-        check(result!!.size == 10 && result!!["outputEos"] == true)
+        check(result!!.size == 13 && result!!["outputEos"] == true)
         RecorderDecodeProgress().onFailure { result = it }
         check(result!!["queuedInputs"] == 0L && result!!["inputEos"] == false)
         check((result!!["loop"] as Map<*, *>)["status"] == "not-started")
@@ -43,6 +43,23 @@ fun main(args: Array<String>) {
         progress.loopTiming(2000, 1000, 100, 110, 42)
         progress.onFailure { result = it }
         check((result!!["loop"] as Map<*, *>)["wallNs"] == "unavailable")
+        val timing = RecorderDecodeProgress()
+        timing.onFailure { result = it }
+        check((result!!["timelineMs"] as Map<*, *>).values.all { it == -1L })
+        timing.loopStartMs = 100; timing.deadlineMs = 15100
+        timing.inputQueued(200); timing.outputReceived(300)
+        timing.inputQueued(14000); timing.inputEnded(14100); timing.outputReceived(14500)
+        timing.formatChanges = 1; timing.bufferChanges = 2; timing.timeoutMs = 15101
+        timing.onFailure { result = it }
+        val timeline = result!!["timelineMs"] as Map<*, *>
+        check(timeline == mapOf("loopStart" to 100L, "deadline" to 15100L,
+            "firstInput" to 200L, "lastInput" to 14000L, "inputEos" to 14100L,
+            "firstOutput" to 300L, "lastOutput" to 14500L,
+            "lastProgress" to 14500L, "timeout" to 15101L))
+        check(result!!["formatChanges"] == 1L && result!!["bufferChanges"] == 2L)
+        repeat(10000) { timing.outputReceived(14501L + it) }
+        timing.onFailure { result = it }
+        check(result!!.size == 13 && (result!!["timelineMs"] as Map<*, *>).size == 9)
         val original = IllegalStateException("original timeout")
         val caught = runCatching {
             try { throw original } catch (failure: Throwable) {
