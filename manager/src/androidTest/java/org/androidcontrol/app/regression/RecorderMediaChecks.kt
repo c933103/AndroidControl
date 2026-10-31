@@ -45,6 +45,20 @@ object RecorderMediaChecks {
         runCatching { evidenceFile.writeText(evidence.toString(2)) }
             .onFailure { android.util.Log.w("RecorderMediaChecks", "Checkpoint write failed", it) }
     }
+    // Only this synthetic instrumentation thread; no process lists or raw proc dump.
+    private fun callerSchedstat(tid: Int): LongArray? = runCatching {
+        File("/proc/self/task/$tid/schedstat").inputStream().use { stream ->
+            val bytes = ByteArray(129)
+            var used = 0
+            while (used < bytes.size) {
+                val count = stream.read(bytes, used, bytes.size - used)
+                if (count < 0) break
+                used += count
+            }
+            check(used <= 128)
+            RecorderDecodeProgress.parseSchedstat(String(bytes, 0, used, Charsets.US_ASCII))
+        }
+    }.getOrNull()
     private data class Packet(val pts: Long, val config: Boolean, val bytes: ByteArray)
     private data class Encoded(val name: String, val packets: List<Packet>)
     private data class Outcome(val error: String?, val finalized: Boolean, val packets: Int)
@@ -332,6 +346,9 @@ object RecorderMediaChecks {
             var sine = 0.0
             var cosine = 0.0
             val info = MediaCodec.BufferInfo()
+            val callerTid = android.os.Process.myTid()
+            val schedWindowStart = SystemClock.elapsedRealtimeNanos()
+            val schedStart = callerSchedstat(callerTid)
             val deadline = SystemClock.elapsedRealtime() + TIMEOUT_MS
             progress.deadlineMs = deadline
             progress.loopStartMs = SystemClock.elapsedRealtime()
@@ -351,17 +368,31 @@ object RecorderMediaChecks {
                         if (index >= 0) {
                             val queueStart = SystemClock.elapsedRealtimeNanos()
                             try {
-                                val buffer = checkNotNull(decoder.getInputBuffer(index))
-                                val size = extractor.readSampleData(buffer, 0)
+                                val bufferStart = SystemClock.elapsedRealtimeNanos()
+                                val buffer = try { checkNotNull(decoder.getInputBuffer(index)) }
+                                    finally { progress.sampleOperation(0, bufferStart, SystemClock.elapsedRealtimeNanos()) }
+                                val readStart = SystemClock.elapsedRealtimeNanos()
+                                val size = try { extractor.readSampleData(buffer, 0) }
+                                    finally { progress.sampleOperation(1, readStart, SystemClock.elapsedRealtimeNanos()) }
                                 if (size < 0) {
-                                    decoder.queueInputBuffer(index, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); inputEnded = true
+                                    val eosStart = SystemClock.elapsedRealtimeNanos()
+                                    try { decoder.queueInputBuffer(index, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM) }
+                                    finally { progress.sampleOperation(3, eosStart, SystemClock.elapsedRealtimeNanos()) }
+                                    inputEnded = true
                                     progress.inputEos = true
                                     progress.inputEnded(SystemClock.elapsedRealtime())
                                 } else {
-                                    decoder.queueInputBuffer(index, 0, size, extractor.sampleTime, 0)
+                                    val ptsStart = SystemClock.elapsedRealtimeNanos()
+                                    val pts = try { extractor.sampleTime }
+                                        finally { progress.sampleOperation(2, ptsStart, SystemClock.elapsedRealtimeNanos()) }
+                                    val submitStart = SystemClock.elapsedRealtimeNanos()
+                                    try { decoder.queueInputBuffer(index, 0, size, pts, 0) }
+                                    finally { progress.sampleOperation(3, submitStart, SystemClock.elapsedRealtimeNanos()) }
                                     progress.queuedInputs++; progress.queuedBytes += size
                                     progress.inputQueued(SystemClock.elapsedRealtime())
-                                    extractor.advance()
+                                    val advanceStart = SystemClock.elapsedRealtimeNanos()
+                                    try { extractor.advance() }
+                                    finally { progress.sampleOperation(4, advanceStart, SystemClock.elapsedRealtimeNanos()) }
                                 }
                             } finally { progress.operation(1, queueStart, SystemClock.elapsedRealtimeNanos()) }
                         }
@@ -408,6 +439,9 @@ object RecorderMediaChecks {
                 val loopCpuEnd = runCatching { Debug.threadCpuTimeNanos() }.getOrDefault(-1L)
                 progress.loopTiming(loopWallStart, SystemClock.elapsedRealtimeNanos(),
                     loopCpuStart, loopCpuEnd, callerThreadId)
+                val schedEnd = callerSchedstat(callerTid)
+                progress.scheduler(schedStart, schedEnd, callerTid,
+                    SystemClock.elapsedRealtimeNanos() - schedWindowStart)
             }
             check(samples in 36_000L..62_400L) { "Decoded duration out of bounds: $samples" }
             val rms = sqrt(square / samples)
@@ -487,6 +521,34 @@ internal class RecorderDecodeProgress {
         phaseStartNs[index] = startNs; phaseEndNs[index] = endNs
         phaseReturned[index] = returned
     }
+    companion object {
+        fun parseSchedstat(text: String): LongArray? {
+            if (text.length > 128) return null
+            val fields = text.trim().split(Regex("\\s+"))
+            if (fields.size != 3) return null
+            val values = fields.map { it.toLongOrNull() ?: return null }
+            if (values.any { it < 0 }) return null
+            return values.toLongArray()
+        }
+    }
+    private var scheduler: Map<String, Any> = mapOf("status" to "not-started")
+    fun scheduler(start: LongArray?, end: LongArray?, tid: Int, windowWallNs: Long) {
+        scheduler = if (start == null || end == null || start.size != 3 || end.size != 3 ||
+            start.indices.any { start[it] < 0 || end[it] < start[it] }) {
+            mapOf("status" to "unavailable", "callerTid" to tid)
+        } else mapOf("status" to "observed", "callerTid" to tid,
+            "cpuNs" to end[0] - start[0], "runqueueWaitNs" to end[1] - start[1],
+            "timeslices" to end[2] - start[2], "windowWallNs" to windowWallNs)
+    }
+    private val sampleTotalNs = LongArray(5)
+    private val sampleMaxNs = LongArray(5)
+    private val sampleCounts = LongArray(5)
+    fun sampleOperation(index: Int, startNs: Long, endNs: Long) {
+        val elapsed = (endNs - startNs).coerceAtLeast(0)
+        sampleTotalNs[index] += elapsed
+        sampleMaxNs[index] = maxOf(sampleMaxNs[index], elapsed)
+        sampleCounts[index]++
+    }
     private val totalNs = LongArray(5)
     private val maxNs = LongArray(5)
     private var loop: Map<String, Any> = mapOf("status" to "not-started")
@@ -509,7 +571,11 @@ internal class RecorderDecodeProgress {
                 "queuedInputs" to queuedInputs, "queuedBytes" to queuedBytes, "inputEos" to inputEos,
                 "outputBuffers" to outputBuffers, "outputFrames" to outputFrames, "outputEos" to outputEos,
                 "inputUnavailable" to inputUnavailable, "outputUnavailable" to outputUnavailable,
-                "loop" to loop,
+                "loop" to loop, "callerScheduler" to scheduler,
+                "sampleOperations" to listOf("getInputBuffer", "readSampleData", "sampleTime", "queueInputBuffer", "advance").mapIndexed { index, name ->
+                    mapOf("name" to name, "count" to sampleCounts[index],
+                        "totalNs" to sampleTotalNs[index], "maxNs" to sampleMaxNs[index])
+                },
                 "initializationCalls" to listOf("create", "configure", "start").mapIndexed { index, name ->
                     mapOf("name" to name, "startElapsedNs" to phaseStartNs[index],
                         "endElapsedNs" to phaseEndNs[index], "returned" to phaseReturned[index])

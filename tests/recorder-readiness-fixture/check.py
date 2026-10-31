@@ -79,10 +79,24 @@ print('PASS exact diagnostic branch selects one API35 manager; normal/PR matrix 
 
 # Milestones follow actual queue/dequeue success; no payload or per-iteration trace.
 decode = media.read_text().split('private fun decode(', 1)[1].split('private fun checkNonSeekableAac', 1)[0]
-assert decode.index('progress.inputQueued(') > decode.index('decoder.queueInputBuffer(index, 0, size, extractor.sampleTime, 0)')
-assert decode.index('progress.inputEnded(') > decode.index('MediaCodec.BUFFER_FLAG_END_OF_STREAM); inputEnded = true')
+assert decode.index('progress.inputQueued(') > decode.index('decoder.queueInputBuffer(index, 0, size, pts, 0)')
+assert decode.index('progress.inputEnded(') > decode.index('decoder.queueInputBuffer(index, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)')
 assert decode.index('progress.outputReceived(') > decode.index('progress.outputBuffers++')
 assert 'if (now >= deadline) progress.timeoutMs = now' in decode
 assert 'check(now < deadline)' in decode
 assert 'progress.formatChanges++' in decode and 'progress.bufferChanges++' in decode
 print('PASS decoder milestone placement and unchanged deadline assertion')
+
+
+# The scheduling reads stay outside the media loop and retain unchanged wait bounds.
+media_text = media.read_text()
+decoder_text = media_text.split('private fun decode(', 1)[1].split('private fun checkNonSeekableAac', 1)[0]
+loop_text = decoder_text.split('while (!outputEnded)', 1)[1].split('val loopCpuEnd', 1)[0]
+assert 'callerSchedstat' not in loop_text
+assert 'decoder.dequeueInputBuffer(10000)' in loop_text
+assert 'decoder.dequeueOutputBuffer(info, 10000)' in loop_text
+assert decoder_text.count('callerSchedstat(callerTid)') == 2
+assert 'ByteArray(129)' in media_text and 'check(used <= 128)' in media_text
+assert 'File("/proc/self/task/$tid/schedstat")' in media_text
+assert loop_text.count('progress.sampleOperation(') == 6  # data + EOS share queue counter
+print('PASS bounded own-thread scheduler reads outside unchanged media loop')
