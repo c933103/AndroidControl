@@ -85,10 +85,16 @@ for name in names:
         data = path.read_bytes()
         if name == 'report.json':
             report = json.loads(data)
-            receipt = json.loads((root / 'media-command.json').read_text())
-            assert receipt.get('exitCode') == 0 and receipt.get('finalPassVerified') is True
-            assert receipt.get('cleanup') == 'stopped-and-absent' and receipt.get('totalCeilingAdhered') is True
-            assert report.get('runNonce') == receipt['nonce'] and report.get('pid') == receipt['pid']
+            # Acceptance failure is not malformed-artifact handling. Keep valid
+            # failure/partial/stale reports as evidence, while failing the lane.
+            try:
+                receipt = json.loads((root / 'media-command.json').read_text())
+                accepted = (receipt.get('exitCode') == 0 and receipt.get('finalPassVerified') is True
+                    and receipt.get('cleanup') == 'stopped-and-absent' and receipt.get('totalCeilingAdhered') is True
+                    and report.get('runNonce') == receipt['nonce'] and report.get('pid') == receipt['pid'])
+            except (OSError, ValueError, KeyError, AttributeError, TypeError):
+                accepted = False
+            valid = valid and accepted
             if mode == 'decoder-only':
                 valid = valid and report.get('mode') == mode and report.get('probePassed') is True and 'passed' not in report
                 cases = report.get('cases', [])

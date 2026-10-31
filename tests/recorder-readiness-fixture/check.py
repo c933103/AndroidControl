@@ -63,18 +63,30 @@ for name, mode, report, corrupt, expected in (
     ('missing-final', 'integration', full, False, 1),
     ('nonzero-exit', 'integration', full, False, 1),
     ('ceiling-exceeded', 'integration', full, False, 1),
+    ('failure-evidence', 'integration', dict(full, passed=False, failure='original exception', decoderFailure=dict(inputEos=False), lifecycle=[dict(event='decoder-create-request')]), False, 1),
+    ('missing-receipt', 'integration', full, False, 1),
+    ('malformed-receipt', 'integration', full, False, 1),
+    ('malformed-report', 'integration', full, False, 1),
 ):
     with tempfile.TemporaryDirectory(prefix='recorder-validator-') as directory:
         results = Path(directory) / 'recorder-media-results'; results.mkdir()
         (results / 'report.json').write_text(json.dumps(report))
         receipt = dict(exitCode=0, finalPassVerified=True, cleanup='stopped-and-absent', totalCeilingAdhered=True, nonce='a'*32, pid=42)
-        receipt.update({'cleanup-failure': dict(cleanup='unavailable'), 'missing-final': dict(finalPassVerified=False), 'nonzero-exit': dict(exitCode=124), 'ceiling-exceeded': dict(totalCeilingAdhered=False)}.get(name, {}))
+        receipt.update({'cleanup-failure': dict(cleanup='unavailable'), 'missing-final': dict(finalPassVerified=False), 'nonzero-exit': dict(exitCode=124), 'ceiling-exceeded': dict(totalCeilingAdhered=False), 'failure-evidence': dict(exitCode=124)}.get(name, {}))
         (results / 'media-command.json').write_text(json.dumps(receipt))
         for name_ in ('aac-1.m4a', 'aac-2.m4a', 'decoder-input.m4a'):
             (results / name_).write_bytes(asset_bytes[:-1] if corrupt else asset_bytes)
         for name_ in ('opus-1.ogg', 'opus-2.ogg'):
             (results / name_).write_bytes(b'OggS')
+        if name == 'malformed-report': (results / 'report.json').write_text('not-json')
+        if name == 'missing-receipt': (results / 'media-command.json').unlink()
+        if name == 'malformed-receipt': (results / 'media-command.json').write_text('not-json')
         result = subprocess.run(['python3', '-c', validator, mode], cwd=directory, capture_output=True, timeout=10)
+        if name == 'malformed-report':
+            assert not (results / 'report.json').exists()
+        else:
+            # Semantic/command rejection must preserve original diagnostic bytes.
+            assert (results / 'report.json').read_text() == json.dumps(report)
         assert (result.returncode == 0) == (expected == 0), (name, result.stderr.decode())
         print('PASS', name)
 workflow = (root / '.github/workflows/recorder-media.yml').read_text()
