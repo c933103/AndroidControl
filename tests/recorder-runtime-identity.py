@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 PROPERTIES = ('ro.build.fingerprint', 'ro.build.version.incremental',
               'ro.build.version.sdk', 'ro.product.cpu.abi')
@@ -84,16 +85,33 @@ def verify_comparison(report, sdk_root, api, run=subprocess.run):
     for actual, wanted, label in expected:
         if actual != wanted:
             report['errors'].append('comparison mismatch: ' + label)
+    probe_start = time.monotonic_ns()
+    probe = {'status': 'not-returned', 'timeoutSeconds': 10}
     try:
         result = run([str(sdk_root / 'emulator/emulator'), '-version'], capture_output=True, timeout=10)
-        if result.returncode or len(result.stdout) > 4096:
+        probe.update(returncode=result.returncode, stdoutBytes=len(result.stdout), stderrBytes=len(result.stderr))
+        if result.returncode:
+            probe['status'] = 'nonzero-exit'
+            raise ValueError('unavailable version')
+        if len(result.stdout) > 4096:
+            probe['status'] = 'oversized-output'
             raise ValueError('unavailable version')
         match = re.search(r'Android emulator version (37\.2\.12\.0) \(build_id (16428233)\)', result.stdout.decode())
         if not match:
+            probe['status'] = 'version-format-or-build-mismatch'
             raise ValueError('wrong executable build')
         report['comparisonEmulator'] = dict(version=match.group(1), buildId=match.group(2))
-    except (OSError, ValueError, UnicodeError, subprocess.TimeoutExpired):
+        probe['status'] = 'matched'
+    except subprocess.TimeoutExpired:
+        probe['status'] = 'timeout'
         report['errors'].append('comparison executable build unavailable or mismatched')
+    except (OSError, ValueError, UnicodeError) as failure:
+        if probe['status'] == 'not-returned':
+            probe['status'] = 'os-or-decode-error'
+        report['errors'].append('comparison executable build unavailable or mismatched')
+    finally:
+        probe['durationNs'] = time.monotonic_ns() - probe_start
+        report['comparisonProbe'] = probe
     report['complete'] = not report['errors']
     report['comparison'] = 'official37.2.12-build16428233-versus3a9d579939'
     return report

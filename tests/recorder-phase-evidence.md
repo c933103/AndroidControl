@@ -151,3 +151,20 @@ Instrumentation stage statuses add guest elapsed/wall clocks and media-returned/
 finish-requested boundaries outside measured media loops. Different host/guest
 clocks are not presumed synchronized; these observations are not performance SLA
 evidence. A body report collected after host timeout still cannot pass the lane.
+
+## Build-process residency comparison
+
+The installed-media CI build now requests --no-daemon and Kotlin in-process,
+keeping the same tasks/signing/source. This uses Gradle's single-use process when
+JVM arguments require it, which exits after the build; Kotlin does not create a
+separate compiler daemon. Before emulator launch a bounded jps class inventory
+requires zero Gradle/Kotlin daemons and a positive jps self-check. No process is
+killed, no raw command lines/PIDs/inventory are archived, and unavailable inventory
+fails closed. Numeric CPU/memory/load values describe that instant, not causality.
+No claim follows that previously retained Java processes were consuming CPU or
+causing memory pressure. All matrix/runner/emulator/guest/media gates are unchanged.
+
+The secondary executable-version receipt now distinguishes timeout, nonzero exit,
+oversize and unmatched version format/build, with numeric elapsed/byte counts only.
+This does not bypass its gate or repair media; it prevents repeating the previous
+unclassified API33 failure. Original comparison failures remain durable evidence.

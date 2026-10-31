@@ -100,6 +100,26 @@ class IdentityTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, data, b'')
                 self.assertFalse(identity.verify_comparison(deepcopy(baseline), self.root, api, wrong)['complete'])
 
+    def test_comparison_probe_failure_classification(self):
+        from copy import deepcopy
+        image, incremental, fingerprint, cpus = identity.COMPARISON_GUESTS['35']
+        baseline = dict(packages={'emulator': {'revision': '37.2.12'}, 'systemImage': {'revision': image}},
+                        guest={'ro.build.version.incremental': incremental, 'ro.build.fingerprint': fingerprint},
+                        guestOnlineCpus=cpus, errors=[])
+        for expected, code, data in [('nonzero-exit', 1, b''), ('oversized-output', 0, b'x' * 4097),
+                                     ('version-format-or-build-mismatch', 0, b'wrong')]:
+            def run(command, **kwargs):
+                return subprocess.CompletedProcess(command, code, data, b'not-retained')
+            result = identity.verify_comparison(deepcopy(baseline), self.root, '35', run)
+            self.assertFalse(result['complete'])
+            self.assertEqual(result['comparisonProbe']['status'], expected)
+            self.assertNotIn('not-retained', str(result))
+        def timeout(command, **kwargs):
+            raise subprocess.TimeoutExpired(command, 10)
+        result = identity.verify_comparison(deepcopy(baseline), self.root, '35', timeout)
+        self.assertEqual(result['comparisonProbe']['status'], 'timeout')
+        self.assertGreaterEqual(result['comparisonProbe']['durationNs'], 0)
+
     def test_runner_gates_before_install_and_retains_timestamp_scope(self):
         runner = Path(__file__).with_name('run-recorder-media-checks.sh').read_text()
         self.assertLess(runner.index('python3 tests/recorder-runtime-identity.py'), runner.index('adb install'))

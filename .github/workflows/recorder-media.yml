@@ -51,6 +51,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Check bounded crash filter
         run: |
+          python3 tests/test-recorder-host-resources.py
           python3 tests/test-recorder-command-timing.py
           python3 tests/test-recorder-instrument-args.py
           python3 tests/test-recorder-crash-filter.py
@@ -62,13 +63,15 @@ jobs:
       - name: Accept existing project Android SDK licenses
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
       - name: Build unchanged debug signing configuration
-        run: ./gradlew -PrecorderMediaTests=true -PrecorderMediaControl=${{ matrix.application == 'control' }} :manager:assembleDebug :manager:assembleDebugAndroidTest
+        run: ./gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process -PrecorderMediaTests=true -PrecorderMediaControl=${{ matrix.application == 'control' }} :manager:assembleDebug :manager:assembleDebugAndroidTest
       - name: Check target-only ANR thread selector
         run: |
           gradle_lib=$(find "$HOME/.gradle/wrapper/dists" -type d -path '*/gradle-8.14/lib' -print -quit)
           python3 tests/recorder-anr-fixture/check.py --gradle-lib "$gradle_lib"
           python3 tests/recorder-readiness-fixture/check.py --gradle-lib "$gradle_lib"
           python3 tests/recorder-application-control-fixture/check.py --gradle-lib "$gradle_lib"
+      - name: Verify build JVMs exited and retain numeric host resources
+        run: python3 tests/recorder-host-resources.py
       - name: Synthetic media only, without permission or security changes
         uses: reactivecircus/android-emulator-runner@v2
         env:
