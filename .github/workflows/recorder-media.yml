@@ -12,12 +12,28 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Explicit single-core HVF initialization observation; not KVM fallback.
-        # The Linux multicore comparison remains pending separate access authorization.
-        include: >-
-          ${{ fromJSON(github.ref == 'refs/heads/diagnostic/recorder-aac-decode-832ac432' &&
-              '[{"api":35,"runner":"macos-15-intel","acceleration-options":"-accel on","application":"manager","artifact-suffix":"-decoder-only-single-core-init","mode":"decoder-only"}]' ||
-              '[{"api":33,"runner":"ubuntu-latest","acceleration-options":"","application":"manager","artifact-suffix":"","mode":"integration"},{"api":35,"runner":"macos-15-intel","acceleration-options":"-accel on","application":"manager","artifact-suffix":"","mode":"integration"},{"api":35,"runner":"macos-15-intel","acceleration-options":"-accel on","application":"control","artifact-suffix":"-application-control","mode":"integration"}]') }}
+        # Restore the existing normal coverage on this branch, not a decoder-only probe.
+        # API33 keeps its original software-emulation configuration; this is not
+        # the separately pending Linux/KVM multicore resource comparison.
+        include:
+          - api: 33
+            runner: ubuntu-latest
+            acceleration-options: ''
+            application: manager
+            artifact-suffix: ''
+            mode: integration
+          - api: 35
+            runner: macos-15-intel
+            acceleration-options: '-accel on'
+            application: manager
+            artifact-suffix: ''
+            mode: integration
+          - api: 35
+            runner: macos-15-intel
+            acceleration-options: '-accel on'
+            application: control
+            artifact-suffix: '-application-control'
+            mode: integration
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:

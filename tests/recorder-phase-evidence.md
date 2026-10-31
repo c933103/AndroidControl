@@ -105,3 +105,24 @@ Host controls cover observed/unavailable/malformed snapshots, separate windows,
 throwing observation functions, original exception identity, placement outside the
 unchanged 15-second loop, explicit single-core lane and unchanged normal matrix.
 Older allocation, pre-EOS slow progress and a031 post-inputEOS failures remain open.
+
+## Normal coverage and success-path observations
+
+After the single-core probe PASS at591432a2 (which retained no successful-path
+timing snapshot), the workflow restores the exact existing normal matrix for this
+branch too: API33 manager on Ubuntu's original software-emulation lane, API35
+manager and API35 control on macOS/HVF. These run all eleven original cases;
+there is no decoder-only branch override. API33 is existing normal coverage,
+not an alternate execution of the blocked Linux/KVM resource comparison.
+
+Each successful decode case now includes decodeObservations from the same bounded
+snapshot used on failure: initialization calls/scheduler, before-create numeric
+own-state, separate loop timings/scheduler and progress counters. Snapshot creation
+occurs after measured windows and the original duration/signal assertions, with
+no file I/O or additional sampling inside the windows. On-failure own-state remains
+failure-only. Diagnostic publication exceptions are contained in both paths.
+
+A normal pass would establish only these installed synthetic media paths, not
+recording service/Binder/SAF failure, telephony/handset/privacy or release acceptance.
+Original failures remain evidence, and15s remains the existing test guard rather
+than an asserted owner/product SLA. No permission change or retry-until-pass.

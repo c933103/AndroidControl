@@ -66,16 +66,22 @@ for name, mode, report, corrupt, expected in (
         assert (result.returncode == 0) == (expected == 0), (name, result.stderr.decode())
         print('PASS', name)
 workflow = (root / '.github/workflows/recorder-media.yml').read_text()
-expression = workflow.split('include: >-', 1)[1].split('    runs-on:', 1)[0]
-assert "fromJSON(github.ref == 'refs/heads/diagnostic/recorder-aac-decode-832ac432' &&" in expression
-single, normal = [json.loads(value) for value in re.findall(r"'(\[.*?\])'", expression)]
-assert len(single) == 1 and single[0]['api'] == 35 and single[0]['application'] == 'manager'
-assert single[0]['runner'] == 'macos-15-intel' and single[0]['acceleration-options'] == '-accel on'
-assert single[0]['mode'] == 'decoder-only'
-assert [(row['api'], row['application'], row['mode']) for row in normal] == [(33, 'manager', 'integration'), (35, 'manager', 'integration'), (35, 'control', 'integration')]
-for ref in ('refs/heads/master', 'refs/heads/feature/call-recording-shizu-integration', 'refs/pull/26/merge'):
-    assert ref != 'refs/heads/diagnostic/recorder-aac-decode-832ac432'
-print('PASS exact diagnostic branch selects one API35 manager single-core HVF initialization observation; normal/PR matrix unchanged')
+# Parse the small, fixed matrix without adding a host YAML dependency.
+matrix_text = workflow.split('        include:', 1)[1].split('    runs-on:', 1)[0]
+rows = []
+for line in matrix_text.splitlines():
+    if line.strip().startswith('- api:'):
+        rows.append({'api': int(line.split(':', 1)[1])})
+    elif line.strip():
+        key, value = line.strip().split(':', 1)
+        rows[-1][key] = value.strip().strip("'")
+assert rows == [
+    dict(api=33, runner='ubuntu-latest', **{'acceleration-options': '', 'artifact-suffix': ''}, application='manager', mode='integration'),
+    dict(api=35, runner='macos-15-intel', **{'acceleration-options': '-accel on', 'artifact-suffix': ''}, application='manager', mode='integration'),
+    dict(api=35, runner='macos-15-intel', **{'acceleration-options': '-accel on', 'artifact-suffix': '-application-control'}, application='control', mode='integration'),
+]
+assert 'fromJSON' not in workflow and "github.ref ==" not in workflow
+print('PASS all branches use unchanged normal API33 manager/API35 manager/control integration matrix')
 
 # Milestones follow actual queue/dequeue success; no payload or per-iteration trace.
 decode = media.read_text().split('private fun decode(', 1)[1].split('private fun checkNonSeekableAac', 1)[0]
@@ -106,5 +112,11 @@ assert decoder_text.index('progress.callerState("beforeCreate"') < decoder_text.
 assert decoder_text.index('progress.initializationScheduler(') < decoder_text.index('val deadline =')
 assert 'setThreadPriority' not in media_text
 assert "runner.os == 'Linux'" in workflow
-assert single[0]['artifact-suffix'] == '-decoder-only-single-core-init'
-print('PASS separate initialization window, numeric own-state observations and explicit HVF lane')
+assert all(row['mode'] == 'integration' for row in rows)
+print('PASS separate initialization window, numeric own-state observations and normal integration lanes')
+
+assert decoder_text.index('progress.snapshot { result.put("decodeObservations"') > decoder_text.index('check(samples in')
+assert decoder_text.index('progress.snapshot { result.put("decodeObservations"') > decoder_text.index('progress.scheduler(')
+assert 'progress.snapshot' not in loop_text
+assert 'progress.snapshot { snapshot ->' in decoder_text
+print('PASS success and failure retain bounded observations outside timing/media assertions')

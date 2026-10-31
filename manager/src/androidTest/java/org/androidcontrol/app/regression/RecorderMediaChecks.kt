@@ -468,12 +468,17 @@ object RecorderMediaChecks {
             }
             return JSONObject().put("decoder", name).put("containerSamples", timestamps.size)
                 .put("timestampSpanUs", span).put("decodedFrames", samples).put("rms", rms).put("toneAmplitude", amplitude)
+                .also { result ->
+                    // Retain existing bounded observations on success too. No file I/O,
+                    // new sampling or serialization inside either measured window.
+                    progress.snapshot { result.put("decodeObservations", JSONObject(it)) }
+                }
         } catch (failure: Throwable) {
             progress.callerState("onFailure",
                 { android.os.Process.getThreadPriority(android.os.Process.myTid()) },
                 { ActivityManager.RunningAppProcessInfo().also { ActivityManager.getMyMemoryState(it) }.importance })
             // One constant-size snapshot, outside the media loop; diagnostics cannot replace the cause.
-            progress.onFailure { snapshot ->
+            progress.snapshot { snapshot ->
                 evidence.put("decoderFailure", JSONObject(snapshot).put("codec", identity).put("file", file.name))
             }
             throw failure
@@ -598,7 +603,7 @@ internal class RecorderDecodeProgress {
         totalNs[index] += elapsed
         maxNs[index] = maxOf(maxNs[index], elapsed)
     }
-    fun onFailure(publish: (Map<String, Any>) -> Unit) {
+    fun snapshot(publish: (Map<String, Any>) -> Unit) {
         runCatching {
             val operations = listOf("inputDequeue", "sampleReadQueue", "outputDequeue", "pcmProcessing", "outputRelease")
             publish(mapOf(

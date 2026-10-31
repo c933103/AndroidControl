@@ -12,7 +12,7 @@ fun main(args: Array<String>) {
         progress.operation(0, 100, 140); progress.operation(0, 200, 210)
         progress.operation(4, 100, 120)
         var result: Map<String, Any>? = null
-        progress.onFailure { result = it }
+        progress.snapshot { result = it }
         check(result!!.size == 18 && result!!["queuedInputs"] == 46L && result!!["inputEos"] == true)
         check(result!!["outputFrames"] == 10240L && result!!["outputEos"] == false)
         check(result!!["queuedBytes"] == 6400L && result!!["outputBuffers"] == 12L)
@@ -24,9 +24,9 @@ fun main(args: Array<String>) {
         check((operations[4] as Map<*, *>)["totalNs"] == 20L)
         progress.outputEos = true
         repeat(10000) { progress.operation(2, 0, 1) }
-        progress.onFailure { result = it }
+        progress.snapshot { result = it }
         check(result!!.size == 18 && result!!["outputEos"] == true)
-        RecorderDecodeProgress().onFailure { result = it }
+        RecorderDecodeProgress().snapshot { result = it }
         check(result!!["queuedInputs"] == 0L && result!!["inputEos"] == false)
         check((result!!["loop"] as Map<*, *>)["status"] == "not-started")
         for ((cpuStart, cpuEnd, expected) in listOf(
@@ -35,22 +35,22 @@ fun main(args: Array<String>) {
             Triple(100L, 99L, "unavailable")
         )) {
             progress.loopTiming(1000, 2000, cpuStart, cpuEnd, 42)
-            progress.onFailure { result = it }
+            progress.snapshot { result = it }
             val loop = result!!["loop"] as Map<*, *>
             check(loop.size == 3 && loop["callerThreadId"] == 42L)
             check(loop["wallNs"] == 1000L && loop["callerCpuNs"] == expected)
         }
         progress.loopTiming(2000, 1000, 100, 110, 42)
-        progress.onFailure { result = it }
+        progress.snapshot { result = it }
         check((result!!["loop"] as Map<*, *>)["wallNs"] == "unavailable")
         val timing = RecorderDecodeProgress()
-        timing.onFailure { result = it }
+        timing.snapshot { result = it }
         check((result!!["timelineMs"] as Map<*, *>).values.all { it == -1L })
         timing.loopStartMs = 100; timing.deadlineMs = 15100
         timing.inputQueued(200); timing.outputReceived(300)
         timing.inputQueued(14000); timing.inputEnded(14100); timing.outputReceived(14500)
         timing.formatChanges = 1; timing.bufferChanges = 2; timing.timeoutMs = 15101
-        timing.onFailure { result = it }
+        timing.snapshot { result = it }
         val timeline = result!!["timelineMs"] as Map<*, *>
         check(timeline == mapOf("loopStart" to 100L, "deadline" to 15100L,
             "firstInput" to 200L, "lastInput" to 14000L, "inputEos" to 14100L,
@@ -58,16 +58,16 @@ fun main(args: Array<String>) {
             "lastProgress" to 14500L, "timeout" to 15101L))
         check(result!!["formatChanges"] == 1L && result!!["bufferChanges"] == 2L)
         repeat(10000) { timing.outputReceived(14501L + it) }
-        timing.onFailure { result = it }
+        timing.snapshot { result = it }
         check(result!!.size == 18 && (result!!["timelineMs"] as Map<*, *>).size == 9)
         val phases = RecorderDecodeProgress()
-        phases.onFailure { result = it }
+        phases.snapshot { result = it }
         val absent = result!!["initializationCalls"] as List<*>
         check(absent.size == 3)
         check(absent.all { (it as Map<*, *>)["startElapsedNs"] == -1L && it["endElapsedNs"] == -1L && it["returned"] == false })
         phases.phase(0, 123, 456, true)
         phases.phase(1, 500, 600, false)
-        phases.onFailure { result = it }
+        phases.snapshot { result = it }
         val calls = result!!["initializationCalls"] as List<*>
         check(calls[0] == mapOf("name" to "create", "startElapsedNs" to 123L, "endElapsedNs" to 456L, "returned" to true))
         check(calls[1] == mapOf("name" to "configure", "startElapsedNs" to 500L, "endElapsedNs" to 600L, "returned" to false))
@@ -78,7 +78,7 @@ fun main(args: Array<String>) {
         }
         phases.scheduler(longArrayOf(100, 200, 3), longArrayOf(150, 500, 7), 99, 500)
         phases.sampleOperation(0, 100, 140); phases.sampleOperation(0, 200, 210)
-        phases.onFailure { result = it }
+        phases.snapshot { result = it }
         check(result!!["callerScheduler"] == mapOf("status" to "observed", "callerTid" to 99,
             "cpuNs" to 50L, "runqueueWaitNs" to 300L, "timeslices" to 4L, "windowWallNs" to 500L))
         val sampleCalls = result!!["sampleOperations"] as List<*>
@@ -87,25 +87,32 @@ fun main(args: Array<String>) {
         check((sampleCalls[1] as Map<*, *>)["count"] == 0L)
         for (end in listOf<LongArray?>(null, longArrayOf(1), longArrayOf(90, 500, 7))) {
             phases.scheduler(longArrayOf(100, 200, 3), end, 99, 500)
-            phases.onFailure { result = it }
+            phases.snapshot { result = it }
             check((result!!["callerScheduler"] as Map<*, *>)["status"] == "unavailable")
         }
-        RecorderDecodeProgress().onFailure { result = it }
+        RecorderDecodeProgress().snapshot { result = it }
         check((result!!["callerScheduler"] as Map<*, *>)["status"] == "not-started")
         val original = IllegalStateException("original timeout")
         val caught = runCatching {
             try { throw original } catch (failure: Throwable) {
-                progress.onFailure { error("diagnostic write failed") }
+                progress.snapshot { error("diagnostic write failed") }
                 throw failure
             }
         }.exceptionOrNull()
         check(caught === original)
+        val successValue = Any()
+        val retainedSuccess = runCatching {
+            successValue.also { progress.snapshot { error("success diagnostic publication failed") } }
+        }.getOrThrow()
+        check(retainedSuccess === successValue)
+        progress.snapshot { result = it }
+        check(result!!["outputEos"] == true && result!!["inputEos"] == true)
         val init = RecorderDecodeProgress()
-        init.onFailure { result = it }
+        init.snapshot { result = it }
         check((result!!["initializationScheduler"] as Map<*, *>)["status"] == "not-started")
         init.initializationScheduler(longArrayOf(1, 2, 3), longArrayOf(4, 6, 8), 99, 20)
         init.callerState("beforeCreate", { -8 }, { 100 })
-        init.onFailure { result = it }
+        init.snapshot { result = it }
         check(result!!["initializationScheduler"] == mapOf("status" to "observed", "callerTid" to 99,
             "cpuNs" to 3L, "runqueueWaitNs" to 4L, "timeslices" to 5L, "windowWallNs" to 20L))
         check((result!!["callerScheduler"] as Map<*, *>)["status"] == "not-started")
@@ -113,7 +120,7 @@ fun main(args: Array<String>) {
             mapOf("threadPriority" to -8, "processImportance" to 100))
         for (end in listOf<LongArray?>(null, longArrayOf(1), longArrayOf(0, 6, 8))) {
             init.initializationScheduler(longArrayOf(1, 2, 3), end, 99, 20)
-            init.onFailure { result = it }
+            init.snapshot { result = it }
             check((result!!["initializationScheduler"] as Map<*, *>)["status"] == "unavailable")
         }
         val originalInit = IllegalStateException("original initialization failure")
@@ -125,11 +132,11 @@ fun main(args: Array<String>) {
             }
         }.exceptionOrNull()
         check(caughtInit === originalInit)
-        init.onFailure { result = it }
+        init.snapshot { result = it }
         check((result!!["callerStates"] as Map<*, *>)["onFailure"] ==
             mapOf("threadPriority" to "unavailable", "processImportance" to "unavailable"))
         init.callerState("onFailure", { 20 }, { error("unsupported") })
-        init.onFailure { result = it }
+        init.snapshot { result = it }
         check((result!!["callerStates"] as Map<*, *>)["onFailure"] ==
             mapOf("threadPriority" to "unavailable", "processImportance" to "unavailable"))
         println("PASS decode-progress: constant counters/timing and original failure preserved")
