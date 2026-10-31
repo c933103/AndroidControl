@@ -6,8 +6,8 @@ package=org.androidcontrol.app
 application_mode=${1:-manager}
 media_mode=${2:-integration}
 case "$media_mode" in
-    integration) result_key=recorder_media; instrument_args=() ;;
-    decoder-only) result_key=recorder_decoder_probe; instrument_args=(-e recorder_mode decoder-only) ;;
+    integration) result_key=recorder_media ;;
+    decoder-only) result_key=recorder_decoder_probe ;;
     *) echo 'Unsupported recorder media mode'; exit 1 ;;
 esac
 [[ "$media_mode" != decoder-only || "$application_mode" == manager ]] || { echo 'Decoder probe requires manager'; exit 1; }
@@ -52,7 +52,7 @@ import json
 from pathlib import Path
 Path("recorder-media-results/media-command.json").write_text(json.dumps(dict(exitCode=code, timedOut=timed_out)) + "\n")
 sys.exit(code)
-' adb shell am instrument -w "${instrument_args[@]}" "$runner" 2>&1 | tee "$results/instrumentation.txt" || status=1
+' adb shell am instrument -w -e recorder_mode "$media_mode" "$runner" 2>&1 | tee "$results/instrumentation.txt" || status=1
 grep -Fxq "INSTRUMENTATION_RESULT: $result_key=PASS" "$results/instrumentation.txt" || status=1
 if [[ "$application_mode" == control ]]; then expected_application=org.androidcontrol.app.regression.RecorderControlApplication
 else expected_application=org.androidcontrol.app.ShizukuApplication; fi
