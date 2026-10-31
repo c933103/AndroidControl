@@ -33,6 +33,7 @@ jobs:
           python3 tests/test-recorder-crash-filter.py
           python3 tests/test-recorder-exit-info.py
           python3 tests/test-recorder-acceleration.py
+          python3 tests/test-recorder-runtime-identity.py
           python3 tests/test-recorder-anr-request.py
       - name: Accept existing project Android SDK licenses
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
@@ -64,3 +65,4 @@ jobs:
           name: recorder-media-api-${{ matrix.api }}${{ matrix.artifact-suffix }}
           path: recorder-media-results
           if-no-files-found: warn
+

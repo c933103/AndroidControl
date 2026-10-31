@@ -30,6 +30,8 @@ capability = json.loads(Path('recorder-media-results/acceleration.json').read_te
 assert capability.get('usable') is True and capability.get('requestedMode') == 'on', 'API35 acceleration not verified'
 ACCEL
 fi
+# Fail closed before media if exact package/guest identity cannot be retained.
+python3 tests/recorder-runtime-identity.py "$sdk"
 shopt -s nullglob
 apps=(manager/build/outputs/apk/debug/*.apk)
 tests=(manager/build/outputs/apk/androidTest/debug/*.apk)
@@ -63,7 +65,7 @@ if [[ "$status" != 0 ]]; then
         if [[ "$started_ms" =~ ^[0-9]+$ ]]; then
             python3 tests/recorder-exit-info.py "$pid" "$started_ms" > "$results/app-exit-info.json" || true
         fi
-        adb logcat --pid="$pid" -d -v brief -t 300 -s MediaCodec CCodec CCodecConfig Codec2Client > "$results/app-codec.txt" || true
+        adb logcat --pid="$pid" -d -v threadtime -v monotonic -t 300 -s MediaCodec CCodec CCodecConfig Codec2Client > "$results/app-codec.txt" || true
     fi
 fi
 names=(report.json aac-1.m4a aac-2.m4a opus-1.ogg opus-2.ogg)
@@ -114,3 +116,4 @@ if [[ "$status" != 0 ]]; then
     python3 tests/collect-recorder-anr.py "$runner_class" || true
 fi
 exit "$status"
+

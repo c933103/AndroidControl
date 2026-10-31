@@ -308,15 +308,22 @@ object RecorderMediaChecks {
             check(span in 750_000L..1_250_000L) { "Queued capture timeline compressed: $span us" }
             extractor.seekTo(0, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
             checkpoint("decoder-create-request", "${file.name} ${codec.mimeType}")
-            decoder = MediaCodec.createDecoderByType(codec.mimeType)
+            val createStart = SystemClock.elapsedRealtimeNanos()
+            try { decoder = MediaCodec.createDecoderByType(codec.mimeType) }
+            finally { progress.phase(0, createStart, SystemClock.elapsedRealtimeNanos(), decoder != null) }
             val name = decoder.name
             identity = "$name/${System.identityHashCode(decoder)} ${codec.mimeType} ${file.name}"
             checkpoint("decoder-created", identity)
             format.setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
             checkpoint("decoder-configure-request", identity)
-            decoder.configure(format, null, null, 0)
+            val configureStart = SystemClock.elapsedRealtimeNanos()
+            var configured = false
+            try { decoder.configure(format, null, null, 0); configured = true }
+            finally { progress.phase(1, configureStart, SystemClock.elapsedRealtimeNanos(), configured) }
             checkpoint("decoder-configured", identity)
-            decoder.start(); started = true
+            val startStart = SystemClock.elapsedRealtimeNanos()
+            try { decoder.start(); started = true }
+            finally { progress.phase(2, startStart, SystemClock.elapsedRealtimeNanos(), started) }
             checkpoint("decoder-started", identity)
             var inputEnded = false
             var outputEnded = false
@@ -471,6 +478,15 @@ internal class RecorderDecodeProgress {
         if (firstOutputMs < 0) firstOutputMs = now
         lastOutputMs = now; lastProgressMs = now
     }
+    // Immediate Java API call brackets, excluding checkpoint I/O/name lookup.
+    // These include scheduling/JNI overhead; they are not native watchdog timestamps.
+    private val phaseStartNs = LongArray(3) { -1L }
+    private val phaseEndNs = LongArray(3) { -1L }
+    private val phaseReturned = BooleanArray(3)
+    fun phase(index: Int, startNs: Long, endNs: Long, returned: Boolean) {
+        phaseStartNs[index] = startNs; phaseEndNs[index] = endNs
+        phaseReturned[index] = returned
+    }
     private val totalNs = LongArray(5)
     private val maxNs = LongArray(5)
     private var loop: Map<String, Any> = mapOf("status" to "not-started")
@@ -494,6 +510,10 @@ internal class RecorderDecodeProgress {
                 "outputBuffers" to outputBuffers, "outputFrames" to outputFrames, "outputEos" to outputEos,
                 "inputUnavailable" to inputUnavailable, "outputUnavailable" to outputUnavailable,
                 "loop" to loop,
+                "initializationCalls" to listOf("create", "configure", "start").mapIndexed { index, name ->
+                    mapOf("name" to name, "startElapsedNs" to phaseStartNs[index],
+                        "endElapsedNs" to phaseEndNs[index], "returned" to phaseReturned[index])
+                },
                 "formatChanges" to formatChanges, "bufferChanges" to bufferChanges,
                 // Same elapsedRealtime clock as lifecycle markers; -1 means not observed.
                 // Progress means queued data/EOS or a received output, not format notifications.
@@ -508,3 +528,4 @@ internal class RecorderDecodeProgress {
         }
     }
 }
+

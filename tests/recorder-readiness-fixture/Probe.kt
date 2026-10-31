@@ -13,7 +13,7 @@ fun main(args: Array<String>) {
         progress.operation(4, 100, 120)
         var result: Map<String, Any>? = null
         progress.onFailure { result = it }
-        check(result!!.size == 13 && result!!["queuedInputs"] == 46L && result!!["inputEos"] == true)
+        check(result!!.size == 14 && result!!["queuedInputs"] == 46L && result!!["inputEos"] == true)
         check(result!!["outputFrames"] == 10240L && result!!["outputEos"] == false)
         check(result!!["queuedBytes"] == 6400L && result!!["outputBuffers"] == 12L)
         check(result!!["inputUnavailable"] == 3L && result!!["outputUnavailable"] == 4L)
@@ -25,7 +25,7 @@ fun main(args: Array<String>) {
         progress.outputEos = true
         repeat(10000) { progress.operation(2, 0, 1) }
         progress.onFailure { result = it }
-        check(result!!.size == 13 && result!!["outputEos"] == true)
+        check(result!!.size == 14 && result!!["outputEos"] == true)
         RecorderDecodeProgress().onFailure { result = it }
         check(result!!["queuedInputs"] == 0L && result!!["inputEos"] == false)
         check((result!!["loop"] as Map<*, *>)["status"] == "not-started")
@@ -59,7 +59,19 @@ fun main(args: Array<String>) {
         check(result!!["formatChanges"] == 1L && result!!["bufferChanges"] == 2L)
         repeat(10000) { timing.outputReceived(14501L + it) }
         timing.onFailure { result = it }
-        check(result!!.size == 13 && (result!!["timelineMs"] as Map<*, *>).size == 9)
+        check(result!!.size == 14 && (result!!["timelineMs"] as Map<*, *>).size == 9)
+        val phases = RecorderDecodeProgress()
+        phases.onFailure { result = it }
+        val absent = result!!["initializationCalls"] as List<*>
+        check(absent.size == 3)
+        check(absent.all { (it as Map<*, *>)["startElapsedNs"] == -1L && it["endElapsedNs"] == -1L && it["returned"] == false })
+        phases.phase(0, 123, 456, true)
+        phases.phase(1, 500, 600, false)
+        phases.onFailure { result = it }
+        val calls = result!!["initializationCalls"] as List<*>
+        check(calls[0] == mapOf("name" to "create", "startElapsedNs" to 123L, "endElapsedNs" to 456L, "returned" to true))
+        check(calls[1] == mapOf("name" to "configure", "startElapsedNs" to 500L, "endElapsedNs" to 600L, "returned" to false))
+        check((calls[2] as Map<*, *>)["startElapsedNs"] == -1L)
         val original = IllegalStateException("original timeout")
         val caught = runCatching {
             try { throw original } catch (failure: Throwable) {
@@ -111,3 +123,4 @@ fun main(args: Array<String>) {
     }
     println("PASS ${args.single()}: ${ProbeState.events}")
 }
+
