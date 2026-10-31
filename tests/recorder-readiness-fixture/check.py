@@ -80,7 +80,7 @@ assert rows == [
     dict(api=35, runner='macos-15-intel', **{'acceleration-options': '-accel on', 'artifact-suffix': ''}, application='manager', mode='integration'),
     dict(api=35, runner='macos-15-intel', **{'acceleration-options': '-accel on', 'artifact-suffix': '-application-control'}, application='control', mode='integration'),
 ]
-assert 'fromJSON' not in workflow and "github.ref ==" not in workflow
+assert 'fromJSON' not in workflow and 'github.ref' not in matrix_text
 print('PASS all branches use unchanged normal API33 manager/API35 manager/control integration matrix')
 
 # Milestones follow actual queue/dequeue success; no payload or per-iteration trace.
@@ -120,3 +120,8 @@ assert decoder_text.index('progress.snapshot { result.put("decodeObservations"')
 assert 'progress.snapshot' not in loop_text
 assert 'progress.snapshot { snapshot ->' in decoder_text
 print('PASS success and failure retain bounded observations outside timing/media assertions')
+
+assert "emulator-build: ${{ github.ref == 'refs/heads/diagnostic/recorder-aac-decode-832ac432' && '16428233' || '' }}" in workflow
+assert "RECORDER_EMULATOR_COMPARISON: ${{ github.ref == 'refs/heads/diagnostic/recorder-aac-decode-832ac432' && '37.2.12' || '' }}" in workflow
+assert 'python3 tests/test-recorder-command-timing.py' in workflow
+print('PASS explicit official prior-build comparison; other-branch emulator defaults unchanged')

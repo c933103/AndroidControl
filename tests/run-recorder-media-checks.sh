@@ -41,16 +41,23 @@ adb install -r -t "${tests[0]}"
 adb shell pm list instrumentation | tee "$results/registered-instrumentation.txt"
 grep -Fq "$runner" "$results/registered-instrumentation.txt"
 status=0
-python3 -c 'import subprocess, sys
+python3 -c 'import subprocess, sys, time
+started_wall_ns = time.time_ns()
+started_monotonic_ns = time.monotonic_ns()
 try:
     result = subprocess.run(sys.argv[1:], timeout=180)
 except subprocess.TimeoutExpired:
     code, timed_out = 124, True
 else:
     code, timed_out = result.returncode, False
+completed_monotonic_ns = time.monotonic_ns()
+completed_wall_ns = time.time_ns()
 import json
 from pathlib import Path
-Path("recorder-media-results/media-command.json").write_text(json.dumps(dict(exitCode=code, timedOut=timed_out)) + "\n")
+Path("recorder-media-results/media-command.json").write_text(json.dumps(dict(exitCode=code, timedOut=timed_out, timeoutSeconds=180,
+    hostStartedWallNs=started_wall_ns, hostCompletedWallNs=completed_wall_ns,
+    hostStartedMonotonicNs=started_monotonic_ns, hostCompletedMonotonicNs=completed_monotonic_ns,
+    hostDurationNs=completed_monotonic_ns-started_monotonic_ns)) + "\n")
 sys.exit(code)
 ' adb shell am instrument -w -e recorder_mode "$media_mode" "$runner" 2>&1 | tee "$results/instrumentation.txt" || status=1
 grep -Fxq "INSTRUMENTATION_RESULT: $result_key=PASS" "$results/instrumentation.txt" || status=1

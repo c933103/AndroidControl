@@ -51,6 +51,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Check bounded crash filter
         run: |
+          python3 tests/test-recorder-command-timing.py
           python3 tests/test-recorder-instrument-args.py
           python3 tests/test-recorder-crash-filter.py
           python3 tests/test-recorder-exit-info.py
@@ -70,7 +71,11 @@ jobs:
           python3 tests/recorder-application-control-fixture/check.py --gradle-lib "$gradle_lib"
       - name: Synthetic media only, without permission or security changes
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          RECORDER_EMULATOR_COMPARISON: ${{ github.ref == 'refs/heads/diagnostic/recorder-aac-decode-832ac432' && '37.2.12' || '' }}
         with:
+          # Controlled prior-build comparison only; normal branch defaults unchanged.
+          emulator-build: ${{ github.ref == 'refs/heads/diagnostic/recorder-aac-decode-832ac432' && '16428233' || '' }}
           api-level: ${{ matrix.api }}
           target: google_apis
           arch: x86_64

@@ -77,6 +77,29 @@ class IdentityTests(unittest.TestCase):
         self.assertFalse(report['complete'])
         self.assertEqual(report['guest'], {})
 
+    def test_exact_comparison_and_confounded_identity_rejected(self):
+        from copy import deepcopy
+        for api in ('33', '35'):
+            image, incremental, fingerprint, cpus = identity.COMPARISON_GUESTS[api]
+            baseline = dict(packages={'emulator': {'revision': '37.2.12'}, 'systemImage': {'revision': image}},
+                            guest={'ro.build.version.incremental': incremental, 'ro.build.fingerprint': fingerprint},
+                            guestOnlineCpus=cpus, errors=[])
+            def version(command, **kwargs):
+                self.assertEqual(command, [str(self.root / 'emulator/emulator'), '-version'])
+                self.assertEqual(kwargs, dict(capture_output=True, timeout=10))
+                return subprocess.CompletedProcess(command, 0, b'Android emulator version 37.2.12.0 (build_id 16428233) (CL:N/A)', b'')
+            self.assertTrue(identity.verify_comparison(deepcopy(baseline), self.root, api, version)['complete'])
+            for branch, key in [('packages', 'systemImage'), ('packages', 'emulator'), ('guest', 'ro.build.fingerprint'), ('guest', 'ro.build.version.incremental')]:
+                bad = deepcopy(baseline)
+                bad[branch][key] = {'revision': 'wrong'} if branch == 'packages' else 'wrong'
+                self.assertFalse(identity.verify_comparison(bad, self.root, api, version)['complete'])
+            bad = deepcopy(baseline); bad['guestOnlineCpus'] = 99
+            self.assertFalse(identity.verify_comparison(bad, self.root, api, version)['complete'])
+            for data in (b'Android emulator version 37.2.13.0 (build_id 16740729)', b'x' * 4097, b''):
+                def wrong(command, **kwargs):
+                    return subprocess.CompletedProcess(command, 0, data, b'')
+                self.assertFalse(identity.verify_comparison(deepcopy(baseline), self.root, api, wrong)['complete'])
+
     def test_runner_gates_before_install_and_retains_timestamp_scope(self):
         runner = Path(__file__).with_name('run-recorder-media-checks.sh').read_text()
         self.assertLess(runner.index('python3 tests/recorder-runtime-identity.py'), runner.index('adb install'))

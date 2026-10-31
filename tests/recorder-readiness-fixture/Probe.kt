@@ -169,6 +169,9 @@ fun main(args: Array<String>) {
             check(ProbeState.events.indexOf("waiting-for-application-idle") < ProbeState.events.indexOf("waitForIdleSync"))
             check(ProbeState.events.indexOf("waitForIdleSync") < ProbeState.events.indexOf("application-idle"))
             check(ProbeState.events.indexOf("application-idle") < ProbeState.events.indexOf("media"))
+            check(ProbeState.events.indexOf("media") < ProbeState.events.indexOf("media-returned"))
+            check(ProbeState.events.indexOf("media-returned") < ProbeState.events.indexOf("finish-requested"))
+            check(ProbeState.events.indexOf("finish-requested") < ProbeState.events.indexOf("finish"))
         }
         "idle-failure" -> {
             check(ProbeState.result?.getString("recorder_media") == "FAIL")

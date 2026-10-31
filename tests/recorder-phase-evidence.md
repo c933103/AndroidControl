@@ -126,3 +126,28 @@ A normal pass would establish only these installed synthetic media paths, not
 recording service/Binder/SAF failure, telephony/handset/privacy or release acceptance.
 Original failures remain evidence, and15s remains the existing test guard rather
 than an asserted owner/product SLA. No permission change or retry-until-pass.
+
+## Controlled official emulator build comparison
+
+The prior API33 full-pass fd6e2f89 jobs123252635076/123252613915 used37.2.12
+(build16428233), the same Ubuntu image20261025.353.1,2 requested CPUs and2048MB.
+Current37.2.13 API33 completed11 body assertions but missed the whole180s command
+budget. Earlier API35 failures already occurred on37.2.12, so version drift is not
+a proved cause or remedy. No observed CPU/RAM regression justifies changing them.
+Concurrent jobs are distinct hosted VMs; no host-load measurement proves contention.
+
+The exact diagnostic branch pins the existing action's supported emulator-build
+input to16428233, downloaded by that action from Google's official repository.
+Other branches retain its previous default. Before APK install the identity gate
+requires37.2.12 package revision AND executable37.2.12.0/build16428233, plus exactly
+the baseline API33 rev17/build12342917/fingerprint/2CPUs or API35 rev9/build12960925/
+fingerprint/1CPU. A changed guest fails closed as a confounded comparison, never
+silently standing in for the requested experiment. All three normal modes/cases,
+AVD options, readiness checks and15s/180s/1200s/45min limits remain unchanged.
+
+The host command receipt now records monotonic start/end/duration and wall-clock
+start/end (clock adjustments remain visible), keeping its original timeout/exit.
+Instrumentation stage statuses add guest elapsed/wall clocks and media-returned/
+finish-requested boundaries outside measured media loops. Different host/guest
+clocks are not presumed synchronized; these observations are not performance SLA
+evidence. A body report collected after host timeout still cannot pass the lane.

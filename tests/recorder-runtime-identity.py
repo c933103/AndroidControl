@@ -64,6 +64,41 @@ def collect(sdk_root, api, run=subprocess.run, min_cpus=1):
     return report
 
 
+# Exact baseline identities retained in3a9d579939 artifacts. Never change guest
+# image/CPU identity silently when comparing the official emulator binary.
+COMPARISON_GUESTS = {
+    '33': ('17', '12342917', 'google/sdk_gphone64_x86_64/emu64x:13/TE1A.240213.009/12342917:userdebug/dev-keys', 2),
+    '35': ('9', '12960925', 'google/sdk_gphone64_x86_64/emu64xa:15/AE3A.240806.043/12960925:userdebug/dev-keys', 1),
+}
+
+
+def verify_comparison(report, sdk_root, api, run=subprocess.run):
+    image, incremental, fingerprint, cpus = COMPARISON_GUESTS[api]
+    expected = (
+        (report['packages'].get('emulator', {}).get('revision'), '37.2.12', 'emulator revision'),
+        (report['packages'].get('systemImage', {}).get('revision'), image, 'image revision'),
+        (report['guest'].get('ro.build.version.incremental'), incremental, 'guest incremental'),
+        (report['guest'].get('ro.build.fingerprint'), fingerprint, 'guest fingerprint'),
+        (report.get('guestOnlineCpus'), cpus, 'guest CPUs'),
+    )
+    for actual, wanted, label in expected:
+        if actual != wanted:
+            report['errors'].append('comparison mismatch: ' + label)
+    try:
+        result = run([str(sdk_root / 'emulator/emulator'), '-version'], capture_output=True, timeout=10)
+        if result.returncode or len(result.stdout) > 4096:
+            raise ValueError('unavailable version')
+        match = re.search(r'Android emulator version (37\.2\.12\.0) \(build_id (16428233)\)', result.stdout.decode())
+        if not match:
+            raise ValueError('wrong executable build')
+        report['comparisonEmulator'] = dict(version=match.group(1), buildId=match.group(2))
+    except (OSError, ValueError, UnicodeError, subprocess.TimeoutExpired):
+        report['errors'].append('comparison executable build unavailable or mismatched')
+    report['complete'] = not report['errors']
+    report['comparison'] = 'official37.2.12-build16428233-versus3a9d579939'
+    return report
+
+
 if __name__ == '__main__':
     api = sys.argv[1]
     if api not in ('33', '35'):
@@ -75,6 +110,12 @@ if __name__ == '__main__':
     if min_cpus not in (1, 2):
         raise SystemExit('Unsupported CPU baseline')
     report = collect(Path(root), api, min_cpus=min_cpus)
+    comparison = os.environ.get('RECORDER_EMULATOR_COMPARISON', '')
+    if comparison == '37.2.12':
+        verify_comparison(report, Path(root), api)
+    elif comparison:
+        report['errors'].append('unsupported comparison')
+        report['complete'] = False
     destination = Path('recorder-media-results/runtime-identity.json')
     destination.parent.mkdir(exist_ok=True)
     destination.write_text(json.dumps(report, indent=2) + '\n')
