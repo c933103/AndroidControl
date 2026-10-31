@@ -143,7 +143,7 @@ fun main(args: Array<String>) {
         return
     }
     val runner = RecorderMediaInstrumentation()
-    val bundle = Bundle()
+    val bundle = Bundle().apply { putString("recorder_run_nonce", "a".repeat(32)) }
     if (args.single() == "diagnostic") bundle.putString("anr_pid", "123")
     if (args.single() == "idle-failure") ProbeState.rejectIdle = true
     if (args.single() == "decoder-only") bundle.putString("recorder_mode", "decoder-only")
@@ -152,6 +152,13 @@ fun main(args: Array<String>) {
         check(runCatching { runner.onCreate(bundle) }.isFailure)
         check(ProbeState.events.isEmpty())
         println("PASS invalid-mode rejected before start")
+        return
+    }
+    if (args.single() == "invalid-nonce") {
+        bundle.putString("recorder_run_nonce", "stale")
+        check(runCatching { runner.onCreate(bundle) }.isFailure)
+        check("start-thread" !in ProbeState.events)
+        println("PASS invalid-nonce rejected before start")
         return
     }
     runner.onCreate(bundle)
@@ -166,6 +173,7 @@ fun main(args: Array<String>) {
         "ready" -> {
             check(ProbeState.instrumentationClass == RecorderMediaInstrumentation::class.java.name)
             check(ProbeState.result?.getString("recorder_media") == "PASS") { ProbeState.events.toString() }
+            check(ProbeState.result?.getString("recorder_run_nonce") == "a".repeat(32))
             check(ProbeState.events.indexOf("waiting-for-application-idle") < ProbeState.events.indexOf("waitForIdleSync"))
             check(ProbeState.events.indexOf("waitForIdleSync") < ProbeState.events.indexOf("application-idle"))
             check(ProbeState.events.indexOf("application-idle") < ProbeState.events.indexOf("media"))

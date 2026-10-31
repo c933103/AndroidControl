@@ -131,7 +131,7 @@ class IdentityTests(unittest.TestCase):
         runner = Path(__file__).with_name('run-recorder-media-checks.sh').read_text()
         self.assertLess(runner.index('python3 tests/recorder-runtime-identity.py'), runner.index('adb install'))
         self.assertIn('logcat --pid="$pid" -d -v threadtime -v monotonic -t 300 -s MediaCodec CCodec CCodecConfig Codec2Client', runner)
-        self.assertIn('timeout=180', runner)
+        self.assertIn('startup180s + execution180s', runner)
 
 
 if __name__ == '__main__':

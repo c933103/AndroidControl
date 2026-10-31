@@ -41,25 +41,8 @@ adb install -r -t "${tests[0]}"
 adb shell pm list instrumentation | tee "$results/registered-instrumentation.txt"
 grep -Fq "$runner" "$results/registered-instrumentation.txt"
 status=0
-python3 -c 'import subprocess, sys, time
-started_wall_ns = time.time_ns()
-started_monotonic_ns = time.monotonic_ns()
-try:
-    result = subprocess.run(sys.argv[1:], timeout=180)
-except subprocess.TimeoutExpired:
-    code, timed_out = 124, True
-else:
-    code, timed_out = result.returncode, False
-completed_monotonic_ns = time.monotonic_ns()
-completed_wall_ns = time.time_ns()
-import json
-from pathlib import Path
-Path("recorder-media-results/media-command.json").write_text(json.dumps(dict(exitCode=code, timedOut=timed_out, timeoutSeconds=180,
-    hostStartedWallNs=started_wall_ns, hostCompletedWallNs=completed_wall_ns,
-    hostStartedMonotonicNs=started_monotonic_ns, hostCompletedMonotonicNs=completed_monotonic_ns,
-    hostDurationNs=completed_monotonic_ns-started_monotonic_ns)) + "\n")
-sys.exit(code)
-' adb shell am instrument -w -e recorder_mode "$media_mode" "$runner" 2>&1 | tee "$results/instrumentation.txt" || status=1
+# Explicit phase budgets: startup180s + execution180s, work360s/cleanup370s ceilings.
+python3 tests/recorder-command.py "$package" "$media_mode" "$runner" || status=1
 grep -Fxq "INSTRUMENTATION_RESULT: $result_key=PASS" "$results/instrumentation.txt" || status=1
 if [[ "$application_mode" == control ]]; then expected_application=org.androidcontrol.app.regression.RecorderControlApplication
 else expected_application=org.androidcontrol.app.ShizukuApplication; fi
@@ -102,13 +85,18 @@ for name in names:
         data = path.read_bytes()
         if name == 'report.json':
             report = json.loads(data)
+            receipt = json.loads((root / 'media-command.json').read_text())
+            assert receipt.get('exitCode') == 0 and receipt.get('finalPassVerified') is True
+            assert receipt.get('cleanup') == 'stopped-and-absent' and receipt.get('totalCeilingAdhered') is True
+            assert report.get('runNonce') == receipt['nonce'] and report.get('pid') == receipt['pid']
             if mode == 'decoder-only':
                 valid = valid and report.get('mode') == mode and report.get('probePassed') is True and 'passed' not in report
                 cases = report.get('cases', [])
                 valid = valid and len(cases) == 1 and cases[0].get('case') == 'aac-decoder-probe'
                 valid = valid and cases[0].get('sha256') == 'a917896903bc7944cbb6b7c0eab6743c1fe6f99caefebd27d569ea79677d6bd1'
             else:
-                valid = valid and report.get('mode') == mode and report.get('passed') is True and len(report.get('cases', [])) == 11
+                expected_cases = [f'{codec}-{case}' for codec in ('aac', 'opus') for case in ('roundtrip-1', 'roundtrip-2', 'truncated', 'empty', 'mismatch')] + ['aac-unseekable-output-rejected']
+                valid = valid and report.get('mode') == mode and report.get('passed') is True and [case.get('case') for case in report.get('cases', [])] == expected_cases
         else:
             assert (data.startswith(b'OggS') if name.endswith('.ogg') else data[4:8] == b'ftyp')
             if mode == 'decoder-only':

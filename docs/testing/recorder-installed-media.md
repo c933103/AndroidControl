@@ -112,8 +112,9 @@ Repository visibility was verified public on29October; [GitHub's standard-runner
 reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
 lists this standard Intel runner as available and free for public repositories.
 No larger/paid runner, new service/contract, credentials or access change is used.
-The same15s codec deadlines,180s instrumentation timeout,1200s boot limit and45min
-job bound remain. Python implements the unchanged outer timeout portably; no GNU
+At that historical increment the same15s codec deadlines,180s instrumentation
+timeout,1200s boot limit and45min job bound remained. Python implemented that
+outer timeout portably (superseded by explicit phase supervision below); no GNU
 coreutils installation is required. All audio assertions and failure diagnostics
 remain intact. Native-runner acceptance is pending its own exact-head results.
 
@@ -229,5 +230,38 @@ InstrumentationThread headers/stack/lock metadata survive, maximum2 threads,
 headers are excluded. The report preserves exact PID/time/reason/status binding.
 Eleven pure Kotlin selector controls and11 request-identity/time/reason controls
 cover positive and unrelated/stale/oversized inputs. Original media-command
-exitCode/timedOut is now recorded before diagnostics, with the same180s limit;
+At that increment exitCode/timedOut was recorded before diagnostics with180s total;
+that total policy is superseded explicitly by phase supervision below;
 the shell still exits with the original failure. Missing trace is not acceptance.
+
+
+### Explicit startup/execution supervision (PR32 recovery)
+
+Initial test commit97dbcf1f used a literal180-second whole `am instrument`
+command guard. This was an implementation guard, not an owner performance SLA.
+Receipt2805f37fe4 showed approximately141 seconds before instrumentation creation,
+then partial media progress; that run remains failed, not accepted.
+
+The harness now **changes** the outer policy to180 seconds for startup until a
+complete nonce-bound `created` block, then180 seconds for execution, including
+application-idle, all media cases and final process return. The host-monotonic
+work ceiling is360 seconds and total supervisor ceiling370 seconds, including
+at most10 seconds cleanup. Subsequent status and guest clock changes never reset
+these deadlines. This does not fix startup latency. Both phase durations, command
+result and cleanup outcome are retained independently.
+
+A fresh invocation nonce and PID bind created status, final PASS and report.
+Acceptance requires exit0, terminal instrumentation code−1, matching PASS, exactly
+all eleven integration case names, valid media artifacts and successful cleanup.
+The15-second codec gates and EOS/timing/tone/descriptor/negative assertions are
+unchanged. Partial or stale reports cannot pass. A bounded streaming parser
+rejects duplicate/malformed identities, oversized output and early exit.
+
+After success or failure the local adb child is reaped; the known synthetic target
+package is force-stopped on the disposable emulator and absence checked within
+one cleanup reserve. This produces intentional stop evidence: do not mistake its
+exit reason for an organic crash. Artifact collection follows cleanup, not an
+ongoing instrumentation run. Cleanup failure fails the lane; no reuse or retry
+is permitted and existing emulator teardown still applies. No access, KVM,
+priority or codec configuration change. The exact diagnostic branch remains
+API33-only recovery; normal refs retain all three required entries.

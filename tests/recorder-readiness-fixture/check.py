@@ -25,7 +25,7 @@ with tempfile.TemporaryDirectory(prefix='recorder-ready-') as directory:
                     '-no-stdlib', '-no-reflect', '-jvm-target', '17', '-classpath', str(stdlib),
                     '-d', str(classes), str(source), str(progress), *map(str, fixture.glob('*.kt'))], check=True)
     failed = []
-    for case in ('ready', 'idle-failure', 'diagnostic', 'decode-progress', 'decoder-only', 'invalid-mode'):
+    for case in ('ready', 'idle-failure', 'diagnostic', 'decode-progress', 'decoder-only', 'invalid-mode', 'invalid-nonce'):
         result = subprocess.run(['java', '-cp', f'{classes}:{stdlib}', 'org.androidcontrol.app.regression.ProbeKt', case], capture_output=True, text=True, timeout=10)
         if result.returncode:
             failed.append(case)
@@ -45,8 +45,8 @@ asset_bytes = asset.read_bytes()
 expected_sha = 'a917896903bc7944cbb6b7c0eab6743c1fe6f99caefebd27d569ea79677d6bd1'
 assert len(asset_bytes) == 7158 and hashlib.sha256(asset_bytes).hexdigest() == expected_sha
 validator = (root / 'tests/run-recorder-media-checks.sh').read_text().split("<<'VALIDATE' || status=1\n", 1)[1].split('\nVALIDATE', 1)[0]
-full = dict(mode='integration', passed=True, cases=[dict(case=str(i)) for i in range(11)])
-probe = dict(mode='decoder-only', probePassed=True, cases=[dict(case='aac-decoder-probe', sha256=expected_sha)])
+full = dict(runNonce='a'*32, pid=42, mode='integration', passed=True, cases=[dict(case=f'{codec}-{case}') for codec in ('aac', 'opus') for case in ('roundtrip-1', 'roundtrip-2', 'truncated', 'empty', 'mismatch')] + [dict(case='aac-unseekable-output-rejected')])
+probe = dict(runNonce='a'*32, pid=42, mode='decoder-only', probePassed=True, cases=[dict(case='aac-decoder-probe', sha256=expected_sha)])
 for name, mode, report, corrupt, expected in (
     ('full-valid', 'integration', full, False, 0),
     ('probe-valid', 'decoder-only', probe, False, 0),
@@ -54,10 +54,22 @@ for name, mode, report, corrupt, expected in (
     ('full-not-probe', 'decoder-only', full, False, 1),
     ('corrupt-probe', 'decoder-only', probe, True, 1),
     ('unknown-mode', 'other', probe, False, 1),
+    ('stale-report', 'integration', dict(full, runNonce='b'*32), False, 1),
+    ('wrong-pid', 'integration', dict(full, pid=43), False, 1),
+    ('partial-report', 'integration', dict(full, cases=full['cases'][:5]), False, 1),
+    ('duplicate-cases', 'integration', dict(full, cases=[full['cases'][0]]*11), False, 1),
+    ('false-pass', 'integration', dict(full, passed=False), False, 1),
+    ('cleanup-failure', 'integration', full, False, 1),
+    ('missing-final', 'integration', full, False, 1),
+    ('nonzero-exit', 'integration', full, False, 1),
+    ('ceiling-exceeded', 'integration', full, False, 1),
 ):
     with tempfile.TemporaryDirectory(prefix='recorder-validator-') as directory:
         results = Path(directory) / 'recorder-media-results'; results.mkdir()
         (results / 'report.json').write_text(json.dumps(report))
+        receipt = dict(exitCode=0, finalPassVerified=True, cleanup='stopped-and-absent', totalCeilingAdhered=True, nonce='a'*32, pid=42)
+        receipt.update({'cleanup-failure': dict(cleanup='unavailable'), 'missing-final': dict(finalPassVerified=False), 'nonzero-exit': dict(exitCode=124), 'ceiling-exceeded': dict(totalCeilingAdhered=False)}.get(name, {}))
+        (results / 'media-command.json').write_text(json.dumps(receipt))
         for name_ in ('aac-1.m4a', 'aac-2.m4a', 'decoder-input.m4a'):
             (results / name_).write_bytes(asset_bytes[:-1] if corrupt else asset_bytes)
         for name_ in ('opus-1.ogg', 'opus-2.ogg'):

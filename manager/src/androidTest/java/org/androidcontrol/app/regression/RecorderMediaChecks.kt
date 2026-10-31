@@ -64,10 +64,10 @@ object RecorderMediaChecks {
     private data class Encoded(val name: String, val packets: List<Packet>)
     private data class Outcome(val error: String?, val finalized: Boolean, val packets: Int)
 
-    fun run(context: Context) {
+    fun run(context: Context, runNonce: String) {
         val directory = File(context.cacheDir, "recorder-media").apply { mkdirs() }
         directory.listFiles()?.forEach { check(it.delete()) }
-        val report = JSONObject().put("mode", "integration").put("sdk", android.os.Build.VERSION.SDK_INT)
+        val report = JSONObject().put("runNonce", runNonce).put("mode", "integration").put("sdk", android.os.Build.VERSION.SDK_INT)
             .put("input", "generated 440 Hz PCM, 48000 Hz stereo, one second")
             .put("scope", "installed MediaCodec, production parser/muxer, pipes; no call, microphone, service/Binder or physical-device acceptance")
         report.put("pid", android.os.Process.myPid()).put("lifecycle", JSONArray())
@@ -112,11 +112,11 @@ object RecorderMediaChecks {
     }
 
     /** Diagnostic stage isolation; never represents the eleven-case integration suite. */
-    fun runDecoderProbe(context: Context, fixtureContext: Context) {
+    fun runDecoderProbe(context: Context, fixtureContext: Context, runNonce: String) {
         val directory = File(context.cacheDir, "recorder-media").apply { mkdirs() }
         directory.listFiles()?.forEach { check(it.delete()) }
         val cases = JSONArray()
-        val report = JSONObject().put("mode", "decoder-only").put("probePassed", false)
+        val report = JSONObject().put("runNonce", runNonce).put("mode", "decoder-only").put("probePassed", false)
             .put("sdk", android.os.Build.VERSION.SDK_INT).put("pid", android.os.Process.myPid())
             .put("scope", "one pinned synthetic AAC decoder probe; not eleven-case integration acceptance")
             .put("lifecycle", JSONArray()).put("cases", cases)
