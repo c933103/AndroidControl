@@ -85,7 +85,7 @@ class IdentityTests(unittest.TestCase):
                             guest={'ro.build.version.incremental': incremental, 'ro.build.fingerprint': fingerprint},
                             guestOnlineCpus=cpus, errors=[])
             def version(command, **kwargs):
-                self.assertEqual(command, [str(self.root / 'emulator/emulator'), '-version'])
+                self.assertEqual(command, [str(self.root / 'emulator/emulator'), '-no-window', '-version'])
                 self.assertEqual(kwargs, dict(capture_output=True, timeout=10))
                 return subprocess.CompletedProcess(command, 0, b'Android emulator version 37.2.12.0 (build_id 16428233) (CL:N/A)', b'')
             self.assertTrue(identity.verify_comparison(deepcopy(baseline), self.root, api, version)['complete'])
@@ -114,6 +114,13 @@ class IdentityTests(unittest.TestCase):
             self.assertFalse(result['complete'])
             self.assertEqual(result['comparisonProbe']['status'], expected)
             self.assertNotIn('not-retained', str(result))
+        def loader_error(command, **kwargs):
+            self.assertEqual(command[-2:], ['-no-window', '-version'])
+            return subprocess.CompletedProcess(command, 127, b'', b'/private/path: error while loading shared libraries: libExample.so.0: cannot open shared object file; SECRET_SENTINEL')
+        result = identity.verify_comparison(deepcopy(baseline), self.root, '35', loader_error)
+        self.assertEqual(result['comparisonProbe']['loaderLibrary'], 'libExample.so.0')
+        self.assertNotIn('SECRET_SENTINEL', str(result))
+        self.assertNotIn('/private/path', str(result))
         def timeout(command, **kwargs):
             raise subprocess.TimeoutExpired(command, 10)
         result = identity.verify_comparison(deepcopy(baseline), self.root, '35', timeout)

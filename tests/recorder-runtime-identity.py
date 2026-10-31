@@ -88,10 +88,15 @@ def verify_comparison(report, sdk_root, api, run=subprocess.run):
     probe_start = time.monotonic_ns()
     probe = {'status': 'not-returned', 'timeoutSeconds': 10}
     try:
-        result = run([str(sdk_root / 'emulator/emulator'), '-version'], capture_output=True, timeout=10)
+        result = run([str(sdk_root / 'emulator/emulator'), '-no-window', '-version'], capture_output=True, timeout=10)
         probe.update(returncode=result.returncode, stdoutBytes=len(result.stdout), stderrBytes=len(result.stderr))
         if result.returncode:
             probe['status'] = 'nonzero-exit'
+            # Retain only an allowlisted library basename, never raw stderr/paths.
+            if len(result.stderr) <= 4096:
+                loader = re.search(r'error while loading shared libraries: ([A-Za-z0-9._+-]{1,128}):', result.stderr.decode(errors='replace'))
+                if loader:
+                    probe['loaderLibrary'] = loader.group(1)
             raise ValueError('unavailable version')
         if len(result.stdout) > 4096:
             probe['status'] = 'oversized-output'

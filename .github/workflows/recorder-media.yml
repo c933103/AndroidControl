@@ -12,28 +12,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Restore the existing normal coverage on this branch, not a decoder-only probe.
-        # API33 keeps its original software-emulation configuration; this is not
-        # the separately pending Linux/KVM multicore resource comparison.
-        include:
-          - api: 33
-            runner: ubuntu-latest
-            acceleration-options: ''
-            application: manager
-            artifact-suffix: ''
-            mode: integration
-          - api: 35
-            runner: macos-15-intel
-            acceleration-options: '-accel on'
-            application: manager
-            artifact-suffix: ''
-            mode: integration
-          - api: 35
-            runner: macos-15-intel
-            acceleration-options: '-accel on'
-            application: control
-            artifact-suffix: '-application-control'
-            mode: integration
+        # Only the existing API33 row exercises this headless-probe repair.
+        # Normal branches keep all three rows; no unchanged API35 comparison rerun.
+        include: >-
+          ${{ fromJSON(github.ref == 'refs/heads/diagnostic/recorder-aac-decode-832ac432' &&
+              '[{"api":33,"runner":"ubuntu-latest","acceleration-options":"","application":"manager","artifact-suffix":"","mode":"integration"}]' ||
+              '[{"api":33,"runner":"ubuntu-latest","acceleration-options":"","application":"manager","artifact-suffix":"","mode":"integration"},{"api":35,"runner":"macos-15-intel","acceleration-options":"-accel on","application":"manager","artifact-suffix":"","mode":"integration"},{"api":35,"runner":"macos-15-intel","acceleration-options":"-accel on","application":"control","artifact-suffix":"-application-control","mode":"integration"}]') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:

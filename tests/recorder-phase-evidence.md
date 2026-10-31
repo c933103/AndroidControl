@@ -168,3 +168,18 @@ The secondary executable-version receipt now distinguishes timeout, nonzero exit
 oversize and unmatched version format/build, with numeric elapsed/byte counts only.
 This does not bypass its gate or repair media; it prevents repeating the previous
 unclassified API33 failure. Original comparison failures remain durable evidence.
+
+## Headless executable-version probe repair, API33-only recovery
+
+The5314319 API33 probe conclusively exited127 in15.568ms while the actual
+headless emulator booted. The secondary query had omitted -no-window; AOSP launcher
+source selects a different headless QEMU executable when that flag is present.
+Verification now uses emulator -no-window -version to match actual launch, retaining
+the exact build/revision/guest gate and10s bound. On nonzero exit, only an allowlisted
+loader-library basename may be retained, never raw stderr or paths. The precise
+former missing dependency is not asserted without evidence.
+
+Only this exact diagnostic branch selects the EXISTING API33 manager integration
+row to test the repair; all normal branches keep the original three rows. It must
+complete its original180s invocation, final marker and all11 cases to pass.
+No unchanged API35 rerun is launched; previous API35 failures remain open.
