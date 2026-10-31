@@ -1,0 +1,20 @@
+{
+  "scope": "Synthetic diagnostic input only; not user audio",
+  "sourceHead": "eae7f9e30c76dfe8cd706d028febdd08e9bbbbc7",
+  "sourceJob": 123342207089,
+  "sourceRun": 40842555337,
+  "sourceArtifact": 12884044642,
+  "sourceFile": "aac-1.m4a",
+  "bytes": 7158,
+  "sha256": "a917896903bc7944cbb6b7c0eab6743c1fe6f99caefebd27d569ea79677d6bd1",
+  "input": "one second generated 440 Hz PCM, 48000 Hz stereo, amplitude 6000",
+  "verifiedAndroidCase": {
+    "case": "aac-roundtrip-1",
+    "codec": "c2.android.aac.decoder",
+    "containerSamples": 46,
+    "timestampSpanUs": 960000,
+    "decodedFrames": 47104,
+    "rms": 4138.11374807984,
+    "toneAmplitude": 5723.358152917884
+  }
+}

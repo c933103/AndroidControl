@@ -10,3 +10,6 @@ class Bundle() {
     fun getString(key: String): String? = data[key] as? String
 }
 object Process { fun myPid(): Int = 123 }
+
+
+object SystemClock { fun elapsedRealtime(): Long = 1234L }
