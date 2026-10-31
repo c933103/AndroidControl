@@ -12,9 +12,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Explicit single-core HVF initialization observation; not KVM fallback.
+        # The Linux multicore comparison remains pending separate access authorization.
         include: >-
           ${{ fromJSON(github.ref == 'refs/heads/diagnostic/recorder-aac-decode-832ac432' &&
-              '[{"api":35,"runner":"ubuntu-latest","acceleration-options":"-accel on","application":"manager","artifact-suffix":"-decoder-only-probe","mode":"decoder-only"}]' ||
+              '[{"api":35,"runner":"macos-15-intel","acceleration-options":"-accel on","application":"manager","artifact-suffix":"-decoder-only-single-core-init","mode":"decoder-only"}]' ||
               '[{"api":33,"runner":"ubuntu-latest","acceleration-options":"","application":"manager","artifact-suffix":"","mode":"integration"},{"api":35,"runner":"macos-15-intel","acceleration-options":"-accel on","application":"manager","artifact-suffix":"","mode":"integration"},{"api":35,"runner":"macos-15-intel","acceleration-options":"-accel on","application":"control","artifact-suffix":"-application-control","mode":"integration"}]') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -24,7 +26,7 @@ jobs:
           submodules: recursive
           fetch-depth: 0
       - name: Require existing KVM access without permission changes
-        if: matrix.mode == 'decoder-only'
+        if: matrix.mode == 'decoder-only' && runner.os == 'Linux'
         run: python3 tests/check-recorder-kvm-access.py
       - uses: actions/setup-java@v4
         with:
@@ -55,14 +57,14 @@ jobs:
           api-level: ${{ matrix.api }}
           target: google_apis
           arch: x86_64
-          disable-linux-hw-accel: ${{ matrix.mode != 'decoder-only' }}
+          disable-linux-hw-accel: ${{ matrix.mode != 'decoder-only' || runner.os != 'Linux' }}
           disable-animations: false
           disable-spellchecker: false
           enable-hw-keyboard: false
           emulator-boot-timeout: 1200
-          pre-emulator-launch-script: python3 tests/check-recorder-acceleration.py ${{ matrix.api }} ${{ matrix.mode == 'decoder-only' && 'kvm' || '' }}
+          pre-emulator-launch-script: python3 tests/check-recorder-acceleration.py ${{ matrix.api }} ${{ matrix.mode == 'decoder-only' && runner.os == 'Linux' && 'kvm' || '' }}
           emulator-options: ${{ matrix.acceleration-options }} -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
-          script: bash tests/run-recorder-media-checks.sh ${{ matrix.application }} ${{ matrix.mode }} ${{ matrix.mode == 'decoder-only' && '2' || '1' }}
+          script: bash tests/run-recorder-media-checks.sh ${{ matrix.application }} ${{ matrix.mode }} ${{ matrix.mode == 'decoder-only' && runner.os == 'Linux' && '2' || '1' }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

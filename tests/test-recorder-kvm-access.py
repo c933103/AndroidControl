@@ -29,6 +29,6 @@ with patch.object(m.platform, 'system', return_value='Linux'), patch.object(m.pl
 print('PASS KVM existing-access, version, denial, close and host controls')
 workflow = Path(__file__).parents[1].joinpath('.github/workflows/recorder-media.yml').read_text()
 assert 'sudo' not in workflow and 'chmod' not in workflow and 'udev' not in workflow
-assert "disable-linux-hw-accel: ${{ matrix.mode != 'decoder-only' }}" in workflow
+assert "disable-linux-hw-accel: ${{ matrix.mode != 'decoder-only' || runner.os != 'Linux' }}" in workflow
 assert workflow.index('tests/check-recorder-kvm-access.py') < workflow.index('Build unchanged debug signing')
 print('PASS KVM preflight before build and no permission mutation/software fallback')

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package org.androidcontrol.app.regression
 
+import android.app.ActivityManager
 import android.content.Context
 import android.media.AudioFormat
 import android.media.MediaCodec
@@ -322,22 +323,38 @@ object RecorderMediaChecks {
             check(span in 750_000L..1_250_000L) { "Queued capture timeline compressed: $span us" }
             extractor.seekTo(0, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
             checkpoint("decoder-create-request", "${file.name} ${codec.mimeType}")
-            val createStart = SystemClock.elapsedRealtimeNanos()
-            try { decoder = MediaCodec.createDecoderByType(codec.mimeType) }
-            finally { progress.phase(0, createStart, SystemClock.elapsedRealtimeNanos(), decoder != null) }
-            val name = decoder.name
-            identity = "$name/${System.identityHashCode(decoder)} ${codec.mimeType} ${file.name}"
-            checkpoint("decoder-created", identity)
-            format.setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
-            checkpoint("decoder-configure-request", identity)
-            val configureStart = SystemClock.elapsedRealtimeNanos()
-            var configured = false
-            try { decoder.configure(format, null, null, 0); configured = true }
-            finally { progress.phase(1, configureStart, SystemClock.elapsedRealtimeNanos(), configured) }
-            checkpoint("decoder-configured", identity)
-            val startStart = SystemClock.elapsedRealtimeNanos()
-            try { decoder.start(); started = true }
-            finally { progress.phase(2, startStart, SystemClock.elapsedRealtimeNanos(), started) }
+            val name: String
+            val initTid = android.os.Process.myTid()
+            progress.callerState("beforeCreate",
+                { android.os.Process.getThreadPriority(initTid) },
+                { ActivityManager.RunningAppProcessInfo().also { ActivityManager.getMyMemoryState(it) }.importance })
+            val initWindowStart = SystemClock.elapsedRealtimeNanos()
+            val initSchedStart = callerSchedstat(initTid)
+            try {
+                val createStart = SystemClock.elapsedRealtimeNanos()
+                try { decoder = MediaCodec.createDecoderByType(codec.mimeType) }
+                finally { progress.phase(0, createStart, SystemClock.elapsedRealtimeNanos(), decoder != null) }
+                name = decoder.name
+                identity = "$name/${System.identityHashCode(decoder)} ${codec.mimeType} ${file.name}"
+                checkpoint("decoder-created", identity)
+                format.setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
+                checkpoint("decoder-configure-request", identity)
+                val configureStart = SystemClock.elapsedRealtimeNanos()
+                var configured = false
+                try { decoder.configure(format, null, null, 0); configured = true }
+                finally { progress.phase(1, configureStart, SystemClock.elapsedRealtimeNanos(), configured) }
+                checkpoint("decoder-configured", identity)
+                val startStart = SystemClock.elapsedRealtimeNanos()
+                try { decoder.start(); started = true }
+                finally { progress.phase(2, startStart, SystemClock.elapsedRealtimeNanos(), started) }
+            } finally {
+                // Includes intervening checkpoints/name lookup, unlike direct API brackets.
+                // Diagnostics must never replace the original initialization exception.
+                runCatching {
+                    progress.initializationScheduler(initSchedStart, callerSchedstat(initTid), initTid,
+                        SystemClock.elapsedRealtimeNanos() - initWindowStart)
+                }
+            }
             checkpoint("decoder-started", identity)
             var inputEnded = false
             var outputEnded = false
@@ -452,6 +469,9 @@ object RecorderMediaChecks {
             return JSONObject().put("decoder", name).put("containerSamples", timestamps.size)
                 .put("timestampSpanUs", span).put("decodedFrames", samples).put("rms", rms).put("toneAmplitude", amplitude)
         } catch (failure: Throwable) {
+            progress.callerState("onFailure",
+                { android.os.Process.getThreadPriority(android.os.Process.myTid()) },
+                { ActivityManager.RunningAppProcessInfo().also { ActivityManager.getMyMemoryState(it) }.importance })
             // One constant-size snapshot, outside the media loop; diagnostics cannot replace the cause.
             progress.onFailure { snapshot ->
                 evidence.put("decoderFailure", JSONObject(snapshot).put("codec", identity).put("file", file.name))
@@ -532,14 +552,28 @@ internal class RecorderDecodeProgress {
         }
     }
     private var scheduler: Map<String, Any> = mapOf("status" to "not-started")
+    private var initScheduler: Map<String, Any> = mapOf("status" to "not-started")
+    private val callerStates = mutableMapOf<String, Any>()
+    fun callerState(stage: String, priority: () -> Int, importance: () -> Int) {
+        runCatching {
+            callerStates[stage] = mapOf(
+                "threadPriority" to (runCatching(priority).getOrNull()?.takeIf { it in -20..19 } ?: "unavailable"),
+                "processImportance" to (runCatching(importance).getOrNull()?.takeIf { it >= 0 } ?: "unavailable"))
+        }
+    }
+    fun initializationScheduler(start: LongArray?, end: LongArray?, tid: Int, windowWallNs: Long) {
+        runCatching { initScheduler = schedulerSnapshot(start, end, tid, windowWallNs) }
+    }
     fun scheduler(start: LongArray?, end: LongArray?, tid: Int, windowWallNs: Long) {
-        scheduler = if (start == null || end == null || start.size != 3 || end.size != 3 ||
+        scheduler = schedulerSnapshot(start, end, tid, windowWallNs)
+    }
+    private fun schedulerSnapshot(start: LongArray?, end: LongArray?, tid: Int, windowWallNs: Long): Map<String, Any> =
+        if (start == null || end == null || start.size != 3 || end.size != 3 || windowWallNs < 0 ||
             start.indices.any { start[it] < 0 || end[it] < start[it] }) {
             mapOf("status" to "unavailable", "callerTid" to tid)
         } else mapOf("status" to "observed", "callerTid" to tid,
             "cpuNs" to end[0] - start[0], "runqueueWaitNs" to end[1] - start[1],
             "timeslices" to end[2] - start[2], "windowWallNs" to windowWallNs)
-    }
     private val sampleTotalNs = LongArray(5)
     private val sampleMaxNs = LongArray(5)
     private val sampleCounts = LongArray(5)
@@ -572,6 +606,7 @@ internal class RecorderDecodeProgress {
                 "outputBuffers" to outputBuffers, "outputFrames" to outputFrames, "outputEos" to outputEos,
                 "inputUnavailable" to inputUnavailable, "outputUnavailable" to outputUnavailable,
                 "loop" to loop, "callerScheduler" to scheduler,
+                "initializationScheduler" to initScheduler, "callerStates" to callerStates.toMap(),
                 "sampleOperations" to listOf("getInputBuffer", "readSampleData", "sampleTime", "queueInputBuffer", "advance").mapIndexed { index, name ->
                     mapOf("name" to name, "count" to sampleCounts[index],
                         "totalNs" to sampleTotalNs[index], "maxNs" to sampleMaxNs[index])

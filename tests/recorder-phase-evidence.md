@@ -65,7 +65,7 @@ cores; standard Intel macOS runners have four. Changing the requested core count
 alone does not remove that guard. See [emulator source](https://android.googlesource.com/platform/external/qemu/+/emu-master-dev/android-qemu2-glue/main.cpp)
 and [standard runner specifications](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
 
-Only the exact diagnostic branch now selects the existing standard ubuntu-latest
+Historical head71e0bdff selected only on the exact diagnostic branch the existing standard ubuntu-latest
 runner family, API35/google_apis/x86_64, explicit acceleration on and at least two
 verified online guest CPUs. The normal three-entry integration matrix is unchanged.
 An early preflight opens existing `/dev/kvm` and queries KVM_GET_API_VERSION; no VM
@@ -81,3 +81,27 @@ does not make them. If existing access is unavailable, that is a concrete runner
 capability boundary, not permission to bypass it or relabel software emulation.
 The purpose is an existing-access multicore baseline, not a claim that host CPU
 resources have already been proved causal. All original media deadlines remain.
+
+## Single-core HVF initialization observation (separate from pending KVM comparison)
+
+The diagnostic branch now explicitly selects macos-15-intel/HVF for one changed
+observation, with artifact suffix decoder-only-single-core-init. This is not an
+automatic fallback and cannot satisfy the separately pending Linux multicore
+comparison. The existing KVM preflight remains Linux-only; no access change is made.
+The normal three-entry integration matrix and all media deadlines are unchanged.
+
+The new initializationScheduler window starts before create and ends in finally
+after start returns or initialization fails. Unlike the direct initializationCalls
+brackets it includes intervening name lookup/checkpoint I/O and its own bounded
+schedstat reads. callerScheduler remains a separate decode-loop window.
+callerStates contains only numeric own-thread priority and own-process importance
+before create and on failure. Unsupported calls, invalid priority ranges and
+negative importance are unavailable, not guessed. Diagnostic failures are contained
+so the original initialization exception is preserved. No priority is modified.
+Guest runqueue accounting may be unavailable/disabled and excludes important host
+and codec-worker effects; none of these observations alone establishes root cause.
+
+Host controls cover observed/unavailable/malformed snapshots, separate windows,
+throwing observation functions, original exception identity, placement outside the
+unchanged 15-second loop, explicit single-core lane and unchanged normal matrix.
+Older allocation, pre-EOS slow progress and a031 post-inputEOS failures remain open.
