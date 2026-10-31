@@ -57,3 +57,27 @@ accounting may be disabled and host hypervisor scheduling is not fully represent
 in guest runqueue counters. A large observed wait can support a guest runnable-wait
 contribution; a small/unavailable value cannot alone attribute off-CPU time to IPC.
 The prior a031 post-inputEOS observation remains a separate open question.
+
+## Standard Linux/KVM resource baseline, without permission changes
+
+The macOS emulator source forces one vCPU on hosts with fewer than six logical
+cores; standard Intel macOS runners have four. Changing the requested core count
+alone does not remove that guard. See [emulator source](https://android.googlesource.com/platform/external/qemu/+/emu-master-dev/android-qemu2-glue/main.cpp)
+and [standard runner specifications](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+
+Only the exact diagnostic branch now selects the existing standard ubuntu-latest
+runner family, API35/google_apis/x86_64, explicit acceleration on and at least two
+verified online guest CPUs. The normal three-entry integration matrix is unchanged.
+An early preflight opens existing `/dev/kvm` and queries KVM_GET_API_VERSION; no VM
+is created by that preflight. Inaccessible KVM stops before build/media and archives
+only error number, host architecture/OS/logical CPU count and runner image version.
+No sudo, chmod, group membership, udev rule, module installation or fallback is used.
+A successful preflight is not media acceptance: emulator -accel-check and guest
+identity/CPU-count gates must also pass before the unchanged synthetic probe.
+
+[GitHub's KVM announcement](https://github.blog/changelog/2024-04-02-github-actions-hardware-accelerated-android-virtualization-now-available/)
+documents permission changes commonly needed on Linux; this experiment deliberately
+does not make them. If existing access is unavailable, that is a concrete runner
+capability boundary, not permission to bypass it or relabel software emulation.
+The purpose is an existing-access multicore baseline, not a claim that host CPU
+resources have already been proved causal. All original media deadlines remain.

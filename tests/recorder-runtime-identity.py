@@ -4,6 +4,7 @@
 """Allowlisted emulator/guest identity, not a device dump or performance verdict."""
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -23,7 +24,7 @@ def revision(path):
     return values[0]
 
 
-def collect(sdk_root, api, run=subprocess.run):
+def collect(sdk_root, api, run=subprocess.run, min_cpus=1):
     report = {'schema': 1, 'complete': False, 'scope': 'synthetic emulator identity only',
               'packages': {}, 'guest': {}, 'errors': []}
     for name, relative in (
@@ -47,6 +48,18 @@ def collect(sdk_root, api, run=subprocess.run):
         report['errors'].append('API mismatch')
     if report['guest'].get('ro.product.cpu.abi') != 'x86_64':
         report['errors'].append('ABI mismatch')
+    try:
+        result = run(['adb', 'shell', 'cat', '/sys/devices/system/cpu/online'], capture_output=True, timeout=10)
+        online = result.stdout.decode().strip()
+        match = re.fullmatch(r'0(?:-([0-9]{1,3}))?', online)
+        if result.returncode or not match:
+            raise ValueError('invalid online CPU range')
+        count = int(match.group(1) or '0') + 1
+        report['guestOnlineCpus'] = count
+        if count < min_cpus:
+            report['errors'].append('insufficient online guest CPUs')
+    except (OSError, ValueError, UnicodeError, subprocess.TimeoutExpired):
+        report['errors'].append('guest CPU count unavailable')
     report['complete'] = not report['errors']
     return report
 
@@ -58,7 +71,10 @@ if __name__ == '__main__':
     root = os.environ.get('ANDROID_HOME') or os.environ.get('ANDROID_SDK_ROOT')
     if not root:
         raise SystemExit('Android SDK path unavailable')
-    report = collect(Path(root), api)
+    min_cpus = int(sys.argv[2]) if len(sys.argv) == 3 else 1
+    if min_cpus not in (1, 2):
+        raise SystemExit('Unsupported CPU baseline')
+    report = collect(Path(root), api, min_cpus=min_cpus)
     destination = Path('recorder-media-results/runtime-identity.json')
     destination.parent.mkdir(exist_ok=True)
     destination.write_text(json.dumps(report, indent=2) + '\n')

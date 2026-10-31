@@ -23,8 +23,13 @@ class IdentityTests(unittest.TestCase):
             target.write_text('Pkg.Revision=37.2.13\nIgnored=do-not-retain\n')
         self.values = dict(zip(identity.PROPERTIES, ('google/sdk/emulator:15/build/revision:userdebug/test-keys', '12345', '35', 'x86_64')))
         self.calls = []
+        self.online = "0-1"
 
     def run_adb(self, command, **kwargs):
+        if command == ['adb', 'shell', 'cat', '/sys/devices/system/cpu/online']:
+            self.calls.append(command)
+            self.assertEqual(kwargs, dict(capture_output=True, timeout=10))
+            return subprocess.CompletedProcess(command, 0, self.online.encode(), b'')
         self.assertEqual(command[:3], ['adb', 'shell', 'getprop'])
         self.assertIn(command[3], identity.PROPERTIES)
         self.assertEqual(kwargs, dict(capture_output=True, timeout=10))
@@ -34,9 +39,15 @@ class IdentityTests(unittest.TestCase):
     def test_complete_allowlist(self):
         report = identity.collect(self.root, '35', self.run_adb)
         self.assertTrue(report['complete'])
-        self.assertEqual(len(self.calls), 4)
+        self.assertEqual(len(self.calls), 5)
         self.assertNotIn('Ignored', str(report))
         self.assertEqual(report['guest'], self.values)
+
+    def test_guest_cpu_baseline(self):
+        self.assertTrue(identity.collect(self.root, '35', self.run_adb, min_cpus=2)['complete'])
+        for online in ('0', '', '0-1\nprivate', 'bogus'):
+            self.online = online
+            self.assertFalse(identity.collect(self.root, '35', self.run_adb, min_cpus=2)['complete'])
 
     def test_missing_revision(self):
         (self.root / 'emulator/source.properties').unlink()

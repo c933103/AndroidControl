@@ -31,7 +31,7 @@ assert capability.get('usable') is True and capability.get('requestedMode') == '
 ACCEL
 fi
 # Fail closed before media if exact package/guest identity cannot be retained.
-python3 tests/recorder-runtime-identity.py "$sdk"
+python3 tests/recorder-runtime-identity.py "$sdk" "${3:-1}"
 shopt -s nullglob
 apps=(manager/build/outputs/apk/debug/*.apk)
 tests=(manager/build/outputs/apk/androidTest/debug/*.apk)

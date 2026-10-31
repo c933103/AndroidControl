@@ -14,7 +14,7 @@ jobs:
       matrix:
         include: >-
           ${{ fromJSON(github.ref == 'refs/heads/diagnostic/recorder-aac-decode-832ac432' &&
-              '[{"api":35,"runner":"macos-15-intel","acceleration-options":"-accel on","application":"manager","artifact-suffix":"-decoder-only-probe","mode":"decoder-only"}]' ||
+              '[{"api":35,"runner":"ubuntu-latest","acceleration-options":"-accel on","application":"manager","artifact-suffix":"-decoder-only-probe","mode":"decoder-only"}]' ||
               '[{"api":33,"runner":"ubuntu-latest","acceleration-options":"","application":"manager","artifact-suffix":"","mode":"integration"},{"api":35,"runner":"macos-15-intel","acceleration-options":"-accel on","application":"manager","artifact-suffix":"","mode":"integration"},{"api":35,"runner":"macos-15-intel","acceleration-options":"-accel on","application":"control","artifact-suffix":"-application-control","mode":"integration"}]') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -23,6 +23,9 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+      - name: Require existing KVM access without permission changes
+        if: matrix.mode == 'decoder-only'
+        run: python3 tests/check-recorder-kvm-access.py
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -34,6 +37,7 @@ jobs:
           python3 tests/test-recorder-exit-info.py
           python3 tests/test-recorder-acceleration.py
           python3 tests/test-recorder-runtime-identity.py
+          python3 tests/test-recorder-kvm-access.py
           python3 tests/test-recorder-anr-request.py
       - name: Accept existing project Android SDK licenses
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
@@ -51,14 +55,14 @@ jobs:
           api-level: ${{ matrix.api }}
           target: google_apis
           arch: x86_64
-          disable-linux-hw-accel: true
+          disable-linux-hw-accel: ${{ matrix.mode != 'decoder-only' }}
           disable-animations: false
           disable-spellchecker: false
           enable-hw-keyboard: false
           emulator-boot-timeout: 1200
-          pre-emulator-launch-script: python3 tests/check-recorder-acceleration.py ${{ matrix.api }}
+          pre-emulator-launch-script: python3 tests/check-recorder-acceleration.py ${{ matrix.api }} ${{ matrix.mode == 'decoder-only' && 'kvm' || '' }}
           emulator-options: ${{ matrix.acceleration-options }} -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
-          script: bash tests/run-recorder-media-checks.sh ${{ matrix.application }} ${{ matrix.mode }}
+          script: bash tests/run-recorder-media-checks.sh ${{ matrix.application }} ${{ matrix.mode }} ${{ matrix.mode == 'decoder-only' && '2' || '1' }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

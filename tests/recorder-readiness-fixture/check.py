@@ -70,12 +70,12 @@ expression = workflow.split('include: >-', 1)[1].split('    runs-on:', 1)[0]
 assert "fromJSON(github.ref == 'refs/heads/diagnostic/recorder-aac-decode-832ac432' &&" in expression
 single, normal = [json.loads(value) for value in re.findall(r"'(\[.*?\])'", expression)]
 assert len(single) == 1 and single[0]['api'] == 35 and single[0]['application'] == 'manager'
-assert single[0]['runner'] == 'macos-15-intel' and single[0]['acceleration-options'] == '-accel on'
+assert single[0]['runner'] == 'ubuntu-latest' and single[0]['acceleration-options'] == '-accel on'
 assert single[0]['mode'] == 'decoder-only'
 assert [(row['api'], row['application'], row['mode']) for row in normal] == [(33, 'manager', 'integration'), (35, 'manager', 'integration'), (35, 'control', 'integration')]
 for ref in ('refs/heads/master', 'refs/heads/feature/call-recording-shizu-integration', 'refs/pull/26/merge'):
     assert ref != 'refs/heads/diagnostic/recorder-aac-decode-832ac432'
-print('PASS exact diagnostic branch selects one API35 manager; normal/PR matrix unchanged')
+print('PASS exact diagnostic branch selects one API35 manager KVM baseline; normal/PR matrix unchanged')
 
 # Milestones follow actual queue/dequeue success; no payload or per-iteration trace.
 decode = media.read_text().split('private fun decode(', 1)[1].split('private fun checkNonSeekableAac', 1)[0]
