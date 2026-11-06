@@ -12,11 +12,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Only the existing API33 row exercises this headless-probe repair.
-        # Normal branches keep all three rows; no unchanged API35 comparison rerun.
+        # Compare both API35 applications on the standard macOS 26 Intel host.
+        # Keep the guest, media gates and normal three-row matrix unchanged.
         include: >-
           ${{ fromJSON(github.ref == 'refs/heads/diagnostic/recorder-aac-decode-832ac432' &&
-              '[{"api":33,"runner":"ubuntu-latest","acceleration-options":"","application":"manager","artifact-suffix":"","mode":"integration"}]' ||
+              '[{"api":35,"runner":"macos-26-intel","acceleration-options":"-accel on","application":"manager","artifact-suffix":"","mode":"integration"},{"api":35,"runner":"macos-26-intel","acceleration-options":"-accel on","application":"control","artifact-suffix":"-application-control","mode":"integration"}]' ||
               '[{"api":33,"runner":"ubuntu-latest","acceleration-options":"","application":"manager","artifact-suffix":"","mode":"integration"},{"api":35,"runner":"macos-15-intel","acceleration-options":"-accel on","application":"manager","artifact-suffix":"","mode":"integration"},{"api":35,"runner":"macos-15-intel","acceleration-options":"-accel on","application":"control","artifact-suffix":"-application-control","mode":"integration"}]') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -80,4 +80,3 @@ jobs:
           name: recorder-media-api-${{ matrix.api }}${{ matrix.artifact-suffix }}
           path: recorder-media-results
           if-no-files-found: warn
-

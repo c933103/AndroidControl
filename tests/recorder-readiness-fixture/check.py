@@ -90,18 +90,17 @@ for name, mode, report, corrupt, expected in (
         assert (result.returncode == 0) == (expected == 0), (name, result.stderr.decode())
         print('PASS', name)
 workflow = (root / '.github/workflows/recorder-media.yml').read_text()
-# The explicit diagnostic branch selects ONLY the existing API33 row.
+# The explicit diagnostic branch compares both API35 applications on a new host.
 matrix_text = workflow.split('include: >-', 1)[1].split('    runs-on:', 1)[0]
 assert "fromJSON(github.ref == 'refs/heads/diagnostic/recorder-aac-decode-832ac432' &&" in matrix_text
-single, rows = [json.loads(value) for value in re.findall(r"'(\[.*?\])'", matrix_text)]
-assert single == [rows[0]] and single[0]['api'] == 33 and single[0]['mode'] == 'integration'
+comparison, rows = [json.loads(value) for value in re.findall(r"'(\[.*?\])'", matrix_text)]
 assert rows == [
     dict(api=33, runner='ubuntu-latest', **{'acceleration-options': '', 'artifact-suffix': ''}, application='manager', mode='integration'),
     dict(api=35, runner='macos-15-intel', **{'acceleration-options': '-accel on', 'artifact-suffix': ''}, application='manager', mode='integration'),
     dict(api=35, runner='macos-15-intel', **{'acceleration-options': '-accel on', 'artifact-suffix': '-application-control'}, application='control', mode='integration'),
 ]
-assert all(row['api'] == 33 for row in single)
-print('PASS exact diagnostic branch only existing API33; normal three-entry integration matrix unchanged')
+assert comparison == [dict(row, runner='macos-26-intel') for row in rows[1:]]
+print('PASS diagnostic API35 standard macOS 26 comparison; normal three-entry integration matrix unchanged')
 
 # Milestones follow actual queue/dequeue success; no payload or per-iteration trace.
 decode = media.read_text().split('private fun decode(', 1)[1].split('private fun checkNonSeekableAac', 1)[0]

@@ -264,7 +264,7 @@ exit reason for an organic crash. Artifact collection follows cleanup, not an
 ongoing instrumentation run. Cleanup failure fails the lane; no reuse or retry
 is permitted and existing emulator teardown still applies. No access, KVM,
 priority or codec configuration change. The exact diagnostic branch remains
-API33-only recovery; normal refs retain all three required entries.
+API33-only for that recovery; normal refs retain all three required entries.
 
 ### Preserve command failure separately from cleanup
 
@@ -285,3 +285,25 @@ with commandExitCode1/timedOutfalse. The corrected tests exercise real exit255
 and signal termination, both timeout phases, and successful/failed reaping.
 No codec/media assertions, phase budgets, matrix, access or device settings are
 changed. This corrects failure handling, not the unresolved API35 media failure.
+
+### API35 standard macOS 26 Intel comparison
+
+After the API33 supervisor recovery passed on commit58a69a6, the diagnostic
+branch selects both existing API35 manager and application-control rows on
+`macos-26-intel`. GitHub lists this as a standard four-core Intel runner,
+distinct from paid larger runners. This changes the host OS and its associated
+runner image; it is not an isolated OS experiment or a claim that the recorder
+is fixed. The previous `macos-15-intel` failures remain failures.
+
+Both rows retain the pinned emulator37.2.12/build16428233, API35 Google APIs
+x86_64 guest, explicit existing HVF acceleration, expected guest identity and
+CPU checks, all eleven integration cases,15-second codec gates and the existing
+180/180/360/370-second supervisor budgets. No KVM access or security settings
+change. Normal refs retain their original three-row matrix. API33 is not
+repeated in this comparison; its preceding exact-head receipt is separate
+evidence, not a current-head or API35 pass. Hosted build, fixture, runtime and
+artifact results must be verified independently before drawing a conclusion.
+
+Runner references:
+- https://docs.github.com/en/actions/reference/runners/github-hosted-runners
+- https://github.com/actions/runner-images/blob/main/images/macos/macos-26-Readme.md
