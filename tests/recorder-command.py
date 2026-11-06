@@ -91,6 +91,10 @@ def main():
     receipt = dict(schema=2, nonce=nonce, startupSeconds=STARTUP, executionSeconds=EXECUTION,
                    workCeilingSeconds=WORK, totalCeilingSeconds=TOTAL, hostStartedWallNs=wall)
     child = None
+    native_code = None
+    child_exit_code = None
+    child_cleanup = 'not-started'
+    termination_requested = False
     code, reason = 1, 'not-started'
     pending = b''
     size = 0
@@ -119,38 +123,45 @@ def main():
                     state.line(line.decode('utf-8', errors='replace').rstrip('\r'), time.monotonic())
                 if len(pending) > 65536:
                     raise ValueError('line-limit')
-            code = child.wait(timeout=max(.001, state.deadline() - time.monotonic()))
+            native_code = child.wait(timeout=max(.001, state.deadline() - time.monotonic()))
             if time.monotonic() >= state.deadline():
                 raise TimeoutError('startup' if state.created is None else 'execution')
-            if pending or not state.passed(key) or code != 0:
+            if pending or not state.passed(key) or native_code != 0:
                 code, reason = 1, 'missing-or-invalid-terminal'
             else:
-                reason = 'terminal-pass'
-    except (TimeoutError, subprocess.TimeoutExpired) as failure:
-        code, reason = 124, str(failure) if isinstance(failure, TimeoutError) else 'execution'
+                code, reason = 0, 'terminal-pass'
+    except (TimeoutError, subprocess.TimeoutExpired):
+        code, reason = 124, 'startup' if state.created is None else 'execution'
     except (OSError, ValueError) as failure:
         code, reason = 1, type(failure).__name__ + ':' + str(failure)
     finally:
         work_end = time.monotonic()
+        # Freeze the media-command outcome before cleanup. A failed reap or
+        # force-stop must fail acceptance without erasing the original failure.
+        receipt['commandExitCode'] = code
+        receipt['commandNativeExitCode'] = native_code
         # One cleanup reserve, never reset by output or failed cleanup commands.
         cleanup_deadline = min(start + TOTAL, work_end + 10)
         if child is not None:
             if child.poll() is None:
                 try:
                     os.killpg(child.pid, signal.SIGKILL)
+                    termination_requested = True
                 except ProcessLookupError:
                     pass
             try:
-                child.wait(timeout=max(.001, cleanup_deadline - time.monotonic()))
+                child_exit_code = child.wait(timeout=max(.001, cleanup_deadline - time.monotonic()))
+                child_cleanup = 'reaped'
             except subprocess.TimeoutExpired:
-                code, reason = 1, 'local-child-not-reaped'
+                code, child_cleanup = 1, 'not-reaped'
             child.stdout.close()
-        receipt["commandExitCode"] = code
         cleanup_status = cleanup(application, cleanup_deadline)
         end = time.monotonic()
         if cleanup_status != 'stopped-and-absent' or end > start + TOTAL:
             code = 1
         receipt.update(exitCode=code, timedOut=reason in ('startup', 'execution'), outcome=reason,
+                       localChildExitCode=child_exit_code, localChildCleanup=child_cleanup,
+                       supervisorTerminationRequested=termination_requested,
                        pid=state.pid, finalPassVerified=state.passed(key), cleanup=cleanup_status,
                        startupDurationNs=int(((work_end if state.created is None else state.created) - start) * 1e9),
                        executionDurationNs=None if state.created is None else int((work_end-state.created)*1e9),

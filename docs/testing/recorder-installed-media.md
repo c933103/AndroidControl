@@ -265,3 +265,23 @@ ongoing instrumentation run. Cleanup failure fails the lane; no reuse or retry
 is permitted and existing emulator teardown still applies. No access, KVM,
 priority or codec configuration change. The exact diagnostic branch remains
 API33-only recovery; normal refs retain all three required entries.
+
+### Preserve command failure separately from cleanup
+
+The command receipt keeps `commandExitCode` and `outcome` from the media phase,
+before local-child and device cleanup. `commandNativeExitCode` is the actual
+local adb return code observed before cleanup, or null if no exit was observed.
+A nonzero adb exit still fails acceptance even when its output contains PASS.
+`localChildExitCode` records the later reaping result separately; a negative
+signal exit after `supervisorTerminationRequested=true` is intentional cleanup,
+not evidence of an organic Android crash. `localChildCleanup` distinguishes
+reaped, not-reaped and not-started. Failed cleanup still makes `exitCode` fail,
+without erasing the original timeout flag or startup/execution classification.
+
+Host regressions reproduce the earlier loss: a real child exiting255 recorded
+only commandExitCode1; EOF followed by a wait timeout before `created` was
+misclassified as execution; an additional reap timeout replaced that failure
+with commandExitCode1/timedOutfalse. The corrected tests exercise real exit255
+and signal termination, both timeout phases, and successful/failed reaping.
+No codec/media assertions, phase budgets, matrix, access or device settings are
+changed. This corrects failure handling, not the unresolved API35 media failure.
