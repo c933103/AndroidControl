@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package org.androidcontrol.app.regression
 
+import android.app.ActivityManager
 import android.content.Context
 import android.media.AudioFormat
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.os.Debug
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import org.androidcontrol.app.recording.integrations.scrcpy.ScrcpyAudioCodec
@@ -44,14 +46,28 @@ object RecorderMediaChecks {
         runCatching { evidenceFile.writeText(evidence.toString(2)) }
             .onFailure { android.util.Log.w("RecorderMediaChecks", "Checkpoint write failed", it) }
     }
+    // Only this synthetic instrumentation thread; no process lists or raw proc dump.
+    private fun callerSchedstat(tid: Int): LongArray? = runCatching {
+        File("/proc/self/task/$tid/schedstat").inputStream().use { stream ->
+            val bytes = ByteArray(129)
+            var used = 0
+            while (used < bytes.size) {
+                val count = stream.read(bytes, used, bytes.size - used)
+                if (count < 0) break
+                used += count
+            }
+            check(used <= 128)
+            RecorderDecodeProgress.parseSchedstat(String(bytes, 0, used, Charsets.US_ASCII))
+        }
+    }.getOrNull()
     private data class Packet(val pts: Long, val config: Boolean, val bytes: ByteArray)
     private data class Encoded(val name: String, val packets: List<Packet>)
     private data class Outcome(val error: String?, val finalized: Boolean, val packets: Int)
 
-    fun run(context: Context) {
+    fun run(context: Context, runNonce: String) {
         val directory = File(context.cacheDir, "recorder-media").apply { mkdirs() }
         directory.listFiles()?.forEach { check(it.delete()) }
-        val report = JSONObject().put("sdk", android.os.Build.VERSION.SDK_INT)
+        val report = JSONObject().put("runNonce", runNonce).put("mode", "integration").put("sdk", android.os.Build.VERSION.SDK_INT)
             .put("input", "generated 440 Hz PCM, 48000 Hz stereo, one second")
             .put("scope", "installed MediaCodec, production parser/muxer, pipes; no call, microphone, service/Binder or physical-device acceptance")
         report.put("pid", android.os.Process.myPid()).put("lifecycle", JSONArray())
@@ -92,6 +108,36 @@ object RecorderMediaChecks {
             throw failure
         } finally {
             File(directory, "report.json").writeText(report.toString(2))
+        }
+    }
+
+    /** Diagnostic stage isolation; never represents the eleven-case integration suite. */
+    fun runDecoderProbe(context: Context, fixtureContext: Context, runNonce: String) {
+        val directory = File(context.cacheDir, "recorder-media").apply { mkdirs() }
+        directory.listFiles()?.forEach { check(it.delete()) }
+        val cases = JSONArray()
+        val report = JSONObject().put("runNonce", runNonce).put("mode", "decoder-only").put("probePassed", false)
+            .put("sdk", android.os.Build.VERSION.SDK_INT).put("pid", android.os.Process.myPid())
+            .put("scope", "one pinned synthetic AAC decoder probe; not eleven-case integration acceptance")
+            .put("lifecycle", JSONArray()).put("cases", cases)
+        evidence = report
+        evidenceFile = File(directory, "report.json")
+        try {
+            val bytes = fixtureContext.assets.open("recorder/synthetic-aac-440hz.m4a").use { it.readBytes() }
+            check(bytes.size == 7158) { "Unexpected synthetic fixture size" }
+            val file = File(directory, "decoder-input.m4a").apply { writeBytes(bytes) }
+            check(sha256(file) == "a917896903bc7944cbb6b7c0eab6743c1fe6f99caefebd27d569ea79677d6bd1") {
+                "Synthetic fixture hash mismatch"
+            }
+            cases.put(decode(ScrcpyAudioCodec.AAC, file).put("case", "aac-decoder-probe")
+                .put("sha256", sha256(file)))
+            report.put("probePassed", true)
+        } catch (failure: Throwable) {
+            report.put("failure", failure.stackTraceToString())
+            throw failure
+        } finally {
+            // A diagnostic write cannot replace the original decoder failure.
+            runCatching { evidenceFile.writeText(report.toString(2)) }
         }
     }
 
@@ -277,15 +323,38 @@ object RecorderMediaChecks {
             check(span in 750_000L..1_250_000L) { "Queued capture timeline compressed: $span us" }
             extractor.seekTo(0, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
             checkpoint("decoder-create-request", "${file.name} ${codec.mimeType}")
-            decoder = MediaCodec.createDecoderByType(codec.mimeType)
-            val name = decoder.name
-            identity = "$name/${System.identityHashCode(decoder)} ${codec.mimeType} ${file.name}"
-            checkpoint("decoder-created", identity)
-            format.setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
-            checkpoint("decoder-configure-request", identity)
-            decoder.configure(format, null, null, 0)
-            checkpoint("decoder-configured", identity)
-            decoder.start(); started = true
+            val name: String
+            val initTid = android.os.Process.myTid()
+            progress.callerState("beforeCreate",
+                { android.os.Process.getThreadPriority(initTid) },
+                { ActivityManager.RunningAppProcessInfo().also { ActivityManager.getMyMemoryState(it) }.importance })
+            val initWindowStart = SystemClock.elapsedRealtimeNanos()
+            val initSchedStart = callerSchedstat(initTid)
+            try {
+                val createStart = SystemClock.elapsedRealtimeNanos()
+                try { decoder = MediaCodec.createDecoderByType(codec.mimeType) }
+                finally { progress.phase(0, createStart, SystemClock.elapsedRealtimeNanos(), decoder != null) }
+                name = decoder.name
+                identity = "$name/${System.identityHashCode(decoder)} ${codec.mimeType} ${file.name}"
+                checkpoint("decoder-created", identity)
+                format.setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
+                checkpoint("decoder-configure-request", identity)
+                val configureStart = SystemClock.elapsedRealtimeNanos()
+                var configured = false
+                try { decoder.configure(format, null, null, 0); configured = true }
+                finally { progress.phase(1, configureStart, SystemClock.elapsedRealtimeNanos(), configured) }
+                checkpoint("decoder-configured", identity)
+                val startStart = SystemClock.elapsedRealtimeNanos()
+                try { decoder.start(); started = true }
+                finally { progress.phase(2, startStart, SystemClock.elapsedRealtimeNanos(), started) }
+            } finally {
+                // Includes intervening checkpoints/name lookup, unlike direct API brackets.
+                // Diagnostics must never replace the original initialization exception.
+                runCatching {
+                    progress.initializationScheduler(initSchedStart, callerSchedstat(initTid), initTid,
+                        SystemClock.elapsedRealtimeNanos() - initWindowStart)
+                }
+            }
             checkpoint("decoder-started", identity)
             var inputEnded = false
             var outputEnded = false
@@ -294,64 +363,102 @@ object RecorderMediaChecks {
             var sine = 0.0
             var cosine = 0.0
             val info = MediaCodec.BufferInfo()
+            val callerTid = android.os.Process.myTid()
+            val schedWindowStart = SystemClock.elapsedRealtimeNanos()
+            val schedStart = callerSchedstat(callerTid)
             val deadline = SystemClock.elapsedRealtime() + TIMEOUT_MS
-            while (!outputEnded) {
-                check(SystemClock.elapsedRealtime() < deadline) { "Decoder timeout: $name" }
-                if (!inputEnded) {
-                    val inputStart = SystemClock.elapsedRealtimeNanos()
-                    val index = try { decoder.dequeueInputBuffer(10000) }
-                        finally { progress.operation(0, inputStart, SystemClock.elapsedRealtimeNanos()) }
-                    if (index < 0) progress.inputUnavailable++
-                    if (index >= 0) {
-                        val queueStart = SystemClock.elapsedRealtimeNanos()
-                        try {
-                            val buffer = checkNotNull(decoder.getInputBuffer(index))
-                            val size = extractor.readSampleData(buffer, 0)
-                            if (size < 0) {
-                                decoder.queueInputBuffer(index, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); inputEnded = true
-                                progress.inputEos = true
-                            } else {
-                                decoder.queueInputBuffer(index, 0, size, extractor.sampleTime, 0)
-                                progress.queuedInputs++; progress.queuedBytes += size
-                                extractor.advance()
-                            }
-                        } finally { progress.operation(1, queueStart, SystemClock.elapsedRealtimeNanos()) }
-                    }
-                }
-                val outputStart = SystemClock.elapsedRealtimeNanos()
-                val index = try { decoder.dequeueOutputBuffer(info, 10000) }
-                    finally { progress.operation(2, outputStart, SystemClock.elapsedRealtimeNanos()) }
-                if (index == MediaCodec.INFO_TRY_AGAIN_LATER) progress.outputUnavailable++
-                if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                    val decodedFormat = decoder.outputFormat
-                    check(decodedFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT) == CHANNELS)
-                    check(decodedFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE) == RATE)
-                    if (decodedFormat.containsKey(MediaFormat.KEY_PCM_ENCODING)) check(decodedFormat.getInteger(MediaFormat.KEY_PCM_ENCODING) == AudioFormat.ENCODING_PCM_16BIT)
-                } else if (index >= 0) {
-                    progress.outputBuffers++
-                    progress.outputEos = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
-                    val processingStart = SystemClock.elapsedRealtimeNanos()
-                    try {
-                        if (info.size > 0) {
-                            val buffer = checkNotNull(decoder.getOutputBuffer(index)).duplicate().order(ByteOrder.LITTLE_ENDIAN)
-                            buffer.position(info.offset); buffer.limit(info.offset + info.size)
-                            check(info.size % (CHANNELS * 2) == 0)
-                            while (buffer.remaining() >= CHANNELS * 2) {
-                                val value = buffer.short.toDouble(); buffer.short
-                                val angle = 2 * PI * 440 * samples / RATE
-                                square += value * value; sine += value * sin(angle); cosine += value * cos(angle)
-                                samples++
-                            }
+            progress.deadlineMs = deadline
+            progress.loopStartMs = SystemClock.elapsedRealtime()
+            val callerThreadId = Thread.currentThread().id
+            val loopWallStart = SystemClock.elapsedRealtimeNanos()
+            val loopCpuStart = runCatching { Debug.threadCpuTimeNanos() }.getOrDefault(-1L)
+            try {
+                while (!outputEnded) {
+                    val now = SystemClock.elapsedRealtime()
+                    if (now >= deadline) progress.timeoutMs = now
+                    check(now < deadline) { "Decoder timeout: $name" }
+                    if (!inputEnded) {
+                        val inputStart = SystemClock.elapsedRealtimeNanos()
+                        val index = try { decoder.dequeueInputBuffer(10000) }
+                            finally { progress.operation(0, inputStart, SystemClock.elapsedRealtimeNanos()) }
+                        if (index < 0) progress.inputUnavailable++
+                        if (index >= 0) {
+                            val queueStart = SystemClock.elapsedRealtimeNanos()
+                            try {
+                                val bufferStart = SystemClock.elapsedRealtimeNanos()
+                                val buffer = try { checkNotNull(decoder.getInputBuffer(index)) }
+                                    finally { progress.sampleOperation(0, bufferStart, SystemClock.elapsedRealtimeNanos()) }
+                                val readStart = SystemClock.elapsedRealtimeNanos()
+                                val size = try { extractor.readSampleData(buffer, 0) }
+                                    finally { progress.sampleOperation(1, readStart, SystemClock.elapsedRealtimeNanos()) }
+                                if (size < 0) {
+                                    val eosStart = SystemClock.elapsedRealtimeNanos()
+                                    try { decoder.queueInputBuffer(index, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM) }
+                                    finally { progress.sampleOperation(3, eosStart, SystemClock.elapsedRealtimeNanos()) }
+                                    inputEnded = true
+                                    progress.inputEos = true
+                                    progress.inputEnded(SystemClock.elapsedRealtime())
+                                } else {
+                                    val ptsStart = SystemClock.elapsedRealtimeNanos()
+                                    val pts = try { extractor.sampleTime }
+                                        finally { progress.sampleOperation(2, ptsStart, SystemClock.elapsedRealtimeNanos()) }
+                                    val submitStart = SystemClock.elapsedRealtimeNanos()
+                                    try { decoder.queueInputBuffer(index, 0, size, pts, 0) }
+                                    finally { progress.sampleOperation(3, submitStart, SystemClock.elapsedRealtimeNanos()) }
+                                    progress.queuedInputs++; progress.queuedBytes += size
+                                    progress.inputQueued(SystemClock.elapsedRealtime())
+                                    val advanceStart = SystemClock.elapsedRealtimeNanos()
+                                    try { extractor.advance() }
+                                    finally { progress.sampleOperation(4, advanceStart, SystemClock.elapsedRealtimeNanos()) }
+                                }
+                            } finally { progress.operation(1, queueStart, SystemClock.elapsedRealtimeNanos()) }
                         }
-                        outputEnded = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
-                    } finally {
-                        progress.outputFrames = samples
-                        progress.operation(3, processingStart, SystemClock.elapsedRealtimeNanos())
-                        val releaseStart = SystemClock.elapsedRealtimeNanos()
-                        try { decoder.releaseOutputBuffer(index, false) }
-                        finally { progress.operation(4, releaseStart, SystemClock.elapsedRealtimeNanos()) }
+                    }
+                    val outputStart = SystemClock.elapsedRealtimeNanos()
+                    val index = try { decoder.dequeueOutputBuffer(info, 10000) }
+                        finally { progress.operation(2, outputStart, SystemClock.elapsedRealtimeNanos()) }
+                    if (index == MediaCodec.INFO_TRY_AGAIN_LATER) progress.outputUnavailable++
+                    if (index == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED) progress.bufferChanges++
+                    if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                        progress.formatChanges++
+                        val decodedFormat = decoder.outputFormat
+                        check(decodedFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT) == CHANNELS)
+                        check(decodedFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE) == RATE)
+                        if (decodedFormat.containsKey(MediaFormat.KEY_PCM_ENCODING)) check(decodedFormat.getInteger(MediaFormat.KEY_PCM_ENCODING) == AudioFormat.ENCODING_PCM_16BIT)
+                    } else if (index >= 0) {
+                        progress.outputBuffers++
+                        progress.outputReceived(SystemClock.elapsedRealtime())
+                        progress.outputEos = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+                        val processingStart = SystemClock.elapsedRealtimeNanos()
+                        try {
+                            if (info.size > 0) {
+                                val buffer = checkNotNull(decoder.getOutputBuffer(index)).duplicate().order(ByteOrder.LITTLE_ENDIAN)
+                                buffer.position(info.offset); buffer.limit(info.offset + info.size)
+                                check(info.size % (CHANNELS * 2) == 0)
+                                while (buffer.remaining() >= CHANNELS * 2) {
+                                    val value = buffer.short.toDouble(); buffer.short
+                                    val angle = 2 * PI * 440 * samples / RATE
+                                    square += value * value; sine += value * sin(angle); cosine += value * cos(angle)
+                                    samples++
+                                }
+                            }
+                            outputEnded = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+                        } finally {
+                            progress.outputFrames = samples
+                            progress.operation(3, processingStart, SystemClock.elapsedRealtimeNanos())
+                            val releaseStart = SystemClock.elapsedRealtimeNanos()
+                            try { decoder.releaseOutputBuffer(index, false) }
+                            finally { progress.operation(4, releaseStart, SystemClock.elapsedRealtimeNanos()) }
+                        }
                     }
                 }
+            } finally {
+                val loopCpuEnd = runCatching { Debug.threadCpuTimeNanos() }.getOrDefault(-1L)
+                progress.loopTiming(loopWallStart, SystemClock.elapsedRealtimeNanos(),
+                    loopCpuStart, loopCpuEnd, callerThreadId)
+                val schedEnd = callerSchedstat(callerTid)
+                progress.scheduler(schedStart, schedEnd, callerTid,
+                    SystemClock.elapsedRealtimeNanos() - schedWindowStart)
             }
             check(samples in 36_000L..62_400L) { "Decoded duration out of bounds: $samples" }
             val rms = sqrt(square / samples)
@@ -361,9 +468,17 @@ object RecorderMediaChecks {
             }
             return JSONObject().put("decoder", name).put("containerSamples", timestamps.size)
                 .put("timestampSpanUs", span).put("decodedFrames", samples).put("rms", rms).put("toneAmplitude", amplitude)
+                .also { result ->
+                    // Retain existing bounded observations on success too. No file I/O,
+                    // new sampling or serialization inside either measured window.
+                    progress.snapshot { result.put("decodeObservations", JSONObject(it)) }
+                }
         } catch (failure: Throwable) {
+            progress.callerState("onFailure",
+                { android.os.Process.getThreadPriority(android.os.Process.myTid()) },
+                { ActivityManager.RunningAppProcessInfo().also { ActivityManager.getMyMemoryState(it) }.importance })
             // One constant-size snapshot, outside the media loop; diagnostics cannot replace the cause.
-            progress.onFailure { snapshot ->
+            progress.snapshot { snapshot ->
                 evidence.put("decoderFailure", JSONObject(snapshot).put("codec", identity).put("file", file.name))
             }
             throw failure
@@ -402,20 +517,116 @@ internal class RecorderDecodeProgress {
     var outputEos = false
     var inputUnavailable = 0L
     var outputUnavailable = 0L
+    var formatChanges = 0L
+    var bufferChanges = 0L
+    var loopStartMs = -1L
+    var deadlineMs = -1L
+    var timeoutMs = -1L
+    private var firstInputMs = -1L
+    private var lastInputMs = -1L
+    private var inputEosMs = -1L
+    private var firstOutputMs = -1L
+    private var lastOutputMs = -1L
+    private var lastProgressMs = -1L
+    fun inputQueued(now: Long) {
+        if (firstInputMs < 0) firstInputMs = now
+        lastInputMs = now; lastProgressMs = now
+    }
+    fun inputEnded(now: Long) { inputEosMs = now; lastProgressMs = now }
+    fun outputReceived(now: Long) {
+        if (firstOutputMs < 0) firstOutputMs = now
+        lastOutputMs = now; lastProgressMs = now
+    }
+    // Immediate Java API call brackets, excluding checkpoint I/O/name lookup.
+    // These include scheduling/JNI overhead; they are not native watchdog timestamps.
+    private val phaseStartNs = LongArray(3) { -1L }
+    private val phaseEndNs = LongArray(3) { -1L }
+    private val phaseReturned = BooleanArray(3)
+    fun phase(index: Int, startNs: Long, endNs: Long, returned: Boolean) {
+        phaseStartNs[index] = startNs; phaseEndNs[index] = endNs
+        phaseReturned[index] = returned
+    }
+    companion object {
+        fun parseSchedstat(text: String): LongArray? {
+            if (text.length > 128) return null
+            val fields = text.trim().split(Regex("\\s+"))
+            if (fields.size != 3) return null
+            val values = fields.map { it.toLongOrNull() ?: return null }
+            if (values.any { it < 0 }) return null
+            return values.toLongArray()
+        }
+    }
+    private var scheduler: Map<String, Any> = mapOf("status" to "not-started")
+    private var initScheduler: Map<String, Any> = mapOf("status" to "not-started")
+    private val callerStates = mutableMapOf<String, Any>()
+    fun callerState(stage: String, priority: () -> Int, importance: () -> Int) {
+        runCatching {
+            callerStates[stage] = mapOf(
+                "threadPriority" to (runCatching(priority).getOrNull()?.takeIf { it in -20..19 } ?: "unavailable"),
+                "processImportance" to (runCatching(importance).getOrNull()?.takeIf { it >= 0 } ?: "unavailable"))
+        }
+    }
+    fun initializationScheduler(start: LongArray?, end: LongArray?, tid: Int, windowWallNs: Long) {
+        runCatching { initScheduler = schedulerSnapshot(start, end, tid, windowWallNs) }
+    }
+    fun scheduler(start: LongArray?, end: LongArray?, tid: Int, windowWallNs: Long) {
+        scheduler = schedulerSnapshot(start, end, tid, windowWallNs)
+    }
+    private fun schedulerSnapshot(start: LongArray?, end: LongArray?, tid: Int, windowWallNs: Long): Map<String, Any> =
+        if (start == null || end == null || start.size != 3 || end.size != 3 || windowWallNs < 0 ||
+            start.indices.any { start[it] < 0 || end[it] < start[it] }) {
+            mapOf("status" to "unavailable", "callerTid" to tid)
+        } else mapOf("status" to "observed", "callerTid" to tid,
+            "cpuNs" to end[0] - start[0], "runqueueWaitNs" to end[1] - start[1],
+            "timeslices" to end[2] - start[2], "windowWallNs" to windowWallNs)
+    private val sampleTotalNs = LongArray(5)
+    private val sampleMaxNs = LongArray(5)
+    private val sampleCounts = LongArray(5)
+    fun sampleOperation(index: Int, startNs: Long, endNs: Long) {
+        val elapsed = (endNs - startNs).coerceAtLeast(0)
+        sampleTotalNs[index] += elapsed
+        sampleMaxNs[index] = maxOf(sampleMaxNs[index], elapsed)
+        sampleCounts[index]++
+    }
     private val totalNs = LongArray(5)
     private val maxNs = LongArray(5)
+    private var loop: Map<String, Any> = mapOf("status" to "not-started")
+    fun loopTiming(wallStart: Long, wallEnd: Long, cpuStart: Long, cpuEnd: Long, threadId: Long) {
+        runCatching { loop = mapOf(
+            "callerThreadId" to threadId,
+            "wallNs" to if (wallStart >= 0 && wallEnd >= wallStart) wallEnd - wallStart else "unavailable",
+            "callerCpuNs" to if (cpuStart >= 0 && cpuEnd >= cpuStart) cpuEnd - cpuStart else "unavailable"
+        ) }
+    }
     fun operation(index: Int, startNs: Long, endNs: Long) {
         val elapsed = (endNs - startNs).coerceAtLeast(0)
         totalNs[index] += elapsed
         maxNs[index] = maxOf(maxNs[index], elapsed)
     }
-    fun onFailure(publish: (Map<String, Any>) -> Unit) {
+    fun snapshot(publish: (Map<String, Any>) -> Unit) {
         runCatching {
             val operations = listOf("inputDequeue", "sampleReadQueue", "outputDequeue", "pcmProcessing", "outputRelease")
             publish(mapOf(
                 "queuedInputs" to queuedInputs, "queuedBytes" to queuedBytes, "inputEos" to inputEos,
                 "outputBuffers" to outputBuffers, "outputFrames" to outputFrames, "outputEos" to outputEos,
                 "inputUnavailable" to inputUnavailable, "outputUnavailable" to outputUnavailable,
+                "loop" to loop, "callerScheduler" to scheduler,
+                "initializationScheduler" to initScheduler, "callerStates" to callerStates.toMap(),
+                "sampleOperations" to listOf("getInputBuffer", "readSampleData", "sampleTime", "queueInputBuffer", "advance").mapIndexed { index, name ->
+                    mapOf("name" to name, "count" to sampleCounts[index],
+                        "totalNs" to sampleTotalNs[index], "maxNs" to sampleMaxNs[index])
+                },
+                "initializationCalls" to listOf("create", "configure", "start").mapIndexed { index, name ->
+                    mapOf("name" to name, "startElapsedNs" to phaseStartNs[index],
+                        "endElapsedNs" to phaseEndNs[index], "returned" to phaseReturned[index])
+                },
+                "formatChanges" to formatChanges, "bufferChanges" to bufferChanges,
+                // Same elapsedRealtime clock as lifecycle markers; -1 means not observed.
+                // Progress means queued data/EOS or a received output, not format notifications.
+                "timelineMs" to mapOf("loopStart" to loopStartMs, "deadline" to deadlineMs,
+                    "firstInput" to firstInputMs, "lastInput" to lastInputMs, "inputEos" to inputEosMs,
+                    "firstOutput" to firstOutputMs, "lastOutput" to lastOutputMs,
+                    "lastProgress" to lastProgressMs, "timeout" to timeoutMs),
                 "operations" to operations.mapIndexed { index, name ->
                     mapOf("name" to name, "totalNs" to totalNs[index], "maxNs" to maxNs[index])
                 }
@@ -423,3 +634,4 @@ internal class RecorderDecodeProgress {
         }
     }
 }
+
