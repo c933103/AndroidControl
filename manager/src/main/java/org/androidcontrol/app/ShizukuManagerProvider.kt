@@ -10,7 +10,7 @@ import rikka.shizuku.ShizukuProvider
 import rikka.shizuku.server.ktx.workerHandler
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicBoolean
 
 class ShizukuManagerProvider : ShizukuProvider() {
 
@@ -35,11 +35,15 @@ class ShizukuManagerProvider : ShizukuProvider() {
                 val binder = extras.getParcelable<BinderContainer>(EXTRA_BINDER)?.binder ?: return null
 
                 val countDownLatch = CountDownLatch(1)
+                val pending = AtomicBoolean(true)
                 var reply: Bundle? = Bundle()
 
                 val listener = object : Shizuku.OnBinderReceivedListener {
 
                     override fun onBinderReceived() {
+                        // Removal cannot cancel an already queued callback. A timed-out
+                        // or duplicate delivery must not start a new attachment.
+                        if (!pending.compareAndSet(true, false)) return
                         try {
                             Shizuku.attachUserService(binder, bundleOf(
                                 USER_SERVICE_ARG_TOKEN to token
@@ -48,22 +52,23 @@ class ShizukuManagerProvider : ShizukuProvider() {
                         } catch (e: Throwable) {
                             LOGGER.e(e, "attachUserService $token")
                             reply = null
+                        } finally {
+                            countDownLatch.countDown()
                         }
-
-                        Shizuku.removeBinderReceivedListener(this)
-
-                        countDownLatch.countDown()
                     }
                 }
 
-                Shizuku.addBinderReceivedListenerSticky(listener, workerHandler)
-
                 return try {
-                    countDownLatch.await(5, TimeUnit.SECONDS)
-                    reply
-                } catch (e: TimeoutException) {
-                    LOGGER.e(e, "Binder not received in 5s")
+                    Shizuku.addBinderReceivedListenerSticky(listener, workerHandler)
+                    if (countDownLatch.await(5, TimeUnit.SECONDS)) reply else null
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
                     null
+                } finally {
+                    // A callback already attaching may finish after the deadline, but
+                    // it cannot turn this call's null timeout result into success.
+                    pending.set(false)
+                    Shizuku.removeBinderReceivedListener(listener)
                 }
             } catch (e: Throwable) {
                 LOGGER.e(e, "sendUserService")
@@ -74,3 +79,4 @@ class ShizukuManagerProvider : ShizukuProvider() {
         }
     }
 }
+

@@ -68,6 +68,11 @@ jobs:
           test -f "${releaseApk[0]}"
           releaseName=$(basename "${releaseApk[0]}" -release.apk)
           echo "releaseName=$releaseName" >> "$GITHUB_OUTPUT"
+      - name: Check provider timeout and listener cleanup
+        run: |
+          gradle_lib=$(find "${GRADLE_USER_HOME:-$HOME/.gradle}/wrapper/dists/gradle-8.14-bin" -type d -path '*/gradle-8.14/lib' -print -quit)
+          test -n "$gradle_lib"
+          python3 tests/provider-timeout-fixture/check.py --gradle-lib "$gradle_lib"
       - name: Verify scrcpy executable bytes and bundled GPL/Apache notices
         run: python3 tests/verify-call-recording-apk.py manager/build/outputs/apk/release/*.apk
 
@@ -78,3 +83,4 @@ jobs:
           name: ${{ steps.buildWithGradle.outputs.releaseName }}
           path: "manager/build/outputs"
           compression-level: 9
+
