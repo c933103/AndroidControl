@@ -12,11 +12,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Compare both API35 applications on the standard macOS 26 Intel host.
-        # Keep the guest, media gates and normal three-row matrix unchanged.
+        # Verify ordinary-user KVM access on both standard Ubuntu images.
+        # Continue into the pinned decoder probe only when existing access works.
         include: >-
           ${{ fromJSON(github.ref == 'refs/heads/diagnostic/recorder-aac-decode-832ac432' &&
-              '[{"api":35,"runner":"macos-26-intel","acceleration-options":"-accel on","application":"manager","artifact-suffix":"","mode":"integration"},{"api":35,"runner":"macos-26-intel","acceleration-options":"-accel on","application":"control","artifact-suffix":"-application-control","mode":"integration"}]' ||
+              '[{"api":35,"runner":"ubuntu-22.04","acceleration-options":"-accel on","application":"manager","artifact-suffix":"-decoder-only-ubuntu-22.04","mode":"decoder-only"},{"api":35,"runner":"ubuntu-24.04","acceleration-options":"-accel on","application":"manager","artifact-suffix":"-decoder-only-ubuntu-24.04","mode":"decoder-only"}]' ||
               '[{"api":33,"runner":"ubuntu-latest","acceleration-options":"","application":"manager","artifact-suffix":"","mode":"integration"},{"api":35,"runner":"macos-15-intel","acceleration-options":"-accel on","application":"manager","artifact-suffix":"","mode":"integration"},{"api":35,"runner":"macos-15-intel","acceleration-options":"-accel on","application":"control","artifact-suffix":"-application-control","mode":"integration"}]') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -27,7 +27,11 @@ jobs:
           fetch-depth: 0
       - name: Require existing KVM access without permission changes
         if: matrix.mode == 'decoder-only' && runner.os == 'Linux'
-        run: python3 tests/check-recorder-kvm-access.py
+        run: |
+          python3 tests/test-recorder-kvm-access.py
+          python3 tests/test-recorder-runtime-identity.py
+          python3 tests/test-recorder-instrument-args.py
+          python3 tests/check-recorder-kvm-access.py
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -59,7 +63,7 @@ jobs:
       - name: Synthetic media only, without permission or security changes
         uses: reactivecircus/android-emulator-runner@v2
         env:
-          RECORDER_EMULATOR_COMPARISON: ${{ github.ref == 'refs/heads/diagnostic/recorder-aac-decode-832ac432' && '37.2.12' || '' }}
+          RECORDER_EMULATOR_COMPARISON: ${{ github.ref == 'refs/heads/diagnostic/recorder-aac-decode-832ac432' && '37.2.12-kvm2' || '' }}
         with:
           # Controlled prior-build comparison only; normal branch defaults unchanged.
           emulator-build: ${{ github.ref == 'refs/heads/diagnostic/recorder-aac-decode-832ac432' && '16428233' || '' }}

@@ -307,3 +307,28 @@ artifact results must be verified independently before drawing a conclusion.
 Runner references:
 - https://docs.github.com/en/actions/reference/runners/github-hosted-runners
 - https://github.com/actions/runner-images/blob/main/images/macos/macos-26-Readme.md
+
+
+### Current standard Ubuntu KVM capability check
+
+The diagnostic branch now checks the existing ordinary-user KVM capability on
+standard ubuntu-22.04 and ubuntu-24.04 runners. Each existing preflight runs
+before SDK/build/emulator setup. It records numeric job UID/groups, device
+owner/group/mode/type and getfacl/setfacl availability, then requires the actual
+KVM API probe to succeed. No permission, group, ACL, udev or privilege change is
+performed; an inaccessible device stops that lane rather than invoking a fallback.
+This is a current capability check, not an assertion that a hosted runner is
+already accessible. Earlier EACCES and media failures remain separate evidence.
+
+Only a lane with verified existing access continues into the pinned synthetic
+AAC decoder probe. It retains emulator 37.2.12/build16428233, exact API35 image
+revision/build/fingerprint, the same fixture and 15-second decoder assertion.
+The two-CPU Linux resource comparison has an explicit 37.2.12-kvm2 identity
+profile; the prior profile still requires exactly one API35 guest CPU. The
+formerly dormant combination of minimum two CPUs and exact one-CPU baseline
+would reject itself, so it cannot be reused silently. Both profiles reject
+unexpected counts and all other identity drift. No guest CPU count is waived.
+
+Normal refs retain their original three integration rows. A decoder-probe pass
+cannot satisfy the eleven-case integration validator or service/handset/release
+acceptance. No unchanged macOS retry, new permission step or paid runner is added.

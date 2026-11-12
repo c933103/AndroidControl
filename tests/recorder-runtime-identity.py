@@ -73,8 +73,15 @@ COMPARISON_GUESTS = {
 }
 
 
-def verify_comparison(report, sdk_root, api, run=subprocess.run):
+def verify_comparison(report, sdk_root, api, run=subprocess.run, profile='37.2.12'):
     image, incremental, fingerprint, cpus = COMPARISON_GUESTS[api]
+    if profile == '37.2.12-kvm2' and api == '35':
+        cpus = 2  # Explicit resource comparison, not the old one-core HVF baseline.
+    elif profile != '37.2.12':
+        report['errors'].append('unsupported comparison profile')
+        report['complete'] = False
+        return report
+    report['comparisonExpectedGuestCpus'] = cpus
     expected = (
         (report['packages'].get('emulator', {}).get('revision'), '37.2.12', 'emulator revision'),
         (report['packages'].get('systemImage', {}).get('revision'), image, 'image revision'),
@@ -118,7 +125,9 @@ def verify_comparison(report, sdk_root, api, run=subprocess.run):
         probe['durationNs'] = time.monotonic_ns() - probe_start
         report['comparisonProbe'] = probe
     report['complete'] = not report['errors']
-    report['comparison'] = 'official37.2.12-build16428233-versus3a9d579939'
+    report['comparison'] = ('official37.2.12-build16428233-kvm-two-core-resource-comparison'
+                            if profile == '37.2.12-kvm2' else
+                            'official37.2.12-build16428233-versus3a9d579939')
     return report
 
 
@@ -134,8 +143,8 @@ if __name__ == '__main__':
         raise SystemExit('Unsupported CPU baseline')
     report = collect(Path(root), api, min_cpus=min_cpus)
     comparison = os.environ.get('RECORDER_EMULATOR_COMPARISON', '')
-    if comparison == '37.2.12':
-        verify_comparison(report, Path(root), api)
+    if comparison in ('37.2.12', '37.2.12-kvm2'):
+        verify_comparison(report, Path(root), api, profile=comparison)
     elif comparison:
         report['errors'].append('unsupported comparison')
         report['complete'] = False

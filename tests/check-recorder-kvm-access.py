@@ -6,6 +6,24 @@ import json
 import os
 from pathlib import Path
 import platform
+import shutil
+import stat
+
+
+def device_context(lstat=os.lstat, geteuid=os.geteuid, getgroups=os.getgroups, which=shutil.which):
+    """Numeric current-job/device context; no command execution or ACL modification."""
+    result = {'effectiveUid': geteuid(), 'supplementaryGroups': sorted(getgroups()),
+              'toolsPresent': {name: which(name) is not None for name in ('getfacl', 'setfacl')}}
+    try:
+        device = lstat('/dev/kvm')
+        result['device'] = dict(character=stat.S_ISCHR(device.st_mode),
+                                symlink=stat.S_ISLNK(device.st_mode),
+                                mode=stat.S_IMODE(device.st_mode), uid=device.st_uid,
+                                gid=device.st_gid, major=os.major(device.st_rdev),
+                                minor=os.minor(device.st_rdev))
+    except OSError as error:
+        result['device'] = {'unavailable': True, 'errno': error.errno}
+    return result
 
 
 def probe(open_device=os.open, close_device=os.close, ioctl=None):
@@ -14,6 +32,7 @@ def probe(open_device=os.open, close_device=os.close, ioctl=None):
     if result['hostSystem'] != 'Linux' or result['hostArch'] != 'x86_64' or (result['logicalCpus'] or 0) < 2:
         result['error'] = 'unsupported-host'
         return result
+    result.update(device_context())
     try:
         if ioctl is None:
             import fcntl

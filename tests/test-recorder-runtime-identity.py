@@ -127,6 +127,27 @@ class IdentityTests(unittest.TestCase):
         self.assertEqual(result['comparisonProbe']['status'], 'timeout')
         self.assertGreaterEqual(result['comparisonProbe']['durationNs'], 0)
 
+    def test_kvm_two_core_profile_is_explicit_not_a_relaxed_hvf_gate(self):
+        from copy import deepcopy
+        image, incremental, fingerprint, _ = identity.COMPARISON_GUESTS['35']
+        baseline = dict(packages={'emulator': {'revision': '37.2.12'}, 'systemImage': {'revision': image}},
+                        guest={'ro.build.version.incremental': incremental, 'ro.build.fingerprint': fingerprint},
+                        guestOnlineCpus=2, errors=[])
+        def version(command, **kwargs):
+            return subprocess.CompletedProcess(command, 0, b'Android emulator version 37.2.12.0 (build_id 16428233)', b'')
+        result = identity.verify_comparison(deepcopy(baseline), self.root, '35', version, profile='37.2.12-kvm2')
+        self.assertTrue(result['complete'])
+        self.assertEqual(result['comparisonExpectedGuestCpus'], 2)
+        self.assertIn('two-core-resource', result['comparison'])
+        self.assertFalse(identity.verify_comparison(deepcopy(baseline), self.root, '35', version)['complete'])
+        for count in (1, 3, 4):
+            wrong = deepcopy(baseline); wrong['guestOnlineCpus'] = count
+            self.assertFalse(identity.verify_comparison(wrong, self.root, '35', version, profile='37.2.12-kvm2')['complete'])
+        for profile, api in (('other', '35'), ('37.2.12-kvm2', '33')):
+            self.assertFalse(identity.verify_comparison(deepcopy(baseline), self.root, api, version, profile=profile)['complete'])
+        wrong = deepcopy(baseline); wrong['guest']['ro.build.fingerprint'] = 'wrong'
+        self.assertFalse(identity.verify_comparison(wrong, self.root, '35', version, profile='37.2.12-kvm2')['complete'])
+
     def test_runner_gates_before_install_and_retains_timestamp_scope(self):
         runner = Path(__file__).with_name('run-recorder-media-checks.sh').read_text()
         self.assertLess(runner.index('python3 tests/recorder-runtime-identity.py'), runner.index('adb install'))

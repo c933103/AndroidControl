@@ -34,7 +34,7 @@ for application, mode, expected in (
 print(subprocess.check_output(['bash', '--version'], text=True).splitlines()[0])
 
 # Validate the workflow before building or starting an emulator. A changed host
-# must not silently select a paid runner, a decoder subset, or different gates.
+# must not silently select a paid runner or change the normal integration gates.
 root = Path(__file__).resolve().parents[1]
 workflow = (root / '.github/workflows/recorder-media.yml').read_text()
 matrix_text = workflow.split('include: >-', 1)[1].split('    runs-on:', 1)[0]
@@ -46,9 +46,11 @@ assert normal == [
     dict(api=35, runner='macos-15-intel', **{'acceleration-options': '-accel on', 'artifact-suffix': ''}, application='manager', mode='integration'),
     dict(api=35, runner='macos-15-intel', **{'acceleration-options': '-accel on', 'artifact-suffix': '-application-control'}, application='control', mode='integration'),
 ]
-assert comparison == [dict(row, runner='macos-26-intel') for row in normal[1:]]
+assert comparison == [dict(api=35, runner='ubuntu-' + version,
+    **{'acceleration-options': '-accel on', 'artifact-suffix': '-decoder-only-ubuntu-' + version},
+    application='manager', mode='decoder-only') for version in ('22.04', '24.04')]
 assert f"emulator-build: ${{{{ github.ref == '{branch}' && '16428233' || '' }}}}" in workflow
-assert f"RECORDER_EMULATOR_COMPARISON: ${{{{ github.ref == '{branch}' && '37.2.12' || '' }}}}" in workflow
+assert f"RECORDER_EMULATOR_COMPARISON: ${{{{ github.ref == '{branch}' && '37.2.12-kvm2' || '' }}}}" in workflow
 assert 'timeout-minutes: 45' in workflow
 assert 'target: google_apis' in workflow and 'arch: x86_64' in workflow
-print('PASS exact diagnostic API35 host comparison, pinned emulator and unchanged normal matrix')
+print('PASS exact existing-access KVM decoder scope, pinned emulator and unchanged normal matrix')
