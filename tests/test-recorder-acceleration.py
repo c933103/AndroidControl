@@ -66,3 +66,8 @@ with tempfile.TemporaryDirectory() as directory:
                 print('PASS gate-' + name)
     finally:
         os.chdir(previous)
+
+
+for code, output, expected in [(0, 'accel:\n0\nKVM (version 12) is installed and usable.\naccel', True), (1, 'accel:\n0\nKVM usable\naccel', False), (0, 'accel:\n0\nHVF usable\naccel', False), (0, '', False)]:
+    assert m.usable(code, output, 'kvm') == expected
+print('PASS explicit KVM acceleration scope and failure controls')
