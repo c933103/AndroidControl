@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 AndroidControl contributors -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <string name="call_record_title">Call recording</string>
+    <string name="call_record_home_description">Record cellular calls locally with the Shizuku audio service. Configure consent, destination, format and automatic capture.</string>
+    <string name="call_record_open">Call recording settings</string>
+    <string name="call_record_setup">Recording setup</string>
+    <string name="call_record_disclaimer">Recording phone calls may require consent from all participants, depending on local law. AndroidControl does not notify the other party or determine whether recording is lawful. Check the rules that apply to each call. Recording may fail on some devices and cannot be guaranteed over VoLTE, Wi-Fi calling or Bluetooth.</string>
+    <string name="call_record_legal_ack">I understand the consent requirements and will comply with applicable law.</string>
+    <string name="call_record_destination">Recording folder (on-device)</string>
+    <string name="call_record_no_folder">No folder selected. Choose a folder to store recordings.</string>
+    <string name="call_record_pick_folder">Choose folder</string>
+    <string name="call_record_format">Audio format</string>
+    <string name="call_record_opus">Opus (.ogg)</string>
+    <string name="call_record_aac">AAC (.m4a)</string>
+    <string name="call_record_audio_source">Audio capture source</string>
+    <string name="call_record_voice_call">Voice call (uplink and downlink)</string>
+    <string name="call_record_voice_communication">Voice communication (compatibility alternative)</string>
+    <string name="call_record_source_warning">The actual audio captured depends on firmware. Test both voices and the saved file before relying on it.</string>
+    <string name="call_record_auto">Automatically record cellular calls when off-hook</string>
+    <string name="call_record_auto_warning">Off by default. Off-hook includes outgoing dialing before the other party answers. Requires phone-state permission, a writable folder and active Shizuku. Android may block background starts.</string>
+    <string name="call_record_start">Start recording current call</string>
+    <string name="call_record_stop">Stop recording and save</string>
+    <string name="call_record_notification">Recording an active cellular call</string>
+    <string name="call_record_state_starting">Preparing audio capture…</string>
+    <string name="call_record_state_recording">Recording active; use Stop to finish and save.</string>
+    <string name="call_record_state_stopping">Finalizing recording…</string>
+    <string name="call_record_state_idle">Recorder ready. Recording is not active.</string>
+    <string name="call_record_state_error">Recording failed: %1$s</string>
+    <string name="call_record_unknown_error">Unknown error</string>
+    <string name="call_record_android_version">Requires Android 12 or newer.</string>
+    <string name="call_record_shizuku_needed">Start AndroidControl’s Shizuku service before recording.</string>
+    <string name="call_record_start_failed">Could not start recording.</string>
+    <string name="call_record_stop_failed">Could not stop recording.</string>
+    <string name="call_record_folder_failed">Could not access the selected folder.</string>
+    <string name="call_record_phone_permission">Phone-state permission is required.</string>
+    <string name="call_record_notification_permission">Allow visible call-recording notifications before recording.</string>
+    <string name="call_record_consent_needed">Read and acknowledge the recording consent requirements first.</string>
+    <string name="call_record_folder_needed">Choose an on-device recording folder first.</string>
+    <string name="call_record_files_title">Saved recordings</string>
+    <string name="call_record_no_files">No .ogg or .m4a recordings found.</string>
+    <string name="call_record_file_unnamed">Unnamed recording</string>
+    <string name="call_record_no_player">No compatible audio player is installed.</string>
+    <string name="call_record_upstream_notice"><![CDATA[This software incorporates a modified fork of <a href="https://github.com/kitsumed/ShizuCallRecorder">ShizuCallRecorder</a> by kitsumed (Med), licensed under GPL-3.0 with Section 7 terms. It is independently maintained as AndroidControl and is not endorsed by the original developer. Audio capture also uses <a href="https://github.com/Genymobile/scrcpy">scrcpy</a> (Apache-2.0). Source and full licence text are provided in the project repository and APK notices.]]></string>
+</resources>

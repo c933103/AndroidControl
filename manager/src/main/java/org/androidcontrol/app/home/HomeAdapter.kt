@@ -29,6 +29,7 @@ class HomeAdapter(private val homeModel: HomeViewModel, private val appsModel: A
         private const val ID_ORIENTATION_CONTROL = 8L
         private const val ID_ADB_FILES = 9L
         private const val ID_APP_OPS = 10L
+        private const val ID_CALL_RECORDING = 11L
     }
 
     override fun onCreateCreatorPool(): IndexCreatorPool {
@@ -46,6 +47,7 @@ class HomeAdapter(private val homeModel: HomeViewModel, private val appsModel: A
         addItem(ServerStatusViewHolder.CREATOR, status, ID_STATUS)
         addItem(OrientationControlViewHolder.CREATOR, status, ID_ORIENTATION_CONTROL)
         addItem(AppOpsViewHolder.CREATOR, status, ID_APP_OPS)
+        addItem(CallRecordingViewHolder.CREATOR, status, ID_CALL_RECORDING)
         addItem(AdbFilesViewHolder.CREATOR, status, ID_ADB_FILES)
 
         if (adbPermission) {

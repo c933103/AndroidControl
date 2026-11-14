@@ -1,0 +1,78 @@
+name: Recorder synthetic media
+on:
+  push:
+    branches: [master, 'feature/**']
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  installed-media:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api: 33
+            runner: ubuntu-latest
+            acceleration-options: ''
+            application: manager
+            artifact-suffix: ''
+          - api: 35
+            runner: macos-15-intel
+            acceleration-options: '-accel on'
+            application: manager
+            artifact-suffix: ''
+          - api: 35
+            runner: macos-15-intel
+            acceleration-options: '-accel on'
+            application: control
+            artifact-suffix: '-application-control'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Check bounded crash filter
+        run: |
+          python3 tests/test-recorder-crash-filter.py
+          python3 tests/test-recorder-exit-info.py
+          python3 tests/test-recorder-acceleration.py
+          python3 tests/test-recorder-anr-request.py
+      - name: Accept existing project Android SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+      - name: Build unchanged debug signing configuration
+        run: ./gradlew -PrecorderMediaTests=true -PrecorderMediaControl=${{ matrix.application == 'control' }} :manager:assembleDebug :manager:assembleDebugAndroidTest
+      - name: Check target-only ANR thread selector
+        run: |
+          gradle_lib=$(find "$HOME/.gradle/wrapper/dists" -type d -path '*/gradle-8.14/lib' -print -quit)
+          python3 tests/recorder-anr-fixture/check.py --gradle-lib "$gradle_lib"
+          python3 tests/recorder-readiness-fixture/check.py --gradle-lib "$gradle_lib"
+          python3 tests/recorder-application-control-fixture/check.py --gradle-lib "$gradle_lib"
+      - name: Synthetic media only, without permission or security changes
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: google_apis
+          arch: x86_64
+          disable-linux-hw-accel: true
+          disable-animations: false
+          disable-spellchecker: false
+          enable-hw-keyboard: false
+          emulator-boot-timeout: 1200
+          pre-emulator-launch-script: python3 tests/check-recorder-acceleration.py ${{ matrix.api }}
+          emulator-options: ${{ matrix.acceleration-options }} -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: bash tests/run-recorder-media-checks.sh ${{ matrix.application }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: recorder-media-api-${{ matrix.api }}${{ matrix.artifact-suffix }}
+          path: recorder-media-results
+          if-no-files-found: warn

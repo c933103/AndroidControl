@@ -1,6 +1,7 @@
 package org.androidcontrol.app.control;
 
 import android.os.IBinder;
+import android.os.ParcelFileDescriptor;
 import android.view.MotionEvent;
 import android.view.Surface;
 
@@ -26,4 +27,9 @@ interface IAndroidControlService {
     void handoffTargetToPhone(int displayId, IBinder hostToken) = 15;
     String getTargetPortraitLink(int displayId, IBinder hostToken) = 16;
     void setTargetBrowserVisible(int displayId, IBinder hostToken, boolean visible) = 17;
+    // Shell audio capture; ownerToken lifetime guards against orphaned recorders.
+    ParcelFileDescriptor beginCallRecording(IBinder ownerToken, String serverPath,
+        String audioSource, String codec, int bitRate) = 18;
+    void endCallRecording(IBinder ownerToken) = 19;
 }
+
