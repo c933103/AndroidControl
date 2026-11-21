@@ -12,11 +12,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Verify ordinary-user KVM access on both standard Ubuntu images.
+        # Verify ordinary-user KVM access on the newer standard Ubuntu runner.
         # Continue into the pinned decoder probe only when existing access works.
         include: >-
           ${{ fromJSON(github.ref == 'refs/heads/diagnostic/recorder-aac-decode-832ac432' &&
-              '[{"api":35,"runner":"ubuntu-22.04","acceleration-options":"-accel on","application":"manager","artifact-suffix":"-decoder-only-ubuntu-22.04","mode":"decoder-only"},{"api":35,"runner":"ubuntu-24.04","acceleration-options":"-accel on","application":"manager","artifact-suffix":"-decoder-only-ubuntu-24.04","mode":"decoder-only"}]' ||
+              '[{"api":35,"runner":"ubuntu-26.04","acceleration-options":"-accel on","application":"manager","artifact-suffix":"-decoder-only-ubuntu-26.04","mode":"decoder-only"}]' ||
               '[{"api":33,"runner":"ubuntu-latest","acceleration-options":"","application":"manager","artifact-suffix":"","mode":"integration"},{"api":35,"runner":"macos-15-intel","acceleration-options":"-accel on","application":"manager","artifact-suffix":"","mode":"integration"},{"api":35,"runner":"macos-15-intel","acceleration-options":"-accel on","application":"control","artifact-suffix":"-application-control","mode":"integration"}]') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
