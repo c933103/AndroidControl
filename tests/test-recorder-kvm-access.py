@@ -52,9 +52,9 @@ assert not any(meta['toolsPresent'].values())
 # Diagnostic standard runners only; unchanged normal rows and no automatic fallback.
 import json, re
 rows = [json.loads(text) for text in re.findall(r"'(\[.*?\])'", workflow)]
-assert [row['runner'] for row in rows[0]] == ['ubuntu-22.04', 'ubuntu-24.04']
+assert [row['runner'] for row in rows[0]] == ['ubuntu-26.04']
 assert all(row['mode'] == 'decoder-only' and row['application'] == 'manager' for row in rows[0])
-assert len({row['artifact-suffix'] for row in rows[0]}) == 2
+assert {row['artifact-suffix'] for row in rows[0]} == {'-decoder-only-ubuntu-26.04'}
 assert [(row['api'], row['runner'], row['application'], row['mode']) for row in rows[1]] == [
     (33, 'ubuntu-latest', 'manager', 'integration'),
     (35, 'macos-15-intel', 'manager', 'integration'),

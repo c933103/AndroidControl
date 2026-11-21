@@ -48,7 +48,7 @@ assert normal == [
 ]
 assert comparison == [dict(api=35, runner='ubuntu-' + version,
     **{'acceleration-options': '-accel on', 'artifact-suffix': '-decoder-only-ubuntu-' + version},
-    application='manager', mode='decoder-only') for version in ('22.04', '24.04')]
+    application='manager', mode='decoder-only') for version in ('26.04',)]
 assert f"emulator-build: ${{{{ github.ref == '{branch}' && '16428233' || '' }}}}" in workflow
 assert f"RECORDER_EMULATOR_COMPARISON: ${{{{ github.ref == '{branch}' && '37.2.12-kvm2' || '' }}}}" in workflow
 assert 'timeout-minutes: 45' in workflow
