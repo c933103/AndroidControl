@@ -90,7 +90,7 @@ for name, mode, report, corrupt, expected in (
         assert (result.returncode == 0) == (expected == 0), (name, result.stderr.decode())
         print('PASS', name)
 workflow = (root / '.github/workflows/recorder-media.yml').read_text()
-# The explicit diagnostic branch compares both API35 applications on a new host.
+# The explicit diagnostic branch is one API35 manager decoder-only probe on Ubuntu 26.04.
 matrix_text = workflow.split('include: >-', 1)[1].split('    runs-on:', 1)[0]
 assert "fromJSON(github.ref == 'refs/heads/diagnostic/recorder-aac-decode-832ac432' &&" in matrix_text
 comparison, rows = [json.loads(value) for value in re.findall(r"'(\[.*?\])'", matrix_text)]
@@ -99,8 +99,10 @@ assert rows == [
     dict(api=35, runner='macos-15-intel', **{'acceleration-options': '-accel on', 'artifact-suffix': ''}, application='manager', mode='integration'),
     dict(api=35, runner='macos-15-intel', **{'acceleration-options': '-accel on', 'artifact-suffix': '-application-control'}, application='control', mode='integration'),
 ]
-assert comparison == [dict(row, runner='macos-26-intel') for row in rows[1:]]
-print('PASS diagnostic API35 standard macOS 26 comparison; normal three-entry integration matrix unchanged')
+assert comparison == [
+    dict(api=35, runner='ubuntu-26.04', **{'acceleration-options': '-accel on', 'artifact-suffix': '-decoder-only-ubuntu-26.04'}, application='manager', mode='decoder-only'),
+]
+print('PASS diagnostic API35 Ubuntu 26.04 manager decoder-only lane; normal three-entry integration matrix unchanged')
 
 # Milestones follow actual queue/dequeue success; no payload or per-iteration trace.
 decode = media.read_text().split('private fun decode(', 1)[1].split('private fun checkNonSeekableAac', 1)[0]
@@ -141,6 +143,6 @@ assert 'progress.snapshot { snapshot ->' in decoder_text
 print('PASS success and failure retain bounded observations outside timing/media assertions')
 
 assert "emulator-build: ${{ github.ref == 'refs/heads/diagnostic/recorder-aac-decode-832ac432' && '16428233' || '' }}" in workflow
-assert "RECORDER_EMULATOR_COMPARISON: ${{ github.ref == 'refs/heads/diagnostic/recorder-aac-decode-832ac432' && '37.2.12' || '' }}" in workflow
+assert "RECORDER_EMULATOR_COMPARISON: ${{ github.ref == 'refs/heads/diagnostic/recorder-aac-decode-832ac432' && '37.2.12-kvm2' || '' }}" in workflow
 assert 'python3 tests/test-recorder-command-timing.py' in workflow
-print('PASS explicit official prior-build comparison; other-branch emulator defaults unchanged')
+print('PASS pinned emulator build and KVM diagnostic label; other-branch emulator defaults unchanged')
