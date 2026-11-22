@@ -112,8 +112,9 @@ Repository visibility was verified public on29October; [GitHub's standard-runner
 reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
 lists this standard Intel runner as available and free for public repositories.
 No larger/paid runner, new service/contract, credentials or access change is used.
-The same15s codec deadlines,180s instrumentation timeout,1200s boot limit and45min
-job bound remain. Python implements the unchanged outer timeout portably; no GNU
+At that historical increment the same15s codec deadlines,180s instrumentation
+timeout,1200s boot limit and45min job bound remained. Python implemented that
+outer timeout portably (superseded by explicit phase supervision below); no GNU
 coreutils installation is required. All audio assertions and failure diagnostics
 remain intact. Native-runner acceptance is pending its own exact-head results.
 
@@ -229,5 +230,105 @@ InstrumentationThread headers/stack/lock metadata survive, maximum2 threads,
 headers are excluded. The report preserves exact PID/time/reason/status binding.
 Eleven pure Kotlin selector controls and11 request-identity/time/reason controls
 cover positive and unrelated/stale/oversized inputs. Original media-command
-exitCode/timedOut is now recorded before diagnostics, with the same180s limit;
+At that increment exitCode/timedOut was recorded before diagnostics with180s total;
+that total policy is superseded explicitly by phase supervision below;
 the shell still exits with the original failure. Missing trace is not acceptance.
+
+
+### Explicit startup/execution supervision (PR32 recovery)
+
+Initial test commit97dbcf1f used a literal180-second whole `am instrument`
+command guard. This was an implementation guard, not an owner performance SLA.
+Receipt2805f37fe4 showed approximately141 seconds before instrumentation creation,
+then partial media progress; that run remains failed, not accepted.
+
+The harness now **changes** the outer policy to180 seconds for startup until a
+complete nonce-bound `created` block, then180 seconds for execution, including
+application-idle, all media cases and final process return. The host-monotonic
+work ceiling is360 seconds and total supervisor ceiling370 seconds, including
+at most10 seconds cleanup. Subsequent status and guest clock changes never reset
+these deadlines. This does not fix startup latency. Both phase durations, command
+result and cleanup outcome are retained independently.
+
+A fresh invocation nonce and PID bind created status, final PASS and report.
+Acceptance requires exit0, terminal instrumentation code−1, matching PASS, exactly
+all eleven integration case names, valid media artifacts and successful cleanup.
+The15-second codec gates and EOS/timing/tone/descriptor/negative assertions are
+unchanged. Partial or stale reports cannot pass. A bounded streaming parser
+rejects duplicate/malformed identities, oversized output and early exit.
+
+After success or failure the local adb child is reaped; the known synthetic target
+package is force-stopped on the disposable emulator and absence checked within
+one cleanup reserve. This produces intentional stop evidence: do not mistake its
+exit reason for an organic crash. Artifact collection follows cleanup, not an
+ongoing instrumentation run. Cleanup failure fails the lane; no reuse or retry
+is permitted and existing emulator teardown still applies. No access, KVM,
+priority or codec configuration change. The exact diagnostic branch remains
+API33-only for that recovery; normal refs retain all three required entries.
+
+### Preserve command failure separately from cleanup
+
+The command receipt keeps `commandExitCode` and `outcome` from the media phase,
+before local-child and device cleanup. `commandNativeExitCode` is the actual
+local adb return code observed before cleanup, or null if no exit was observed.
+A nonzero adb exit still fails acceptance even when its output contains PASS.
+`localChildExitCode` records the later reaping result separately; a negative
+signal exit after `supervisorTerminationRequested=true` is intentional cleanup,
+not evidence of an organic Android crash. `localChildCleanup` distinguishes
+reaped, not-reaped and not-started. Failed cleanup still makes `exitCode` fail,
+without erasing the original timeout flag or startup/execution classification.
+
+Host regressions reproduce the earlier loss: a real child exiting255 recorded
+only commandExitCode1; EOF followed by a wait timeout before `created` was
+misclassified as execution; an additional reap timeout replaced that failure
+with commandExitCode1/timedOutfalse. The corrected tests exercise real exit255
+and signal termination, both timeout phases, and successful/failed reaping.
+No codec/media assertions, phase budgets, matrix, access or device settings are
+changed. This corrects failure handling, not the unresolved API35 media failure.
+
+### API35 standard macOS 26 Intel comparison
+
+After the API33 supervisor recovery passed on commit58a69a6, the diagnostic
+branch selects both existing API35 manager and application-control rows on
+`macos-26-intel`. GitHub lists this as a standard four-core Intel runner,
+distinct from paid larger runners. This changes the host OS and its associated
+runner image; it is not an isolated OS experiment or a claim that the recorder
+is fixed. The previous `macos-15-intel` failures remain failures.
+
+Both rows retain the pinned emulator37.2.12/build16428233, API35 Google APIs
+x86_64 guest, explicit existing HVF acceleration, expected guest identity and
+CPU checks, all eleven integration cases,15-second codec gates and the existing
+180/180/360/370-second supervisor budgets. No KVM access or security settings
+change. Normal refs retain their original three-row matrix. API33 is not
+repeated in this comparison; its preceding exact-head receipt is separate
+evidence, not a current-head or API35 pass. Hosted build, fixture, runtime and
+artifact results must be verified independently before drawing a conclusion.
+
+Runner references:
+- https://docs.github.com/en/actions/reference/runners/github-hosted-runners
+- https://github.com/actions/runner-images/blob/main/images/macos/macos-26-Readme.md
+
+
+### Current standard Ubuntu KVM capability check
+
+The diagnostic branch now checks the existing ordinary-user KVM capability on
+standard ubuntu-22.04 and ubuntu-24.04 runners. Each existing preflight runs
+before SDK/build/emulator setup. It records numeric job UID/groups, device
+owner/group/mode/type and getfacl/setfacl availability, then requires the actual
+KVM API probe to succeed. No permission, group, ACL, udev or privilege change is
+performed; an inaccessible device stops that lane rather than invoking a fallback.
+This is a current capability check, not an assertion that a hosted runner is
+already accessible. Earlier EACCES and media failures remain separate evidence.
+
+Only a lane with verified existing access continues into the pinned synthetic
+AAC decoder probe. It retains emulator 37.2.12/build16428233, exact API35 image
+revision/build/fingerprint, the same fixture and 15-second decoder assertion.
+The two-CPU Linux resource comparison has an explicit 37.2.12-kvm2 identity
+profile; the prior profile still requires exactly one API35 guest CPU. The
+formerly dormant combination of minimum two CPUs and exact one-CPU baseline
+would reject itself, so it cannot be reused silently. Both profiles reject
+unexpected counts and all other identity drift. No guest CPU count is waived.
+
+Normal refs retain their original three integration rows. A decoder-probe pass
+cannot satisfy the eleven-case integration validator or service/handset/release
+acceptance. No unchanged macOS retry, new permission step or paid runner is added.

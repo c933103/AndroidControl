@@ -13,6 +13,7 @@ object ProbeState {
 }
 open class Instrumentation {
     val targetContext = Context()
+    val context = Context()
     open fun newApplication(loader: ClassLoader, className: String, context: Context): Application {
         ProbeState.applicationClassRequested = className
         return loader.loadClass(className).getDeclaredConstructor().newInstance() as Application

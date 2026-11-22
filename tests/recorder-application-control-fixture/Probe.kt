@@ -21,10 +21,11 @@ fun main() {
     org.androidcontrol.app.ShizukuSettings.mode = -1
     println("PASS non-fresh-launch-mode-rejected")
     runner.targetContext.applicationContext = app
-    runner.onCreate(Bundle()); runner.onStart()
+    runner.onCreate(Bundle().apply { putString("recorder_run_nonce", "a".repeat(32)) }); runner.onStart()
     check(ProbeState.result?.getString("recorder_media") == "PASS")
     check(ProbeState.instrumentationClass == RecorderControlInstrumentation::class.java.name)
     check(ProbeState.events.count { it == "media" } == 1)
     check(ProbeState.events.indexOf("application-idle") < ProbeState.events.indexOf("media"))
     println("PASS identical-inherited-readiness-and-media-path")
 }
+
