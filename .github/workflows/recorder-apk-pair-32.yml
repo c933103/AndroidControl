@@ -1,0 +1,88 @@
+name: AndroidControl recorder APK pair (build-only)
+on:
+  push:
+    branches: [diagnostic/recorder-apk-pair-32]
+permissions:
+  contents: read
+jobs:
+  build-recorder-manager-pair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 61b2bebc5b6d51a2bb0c6491c32aef6d8dda723d
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact source and submodule
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 61b2bebc5b6d51a2bb0c6491c32aef6d8dda723d
+          test "$(git -C api rev-parse HEAD)" = a27f6e4151ba7b39965ca47edb2bf0aeed7102e5
+          git submodule status --recursive > "$RUNNER_TEMP/recorder-submodules.txt"
+          if grep -Eq '^[-+U]' "$RUNNER_TEMP/recorder-submodules.txt"; then exit 1; fi
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+      - name: Build matched debug packages (no emulator)
+        run: |
+          set -euo pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          ./gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process -PrecorderMediaTests=true -PrecorderMediaControl=false :manager:assembleDebug :manager:assembleDebugAndroidTest
+      - name: Verify instrumentation target, signer and provenance
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apps=(manager/build/outputs/apk/debug/*.apk)
+          tests=(manager/build/outputs/apk/androidTest/debug/*.apk)
+          test "${#apps[@]}" -eq 1
+          test "${#tests[@]}" -eq 1
+          out="$RUNNER_TEMP/recorder-pair"
+          mkdir "$out"
+          cp "${apps[0]}" "$out/manager-debug.apk"
+          cp "${tests[0]}" "$out/manager-recorder-test.apk"
+          apksigner="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          apkanalyzer="$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
+          for name in manager-debug manager-recorder-test; do
+            "$apksigner" verify --print-certs "$out/$name.apk" |
+              sed -nE 's/^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-fA-F]{64})$/\1/p' > "$RUNNER_TEMP/$name.certs"
+            test "$(wc -l < "$RUNNER_TEMP/$name.certs")" -eq 1
+            "$apkanalyzer" manifest print "$out/$name.apk" > "$RUNNER_TEMP/$name.xml"
+          done
+          cmp "$RUNNER_TEMP/manager-debug.certs" "$RUNNER_TEMP/manager-recorder-test.certs"
+          python3 - "$RUNNER_TEMP" <<'PY'
+          import pathlib, sys
+          import xml.etree.ElementTree as ET
+          p = pathlib.Path(sys.argv[1])
+          app = ET.parse(p / 'manager-debug.xml').getroot()
+          test = ET.parse(p / 'manager-recorder-test.xml').getroot()
+          a = '{http://schemas.android.com/apk/res/android}'
+          assert app.get('package') == 'org.androidcontrol.app'
+          assert test.get('package') == 'org.androidcontrol.app.test'
+          rows = test.findall('instrumentation')
+          assert len(rows) == 1
+          assert rows[0].get(a + 'targetPackage') == app.get('package')
+          assert rows[0].get(a + 'name') == 'org.androidcontrol.app.regression.RecorderMediaInstrumentation'
+          PY
+          {
+            printf 'source=%s\n' "$(git rev-parse HEAD)"
+            printf 'source_tree=%s\n' "$(git rev-parse 'HEAD^{tree}')"
+            printf '%s\n' 'mode=build-only; no Android runtime or feature acceptance'
+            printf '%s\n' 'manager_package=org.androidcontrol.app'
+            printf '%s\n' 'instrumentation=org.androidcontrol.app.test/org.androidcontrol.app.regression.RecorderMediaInstrumentation'
+            printf '%s\n' 'gradle=8.14 agp=8.10.1 recorderMediaTests=true recorderMediaControl=false'
+            printf 'signer_certificate_sha256=%s\n' "$(cat "$RUNNER_TEMP/manager-debug.certs")"
+            cat "$RUNNER_TEMP/recorder-submodules.txt"
+          } > "$out/provenance.txt"
+          (cd "$out"; sha256sum manager-debug.apk manager-recorder-test.apk > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: recorder-manager-apk-pair-61b2bebc-build-only
+          path: ${{ runner.temp }}/recorder-pair
+          if-no-files-found: error
+          retention-days: 7
